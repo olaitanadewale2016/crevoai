@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
   const body = await parseRequestBody<{ provider?: string }>(req);
   const provider = body.provider?.toLowerCase();
 
-  const validProviders = ['openai', 'anthropic', 'grok', 'deepseek', 'zhipu'];
+  const validProviders = ['openai', 'anthropic', 'grok', 'deepseek', 'zhipu', 'abhibots', 'gemini', 'openrouter'];
   if (provider && validProviders.includes(provider)) {
     await UserAiSettings.updateOne(
       { user_id: ctx.user._id },

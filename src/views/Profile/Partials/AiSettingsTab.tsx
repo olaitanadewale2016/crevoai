@@ -48,6 +48,12 @@ interface AiSettingsTabProps {
         deepseek_key_masked?: string | null;
         has_zhipu_key?: boolean;
         zhipu_key_masked?: string | null;
+        has_abhibots_key?: boolean;
+        abhibots_key_masked?: string | null;
+        has_gemini_key?: boolean;
+        gemini_key_masked?: string | null;
+        has_openrouter_key?: boolean;
+        openrouter_key_masked?: string | null;
     } | null;
     canUseOwnKey: boolean;
     isUsingOwnKey: boolean;
@@ -80,6 +86,9 @@ export default function AiSettingsTab({
         grok_api_key: '',
         deepseek_api_key: '',
         zhipu_api_key: '',
+        abhibots_api_key: '',
+        gemini_api_key: '',
+        openrouter_api_key: '',
     });
 
     const handleSubmit = (e: React.FormEvent) => {
@@ -94,6 +103,9 @@ export default function AiSettingsTab({
                     grok_api_key: '',
                     deepseek_api_key: '',
                     zhipu_api_key: '',
+                    abhibots_api_key: '',
+                    gemini_api_key: '',
+                    openrouter_api_key: '',
                 });
             },
             onError: () => {
@@ -157,6 +169,9 @@ export default function AiSettingsTab({
         if (provider === 'grok') return settings?.has_grok_key;
         if (provider === 'deepseek') return settings?.has_deepseek_key;
         if (provider === 'zhipu') return settings?.has_zhipu_key;
+        if (provider === 'abhibots') return settings?.has_abhibots_key;
+        if (provider === 'gemini') return settings?.has_gemini_key;
+        if (provider === 'openrouter') return settings?.has_openrouter_key;
         return false;
     };
 
@@ -166,16 +181,14 @@ export default function AiSettingsTab({
         if (provider === 'grok') return settings?.grok_key_masked;
         if (provider === 'deepseek') return settings?.deepseek_key_masked;
         if (provider === 'zhipu') return settings?.zhipu_key_masked;
+        if (provider === 'abhibots') return settings?.abhibots_key_masked;
+        if (provider === 'gemini') return settings?.gemini_key_masked;
+        if (provider === 'openrouter') return settings?.openrouter_key_masked;
         return null;
     };
 
     const getApiKeyField = (provider: string) => {
-        if (provider === 'openai') return 'openai_api_key';
-        if (provider === 'anthropic') return 'anthropic_api_key';
-        if (provider === 'grok') return 'grok_api_key';
-        if (provider === 'deepseek') return 'deepseek_api_key';
-        if (provider === 'zhipu') return 'zhipu_api_key';
-        return '';
+        return `${provider}_api_key`;
     };
 
     const availableModels = data.preferred_provider !== 'system'

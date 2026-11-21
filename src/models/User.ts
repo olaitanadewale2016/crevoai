@@ -54,17 +54,20 @@ UserSchema.index(
 
 export const User: Model<IUser> = mongoose.models.User || mongoose.model<IUser>('User', UserSchema);
 
-// 2. UserAiSettings (all 5 provider API keys stored AES-256-GCM encrypted)
+// 2. UserAiSettings (all provider API keys stored AES-256-GCM encrypted)
 export interface IUserAiSettings {
   _id: mongoose.Types.ObjectId;
   user_id: mongoose.Types.ObjectId;
-  preferred_provider: 'system' | 'openai' | 'anthropic' | 'grok' | 'deepseek' | 'zhipu';
+  preferred_provider: 'system' | 'openai' | 'anthropic' | 'grok' | 'deepseek' | 'zhipu' | 'abhibots' | 'gemini' | 'openrouter';
   preferred_model: string | null;
   openai_api_key: string | null;
   anthropic_api_key: string | null;
   grok_api_key: string | null;
   deepseek_api_key: string | null;
   zhipu_api_key: string | null;
+  abhibots_api_key?: string | null;
+  gemini_api_key?: string | null;
+  openrouter_api_key?: string | null;
   sounds_enabled: boolean;
   sound_style: 'minimal' | 'playful' | 'retro' | 'sci-fi';
   sound_volume: number;
@@ -77,7 +80,7 @@ const UserAiSettingsSchema = new Schema<IUserAiSettings>(
     user_id: { type: Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
     preferred_provider: {
       type: String,
-      enum: ['system', 'openai', 'anthropic', 'grok', 'deepseek', 'zhipu'],
+      enum: ['system', 'openai', 'anthropic', 'grok', 'deepseek', 'zhipu', 'abhibots', 'gemini', 'openrouter'],
       default: 'system',
     },
     preferred_model: { type: String, default: null },
@@ -86,6 +89,9 @@ const UserAiSettingsSchema = new Schema<IUserAiSettings>(
     grok_api_key: { type: String, default: null },
     deepseek_api_key: { type: String, default: null },
     zhipu_api_key: { type: String, default: null },
+    abhibots_api_key: { type: String, default: null },
+    gemini_api_key: { type: String, default: null },
+    openrouter_api_key: { type: String, default: null },
     sounds_enabled: { type: Boolean, default: true },
     sound_style: {
       type: String,

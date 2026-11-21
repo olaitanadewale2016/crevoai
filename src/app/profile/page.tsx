@@ -126,6 +126,12 @@ export default async function ProfilePage({
         deepseek_key_masked: maskEncryptedKey(aiSettingsDoc.deepseek_api_key),
         has_zhipu_key: Boolean(aiSettingsDoc.zhipu_api_key),
         zhipu_key_masked: maskEncryptedKey(aiSettingsDoc.zhipu_api_key),
+        has_abhibots_key: Boolean(aiSettingsDoc.abhibots_api_key),
+        abhibots_key_masked: maskEncryptedKey(aiSettingsDoc.abhibots_api_key),
+        has_gemini_key: Boolean(aiSettingsDoc.gemini_api_key),
+        gemini_key_masked: maskEncryptedKey(aiSettingsDoc.gemini_api_key),
+        has_openrouter_key: Boolean(aiSettingsDoc.openrouter_api_key),
+        openrouter_key_masked: maskEncryptedKey(aiSettingsDoc.openrouter_api_key),
       }
     : null;
 

@@ -257,7 +257,7 @@ export async function POST(
         { status: 422 }
       );
     } else if (type === 'openrouter') {
-      const testModel = model || 'google/gemini-2.0-flash-exp:free';
+      const testModel = model || 'openrouter/free';
       const res = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {

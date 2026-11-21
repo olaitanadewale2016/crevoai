@@ -38,7 +38,7 @@ export async function PUT(req: NextRequest) {
     preferred_model: preferredModel,
   };
 
-  const providers = ['openai', 'anthropic', 'grok', 'deepseek', 'zhipu'] as const;
+  const providers = ['openai', 'anthropic', 'grok', 'deepseek', 'zhipu', 'abhibots', 'gemini', 'openrouter'] as const;
   for (const prov of providers) {
     const rawKey = body[`${prov}_api_key`];
     if (rawKey && rawKey.trim()) {
