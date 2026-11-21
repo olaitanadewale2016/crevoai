@@ -54,12 +54,15 @@ function isLocalOrIp(host: string): boolean {
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Skip Next.js internals
+  // Skip Next.js internals and direct asset / API / preview endpoints
   if (
     pathname.startsWith('/_next/') ||
     pathname === '/favicon.ico' ||
     pathname === '/robots.txt' ||
-    pathname.startsWith('/api/published-site')
+    pathname.startsWith('/storage/') ||
+    pathname.startsWith('/files/') ||
+    pathname.startsWith('/preview/') ||
+    pathname.startsWith('/api/')
   ) {
     return NextResponse.next();
   }
@@ -71,7 +74,16 @@ export function proxy(request: NextRequest) {
     (process.env.APP_URL || '').replace(/^https?:\/\//, '').split('/')[0] || ''
   );
 
-  if (host && !isLocalOrIp(host) && appUrlHost && host !== appUrlHost && host !== `www.${appUrlHost}`) {
+  const isMainHost =
+    !host ||
+    isLocalOrIp(host) ||
+    (appUrlHost && (host === appUrlHost || host === `www.${appUrlHost}`)) ||
+    host === 'crevoai-web.vercel.app' ||
+    host === 'crevoai.vercel.app' ||
+    (process.env.VERCEL_URL && host === normalizeHost(process.env.VERCEL_URL)) ||
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL && host === normalizeHost(process.env.VERCEL_PROJECT_PRODUCTION_URL));
+
+  if (!isMainHost) {
     // Subdomain of main app domain
     if (host.endsWith(`.${appUrlHost}`)) {
       const sub = host.slice(0, -(appUrlHost.length + 1));
