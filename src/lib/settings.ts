@@ -213,8 +213,8 @@ export async function getBroadcastConfig(): Promise<
     }
     return {
       provider: 'pusher',
-      key: integrations.pusher_key || '',
-      cluster: integrations.pusher_cluster || 'mt1',
+      key: integrations.pusher_key || process.env.NEXT_PUBLIC_PUSHER_KEY || process.env.PUSHER_KEY || '',
+      cluster: integrations.pusher_cluster || process.env.NEXT_PUBLIC_PUSHER_CLUSTER || process.env.PUSHER_CLUSTER || 'mt1',
     };
   } catch {
     return null;
@@ -260,9 +260,9 @@ export async function getSharedAppSettings() {
     github_login_enabled: Boolean(auth.github_login_enabled ?? false),
     recaptcha_enabled: recaptchaEnabled,
     recaptcha_site_key: recaptchaEnabled ? auth.recaptcha_site_key || '' : '',
-    realtime_provider: (integrations.broadcast_driver === 'reverb' ? 'pusher' : 'pusher') as 'sse' | 'pusher',
-    pusher_key: integrations.pusher_key || '',
-    pusher_cluster: integrations.pusher_cluster || 'mt1',
+    realtime_provider: 'pusher' as 'sse' | 'pusher',
+    pusher_key: integrations.pusher_key || process.env.NEXT_PUBLIC_PUSHER_KEY || process.env.PUSHER_KEY || '',
+    pusher_cluster: integrations.pusher_cluster || process.env.NEXT_PUBLIC_PUSHER_CLUSTER || process.env.PUSHER_CLUSTER || 'mt1',
     default_currency: defaultCurrency,
     currency_symbol: getCurrencySymbol(defaultCurrency),
   };

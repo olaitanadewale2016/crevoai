@@ -410,8 +410,8 @@ export function AppPageProvider({
 
   // Real-time Pusher listener for immediate setting updates across all client sessions
   useEffect(() => {
-    const key = sharedProps.appSettings?.pusher_key;
-    const cluster = sharedProps.appSettings?.pusher_cluster || 'mt1';
+    const key = sharedProps.appSettings?.pusher_key || process.env.NEXT_PUBLIC_PUSHER_KEY;
+    const cluster = sharedProps.appSettings?.pusher_cluster || process.env.NEXT_PUBLIC_PUSHER_CLUSTER || 'mt1';
     if (!key || typeof window === 'undefined') return;
 
     let pusherInstance: any = null;

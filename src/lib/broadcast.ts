@@ -34,10 +34,10 @@ export async function getPusherServerClient(): Promise<Pusher | null> {
     });
   }
 
-  const appId = integrations.pusher_app_id;
-  const key = integrations.pusher_key;
-  const secret = integrations.pusher_secret;
-  const cluster = integrations.pusher_cluster || 'mt1';
+  const appId = integrations.pusher_app_id || process.env.PUSHER_APP_ID;
+  const key = integrations.pusher_key || process.env.NEXT_PUBLIC_PUSHER_KEY || process.env.PUSHER_KEY;
+  const secret = integrations.pusher_secret || process.env.PUSHER_SECRET;
+  const cluster = integrations.pusher_cluster || process.env.NEXT_PUBLIC_PUSHER_CLUSTER || process.env.PUSHER_CLUSTER || 'mt1';
   if (!appId || !key || !secret) return null;
   return new Pusher({
     appId,
@@ -67,14 +67,19 @@ export async function getPusherConfigForBuilder(): Promise<BuilderPusherPayload 
     };
   }
 
-  if (!integrations.pusher_app_id || !integrations.pusher_key || !integrations.pusher_secret) {
+  const appId = integrations.pusher_app_id || process.env.PUSHER_APP_ID;
+  const key = integrations.pusher_key || process.env.NEXT_PUBLIC_PUSHER_KEY || process.env.PUSHER_KEY;
+  const secret = integrations.pusher_secret || process.env.PUSHER_SECRET;
+  const cluster = integrations.pusher_cluster || process.env.NEXT_PUBLIC_PUSHER_CLUSTER || process.env.PUSHER_CLUSTER || 'mt1';
+
+  if (!appId || !key || !secret) {
     return null;
   }
   return {
-    app_id: String(integrations.pusher_app_id),
-    key: String(integrations.pusher_key),
-    secret: String(integrations.pusher_secret),
-    cluster: String(integrations.pusher_cluster || 'mt1'),
+    app_id: String(appId),
+    key: String(key),
+    secret: String(secret),
+    cluster: String(cluster),
   };
 }
 
