@@ -282,6 +282,7 @@ export interface AiProvider {
     type: AiProviderType;
     type_label: string;
     status: 'active' | 'inactive';
+    is_default?: boolean;
     has_credentials: boolean;
     available_models: string[];
     config: AiProviderConfig;
@@ -311,4 +312,5 @@ export interface AiProviderFormData {
     summarizer_max_tokens?: number;
     available_models?: string[];
     provider_type?: AiProviderType;
+    is_default?: boolean;
 }

@@ -16,38 +16,72 @@ const PROVIDER_TYPES = {
 };
 
 const DEFAULT_MODELS = {
-  openai: ['gpt-5.2', 'gpt-5.1', 'gpt-5-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4o-mini'],
-  anthropic: ['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5'],
-  grok: ['grok-4-1-fast-reasoning', 'grok-code-fast-1'],
-  deepseek: ['deepseek-chat'],
-  zhipu: ['glm-5', 'glm-4.7', 'glm-4.5-air'],
+  anthropic: [
+    'claude-3-7-sonnet-20250219',
+    'claude-3-5-sonnet-20241022',
+    'claude-3-5-haiku-20241022',
+    'claude-sonnet-4-5',
+    'claude-opus-4-5',
+    'claude-haiku-4-5',
+  ],
+  openai: [
+    'gpt-4o',
+    'gpt-4o-mini',
+    'o3-mini',
+    'gpt-4.1',
+    'gpt-4.1-mini',
+    'gpt-5.1',
+    'gpt-5.2',
+  ],
+  deepseek: [
+    'deepseek-chat',
+    'deepseek-reasoner',
+  ],
+  grok: [
+    'grok-2-latest',
+    'grok-beta',
+    'grok-code-fast-1',
+    'grok-4-1-fast-reasoning',
+  ],
+  zhipu: [
+    'glm-4.7',
+    'glm-4.5-air',
+    'glm-5',
+  ],
 };
 
 const MODEL_PRICING = {
   openai: {
-    'gpt-5.2': { input: 1.75, output: 14.0 },
-    'gpt-5.1': { input: 1.25, output: 10.0 },
-    'gpt-5-mini': { input: 0.25, output: 2.0 },
+    'gpt-4o': { input: 2.5, output: 10.0 },
+    'gpt-4o-mini': { input: 0.15, output: 0.6 },
+    'o3-mini': { input: 1.1, output: 4.4 },
     'gpt-4.1': { input: 2.0, output: 8.0 },
     'gpt-4.1-mini': { input: 0.4, output: 1.6 },
-    'gpt-4o-mini': { input: 0.15, output: 0.6 },
+    'gpt-5.1': { input: 1.25, output: 10.0 },
+    'gpt-5.2': { input: 1.75, output: 14.0 },
   },
   anthropic: {
-    'claude-opus-4-5': { input: 5.0, output: 25.0 },
+    'claude-3-7-sonnet-20250219': { input: 3.0, output: 15.0 },
+    'claude-3-5-sonnet-20241022': { input: 3.0, output: 15.0 },
+    'claude-3-5-haiku-20241022': { input: 0.8, output: 4.0 },
     'claude-sonnet-4-5': { input: 3.0, output: 15.0 },
+    'claude-opus-4-5': { input: 5.0, output: 25.0 },
     'claude-haiku-4-5': { input: 1.0, output: 5.0 },
   },
   grok: {
-    'grok-4-1-fast-reasoning': { input: 0.2, output: 0.5 },
+    'grok-2-latest': { input: 2.0, output: 10.0 },
+    'grok-beta': { input: 5.0, output: 15.0 },
     'grok-code-fast-1': { input: 0.2, output: 1.5 },
+    'grok-4-1-fast-reasoning': { input: 0.2, output: 0.5 },
   },
   deepseek: {
-    'deepseek-chat': { input: 0.28, output: 0.42 },
+    'deepseek-chat': { input: 0.27, output: 1.1 },
+    'deepseek-reasoner': { input: 0.55, output: 2.19 },
   },
   zhipu: {
-    'glm-5': { input: 0, output: 0 },
     'glm-4.7': { input: 0, output: 0 },
     'glm-4.5-air': { input: 0, output: 0 },
+    'glm-5': { input: 0, output: 0 },
   },
 };
 
@@ -78,6 +112,7 @@ export default async function AdminAiProvidersPage() {
     type: p.type as any,
     type_label: PROVIDER_TYPES[p.type as keyof typeof PROVIDER_TYPES] || p.type,
     status: (p.status || 'active') as 'active' | 'inactive',
+    is_default: Boolean(p.is_default),
     has_credentials: Boolean(p.credentials),
     available_models: p.available_models?.length
       ? p.available_models

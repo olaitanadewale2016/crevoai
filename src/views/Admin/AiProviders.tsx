@@ -58,6 +58,8 @@ import {
     RefreshCw,
     Eye,
     EyeOff,
+    Star,
+    Check,
 } from 'lucide-react';
 import { User } from '@/types';
 import { AiProvider, AiProviderType } from '@/types/admin';
@@ -86,6 +88,7 @@ interface ProviderFormProps {
         default_model: string;
         max_tokens: number;
         summarizer_max_tokens: number;
+        is_default: boolean;
     };
     setFormData: (data: ProviderFormProps['formData']) => void;
     providerTypes: Record<string, string>;
@@ -94,6 +97,8 @@ interface ProviderFormProps {
     setShowApiKey: (show: boolean) => void;
     isEdit?: boolean;
     errors?: Record<string, string>;
+    onTestDirect?: () => void;
+    isTestingDirect?: boolean;
 }
 
 function ProviderForm({
@@ -105,6 +110,8 @@ function ProviderForm({
     setShowApiKey,
     isEdit = false,
     errors = {},
+    onTestDirect,
+    isTestingDirect = false,
 }: ProviderFormProps) {
     const { t } = useTranslation();
 
@@ -149,7 +156,7 @@ function ProviderForm({
 
             <div className="space-y-2">
                 <Label htmlFor="api_key">
-                    {t('API Key')} {isEdit && <span className="text-muted-foreground">({t('leave empty to keep existing')})</span>}
+                    {t('API Key')} {isEdit && <span className="text-muted-foreground">({t('leave empty to keep existing key')})</span>}
                 </Label>
                 <div className="flex gap-2">
                     <div className="relative flex-1">
@@ -173,6 +180,25 @@ function ProviderForm({
                 </div>
                 {errors.api_key && (
                     <p className="text-sm text-destructive">{t(errors.api_key)}</p>
+                )}
+                {onTestDirect && (
+                    <div className="pt-1">
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            className="w-full gap-2 text-xs"
+                            onClick={onTestDirect}
+                            disabled={isTestingDirect || (!isEdit && !formData.api_key.trim())}
+                        >
+                            {isTestingDirect ? (
+                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                                <Zap className="h-3.5 w-3.5" />
+                            )}
+                            {t('Test Connection Live')}
+                        </Button>
+                    </div>
                 )}
             </div>
 
@@ -223,6 +249,22 @@ function ProviderForm({
                 <p className="text-xs text-muted-foreground">
                     {t('Maximum tokens for conversation summarization output (default: 500)')}
                 </p>
+            </div>
+
+            <div className="flex items-center justify-between rounded-lg border p-3">
+                <div className="space-y-0.5">
+                    <Label htmlFor="is_default" className="text-sm font-medium">
+                        {t('Default Provider')}
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                        {t('Use this provider by default for website generation across all plans')}
+                    </p>
+                </div>
+                <Switch
+                    id="is_default"
+                    checked={Boolean(formData.is_default)}
+                    onCheckedChange={(checked) => setFormData({ ...formData, is_default: checked })}
+                />
             </div>
         </div>
     );
@@ -333,26 +375,29 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
     const [selectedProvider, setSelectedProvider] = useState<AiProvider | null>(null);
     const [providerToDelete, setProviderToDelete] = useState<AiProvider | null>(null);
     const [isTestingConnection, setIsTestingConnection] = useState<number | null>(null);
+    const [isTestingDirect, setIsTestingDirect] = useState(false);
     const [showApiKey, setShowApiKey] = useState(false);
     const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
     const [formData, setFormData] = useState({
         name: '',
-        type: 'openai' as AiProviderType,
+        type: 'anthropic' as AiProviderType,
         api_key: '',
-        default_model: defaultModels['openai']?.[0] || '',
+        default_model: defaultModels['anthropic']?.[0] || 'claude-3-5-sonnet-20241022',
         max_tokens: 8192,
         summarizer_max_tokens: 500,
+        is_default: providers.length === 0,
     });
 
     const resetForm = () => {
         setFormData({
             name: '',
-            type: 'openai',
+            type: 'anthropic',
             api_key: '',
-            default_model: defaultModels['openai']?.[0] || '',
+            default_model: defaultModels['anthropic']?.[0] || 'claude-3-5-sonnet-20241022',
             max_tokens: 8192,
             summarizer_max_tokens: 500,
+            is_default: providers.length === 0,
         });
         setShowApiKey(false);
         setFormErrors({});
@@ -409,6 +454,16 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
         });
     };
 
+    const handleSetDefault = (provider: AiProvider) => {
+        router.put(route('admin.ai-providers.update', provider.id), {
+            is_default: true,
+        }, {
+            preserveScroll: true,
+            onSuccess: () => toast.success(t('{{name}} is now the default AI provider', { name: provider.name })),
+            onError: (errors) => toast.error(Object.values(errors)[0] as string),
+        });
+    };
+
     const handleDelete = (provider: AiProvider) => {
         if (provider.plans_count && provider.plans_count > 0) {
             toast.error(t('Cannot delete: Provider is assigned to {{count}} plan(s)', { count: provider.plans_count }));
@@ -452,6 +507,26 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
         }
     };
 
+    const handleTestDirect = async () => {
+        setIsTestingDirect(true);
+        try {
+            const targetUrl = selectedProvider
+                ? route('admin.ai-providers.test', selectedProvider.id)
+                : route('admin.ai-providers.test', 'test');
+            const response = await axios.post(targetUrl, {
+                api_key: formData.api_key,
+                type: formData.type,
+                default_model: formData.default_model,
+            });
+            toast.success(response.data.message || t('Connection successful'));
+        } catch (error) {
+            const message = axios.isAxiosError(error) ? error.response?.data?.message : undefined;
+            toast.error(message || t('Connection failed'));
+        } finally {
+            setIsTestingDirect(false);
+        }
+    };
+
     const openEditDialog = (provider: AiProvider) => {
         setSelectedProvider(provider);
         setFormData({
@@ -461,6 +536,7 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
             default_model: provider.config?.default_model || '',
             max_tokens: provider.config?.max_tokens || 8192,
             summarizer_max_tokens: provider.config?.summarizer_max_tokens || 500,
+            is_default: Boolean(provider.is_default),
         });
         setShowApiKey(false);
         setIsEditDialogOpen(true);
@@ -501,6 +577,30 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
                             {provider.status === 'active' ? t('active') : t('inactive')}
                         </Badge>
                     </div>
+                );
+            },
+        },
+        {
+            accessorKey: 'is_default',
+            header: ({ column }) => (
+                <DataTableColumnHeader column={column} title={t('Default')} />
+            ),
+            cell: ({ row }) => {
+                const provider = row.original;
+                return provider.is_default ? (
+                    <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1 px-2.5 py-0.5">
+                        <Star className="h-3 w-3 fill-white" />
+                        {t('Default')}
+                    </Badge>
+                ) : (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                        onClick={() => handleSetDefault(provider)}
+                    >
+                        {t('Make Default')}
+                    </Button>
                 );
             },
         },
@@ -553,6 +653,12 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
                                 )}
                                 {t('Test Connection')}
                             </TableActionMenuItem>
+                            {!provider.is_default && (
+                                <TableActionMenuItem onClick={() => handleSetDefault(provider)}>
+                                    <Star className="me-2 h-4 w-4" />
+                                    {t('Set as Default')}
+                                </TableActionMenuItem>
+                            )}
                             <TableActionMenuItem onClick={() => openEditDialog(provider)}>
                                 <Pencil className="me-2 h-4 w-4" />
                                 {t('Edit')}
@@ -603,6 +709,8 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
                                 showApiKey={showApiKey}
                                 setShowApiKey={setShowApiKey}
                                 errors={formErrors}
+                                onTestDirect={handleTestDirect}
+                                isTestingDirect={isTestingDirect}
                             />
                             {formData.default_model && (
                                 <CostEstimator
@@ -662,6 +770,8 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
                         setShowApiKey={setShowApiKey}
                         isEdit
                         errors={formErrors}
+                        onTestDirect={handleTestDirect}
+                        isTestingDirect={isTestingDirect}
                     />
                     {formData.default_model && (
                         <CostEstimator

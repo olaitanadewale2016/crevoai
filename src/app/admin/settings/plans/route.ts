@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionContext, isDemoAdminUser } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
-import { setSetting, removeSetting } from '@/lib/settings';
+import { setSetting, removeSetting, clearSettingsCache } from '@/lib/settings';
+import { connectDB, isValidObjectId } from '@/lib/db';
+import { AiProvider } from '@/models/BuilderAi';
 
 export const dynamic = 'force-dynamic';
+
+export async function POST(req: NextRequest) {
+  return PUT(req);
+}
 
 export async function PUT(req: NextRequest) {
   const ctx = await getSessionContext(req);
@@ -32,8 +38,15 @@ export async function PUT(req: NextRequest) {
 
   if (body.default_ai_provider_id) {
     await setSetting('default_ai_provider_id', body.default_ai_provider_id, 'string', 'plans');
+    if (isValidObjectId(body.default_ai_provider_id)) {
+      await connectDB();
+      await AiProvider.updateMany({ _id: { $ne: body.default_ai_provider_id } }, { $set: { is_default: false } });
+      await AiProvider.updateOne({ _id: body.default_ai_provider_id }, { $set: { is_default: true } });
+    }
   } else if (body.default_ai_provider_id === null || body.default_ai_provider_id === '') {
     await removeSetting('default_ai_provider_id');
+    await connectDB();
+    await AiProvider.updateMany({}, { $set: { is_default: false } });
   }
 
   if (body.default_builder_id) {
@@ -41,6 +54,8 @@ export async function PUT(req: NextRequest) {
   } else if (body.default_builder_id === null || body.default_builder_id === '') {
     await removeSetting('default_builder_id');
   }
+
+  await clearSettingsCache();
 
   if (req.headers.get('x-inertia')) {
     return NextResponse.redirect(new URL('/admin/settings', req.url), 303);
