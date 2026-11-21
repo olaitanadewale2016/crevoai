@@ -6,6 +6,8 @@ import { broadcastEvent, broadcastToUser } from '@/lib/broadcast';
 import { Project } from '@/models/Project';
 import { Builder } from '@/models/BuilderAi';
 import { notifyBuildComplete, notifyBuildFailed } from '@/services/notifications';
+import { trackBuildCreditUsage } from '@/services/credits';
+import { triggerBuildAndDeployToR2 } from '@/services/builder';
 
 export const dynamic = 'force-dynamic';
 
@@ -190,7 +192,57 @@ export async function POST(req: NextRequest) {
         if (data.build_status) {
           project.build_status = data.build_status;
         }
+        if (data.tokens_used) {
+          project.estimated_tokens = Number(data.tokens_used);
+        }
         await project.save();
+
+        // 1. Deduct credits appropriately and record usage
+        if (project.user_id && data.tokens_used) {
+          try {
+            await trackBuildCreditUsage({
+              userId: String(project.user_id),
+              projectId: String(project._id),
+              builderEventId: eventId || null,
+              model: data.model || 'openrouter/free',
+              promptTokens: Number(data.prompt_tokens || 0),
+              completionTokens: Number(data.completion_tokens || 0),
+              totalTokens: Number(data.tokens_used || 0),
+              action: 'build',
+            });
+          } catch (creditErr) {
+            console.error('Error tracking build credit usage:', creditErr);
+          }
+        }
+
+        // 2. Trigger Vite build and deploy preview to R2 automatically
+        const shouldBuildPreview =
+          data.files_changed ||
+          data.build_status === 'completed' ||
+          data.build_required;
+        if (shouldBuildPreview && project.builder_id) {
+          Builder.findById(project.builder_id)
+            .then(async (builderDoc) => {
+              if (builderDoc) {
+                const buildRes = await triggerBuildAndDeployToR2(project, builderDoc);
+                if (buildRes.success) {
+                  await broadcastEvent(`session.${sessionId}`, 'status', {
+                    status: 'completed',
+                    preview_url: `/preview/${project._id}`,
+                    message: 'Build completed successfully',
+                  });
+                  if (project.user_id) {
+                    await broadcastToUser(String(project.user_id), 'project.status', {
+                      project_id: project._id,
+                      status: 'completed',
+                      preview_url: `/preview/${project._id}`,
+                    });
+                  }
+                }
+              }
+            })
+            .catch((err) => console.error('Error auto-building preview:', err));
+        }
 
         if (project.user_id) {
           await broadcastToUser(String(project.user_id), 'project.status', {
@@ -226,6 +278,38 @@ export async function POST(req: NextRequest) {
           message: finalMsg,
         });
       }
+      break;
+    }
+
+    case 'token_usage': {
+      if (project && data.total) {
+        await Project.updateOne(
+          { _id: project._id },
+          { $set: { estimated_tokens: Number(data.total) } }
+        );
+      }
+      if (!pusherActive) {
+        await broadcastEvent(`session.${sessionId}`, 'token_usage', {
+          prompt: data.prompt || 0,
+          completion: data.completion || 0,
+          total: data.total || 0,
+          context: data.context || 0,
+        });
+      }
+      break;
+    }
+
+    case 'credit_warning': {
+      await broadcastEvent(`session.${sessionId}`, 'credit_warning', data);
+      break;
+    }
+
+    case 'credit_exceeded': {
+      if (project) {
+        project.build_status = 'failed';
+        await project.save();
+      }
+      await broadcastEvent(`session.${sessionId}`, 'credit_exceeded', data);
       break;
     }
 

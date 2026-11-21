@@ -28,7 +28,7 @@ export async function POST(
   }
 
   const builderId = project.builder_id;
-  const builder = builderId ? await Builder.findById(builderId) : await Builder.findOne({ is_active: true });
+  const builder = builderId ? await Builder.findById(builderId) : await Builder.findOne({ status: 'active' });
   if (!builder) {
     return NextResponse.json({ error: 'No builder assigned to this project' }, { status: 404 });
   }

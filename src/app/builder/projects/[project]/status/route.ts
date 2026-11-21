@@ -29,9 +29,15 @@ export async function GET(
   // Quick mode: fast DB-only status check for frontend polling
   const quickParam = req.nextUrl.searchParams.get('quick');
   if (quickParam === '1' || quickParam === 'true') {
-    const data: Record<string, unknown> = { status: project.build_status };
+    const previewExists = await projectPreviewExists(project);
+    const data: Record<string, unknown> = {
+      status: project.build_status,
+      preview_url: previewExists ? `/preview/${project._id}` : null,
+      has_preview: previewExists,
+      tokens_used: project.estimated_tokens || 0,
+    };
     if (project.build_status === 'completed' || project.build_status === 'failed') {
-      data.recent_messages = (project.conversation_history || []).slice(-10);
+      data.recent_messages = (project.conversation_history || []).slice(-15);
     }
     return NextResponse.json(data);
   }

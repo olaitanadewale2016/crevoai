@@ -133,7 +133,7 @@ export async function getAiConfigForUser(user: IUser) {
   const model = provider.config?.default_model || provider.available_models?.[0] || AI_DEFAULT_MODELS[pType]?.[0];
   const maxTokens = Number(provider.config?.max_tokens || 8192);
   const summTokens = Number(provider.config?.summarizer_max_tokens || 1500);
-  const unlimited = plan?.monthly_build_credits === -1;
+  const unlimited = user.role === 'admin' || plan?.monthly_build_credits === -1;
 
   return {
     agent: {
