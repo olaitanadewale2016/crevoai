@@ -125,7 +125,6 @@ const MODEL_PRICING = {
     'baidu/ernie-5.5-flash-preview:free': { input: 0.0, output: 0.0 },
     'liquid/lfm-3-1.7b:free': { input: 0.0, output: 0.0 },
     'recursive/flint-v1.0:free': { input: 0.0, output: 0.0 },
-    'google/gemini-2.0-flash-exp:free': { input: 0.0, output: 0.0 },
     'google/gemini-2.0-flash-001': { input: 0.1, output: 0.4 },
     'meta-llama/llama-3.3-70b-instruct:free': { input: 0.0, output: 0.0 },
     'meta-llama/llama-3.3-70b-instruct': { input: 0.13, output: 0.4 },
