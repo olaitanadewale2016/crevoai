@@ -265,6 +265,12 @@ export default function GeneralSettingsTab({ settings, languages }: Props) {
     const originalTheme = useRef(settings.color_theme || 'neutral');
 
     useEffect(() => {
+        if (settings.color_theme) {
+            originalTheme.current = settings.color_theme;
+        }
+    }, [settings.color_theme]);
+
+    useEffect(() => {
         if (data.color_theme) {
             document.documentElement.setAttribute('data-theme', data.color_theme);
             // Dispatch event for components like ApplicationLogo to update
@@ -274,8 +280,8 @@ export default function GeneralSettingsTab({ settings, languages }: Props) {
 
     // Restore original theme on unmount (if user navigates away without saving)
     useEffect(() => {
-        const themeToRestore = originalTheme.current;
         return () => {
+            const themeToRestore = originalTheme.current;
             document.documentElement.setAttribute('data-theme', themeToRestore);
             window.dispatchEvent(new CustomEvent('colorThemePreview', { detail: null }));
         };
@@ -300,7 +306,10 @@ export default function GeneralSettingsTab({ settings, languages }: Props) {
         e.preventDefault();
         put(route('admin.settings.general'), {
             preserveScroll: true,
-            onSuccess: () => toast.success(t('General settings updated')),
+            onSuccess: () => {
+                originalTheme.current = data.color_theme;
+                toast.success(t('General settings updated'));
+            },
             onError: () => toast.error(t('Failed to update settings')),
         });
     };
