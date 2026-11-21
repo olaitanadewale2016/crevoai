@@ -192,13 +192,18 @@ export async function POST(
       ? body.template_id.trim()
       : null;
 
-  // On first build (empty history), auto-use the template chosen during project creation
-  if (
-    !templateId &&
-    project.template_id &&
-    (!project.conversation_history || project.conversation_history.length === 0)
-  ) {
-    templateId = String(project.template_id);
+  // On first build (empty history), auto-use the template chosen during project creation or default
+  if (!templateId && (!project.conversation_history || project.conversation_history.length === 0)) {
+    if (project.template_id) {
+      templateId = String(project.template_id);
+    } else {
+      const defaultTemplate = await Template.findOne({
+        $or: [{ is_system: true }, { slug: 'default' }],
+      }).lean();
+      if (defaultTemplate) {
+        templateId = String(defaultTemplate._id);
+      }
+    }
   }
 
   if (templateId) {

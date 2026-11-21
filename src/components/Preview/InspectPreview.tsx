@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';

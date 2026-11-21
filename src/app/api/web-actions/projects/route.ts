@@ -7,7 +7,7 @@ import {
 } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { generateUuidV7 } from '@/lib/crypto';
-import { Project } from '@/models/Project';
+import { Project, Template } from '@/models/Project';
 import { canPerformBuild } from '@/services/credits';
 
 export const dynamic = 'force-dynamic';
@@ -72,12 +72,22 @@ export async function POST(req: NextRequest) {
   const name = prompt.length > 50 ? `${prompt.slice(0, 50)}...` : prompt;
   const projectId = generateUuidV7();
 
+  let templateId = body.template_id || null;
+  if (!templateId) {
+    const defaultTemplate = await Template.findOne({
+      $or: [{ is_system: true }, { slug: 'default' }],
+    }).lean();
+    if (defaultTemplate) {
+      templateId = String(defaultTemplate._id);
+    }
+  }
+
   const project = await Project.create({
     _id: projectId,
     user_id: user._id,
     name,
     initial_prompt: prompt,
-    template_id: body.template_id || null,
+    template_id: templateId,
     theme_preset: body.theme_preset || 'default',
     last_viewed_at: new Date(),
     build_status: 'idle',
