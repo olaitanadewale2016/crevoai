@@ -274,7 +274,7 @@ export interface BuilderDetails {
 }
 
 // AI Provider types
-export type AiProviderType = 'openai' | 'anthropic' | 'grok' | 'deepseek' | 'zhipu' | 'abhibots';
+export type AiProviderType = 'openai' | 'anthropic' | 'grok' | 'deepseek' | 'zhipu' | 'abhibots' | 'gemini' | 'openrouter';
 
 export interface AiProvider {
     id: number;

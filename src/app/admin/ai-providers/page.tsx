@@ -9,6 +9,8 @@ import { AiProvider, Plan } from '@/models';
 export const dynamic = 'force-dynamic';
 
 const PROVIDER_TYPES = {
+  gemini: 'Google Gemini',
+  openrouter: 'OpenRouter',
   abhibots: 'Abhibots (Opus / Claude 5)',
   anthropic: 'Anthropic (Claude)',
   openai: 'OpenAI',
@@ -18,6 +20,21 @@ const PROVIDER_TYPES = {
 };
 
 const DEFAULT_MODELS = {
+  gemini: [
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite-preview-02-05',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
+  ],
+  openrouter: [
+    'google/gemini-2.0-flash-exp:free',
+    'google/gemini-2.0-flash-001',
+    'meta-llama/llama-3.3-70b-instruct:free',
+    'meta-llama/llama-3.3-70b-instruct',
+    'deepseek/deepseek-chat',
+    'anthropic/claude-3.5-sonnet',
+    'openai/gpt-4o',
+  ],
   abhibots: [
     'claude-sonnet-5',
     'claude-3-5-sonnet',
@@ -58,6 +75,21 @@ const DEFAULT_MODELS = {
 };
 
 const MODEL_PRICING = {
+  gemini: {
+    'gemini-2.0-flash': { input: 0.1, output: 0.4 },
+    'gemini-2.0-flash-lite-preview-02-05': { input: 0.075, output: 0.3 },
+    'gemini-1.5-flash': { input: 0.075, output: 0.3 },
+    'gemini-1.5-pro': { input: 1.25, output: 5.0 },
+  },
+  openrouter: {
+    'google/gemini-2.0-flash-exp:free': { input: 0.0, output: 0.0 },
+    'google/gemini-2.0-flash-001': { input: 0.1, output: 0.4 },
+    'meta-llama/llama-3.3-70b-instruct:free': { input: 0.0, output: 0.0 },
+    'meta-llama/llama-3.3-70b-instruct': { input: 0.13, output: 0.4 },
+    'deepseek/deepseek-chat': { input: 0.27, output: 1.1 },
+    'anthropic/claude-3.5-sonnet': { input: 3.0, output: 15.0 },
+    'openai/gpt-4o': { input: 2.5, output: 10.0 },
+  },
   abhibots: {
     'claude-sonnet-5': { input: 3.0, output: 15.0 },
     'claude-3-5-sonnet': { input: 3.0, output: 15.0 },

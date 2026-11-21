@@ -46,9 +46,11 @@ export function getBuilderFullUrl(builder: { url: string; port: number }): strin
 }
 
 // 2. AiProvider
-export type AiProviderType = 'openai' | 'anthropic' | 'grok' | 'deepseek' | 'zhipu' | 'abhibots';
+export type AiProviderType = 'openai' | 'anthropic' | 'grok' | 'deepseek' | 'zhipu' | 'abhibots' | 'gemini' | 'openrouter';
 
 export const AI_PROVIDER_TYPES: Record<AiProviderType, string> = {
+  gemini: 'Google Gemini',
+  openrouter: 'OpenRouter',
   abhibots: 'Abhibots (Opus / Claude 5)',
   anthropic: 'Anthropic (Claude)',
   openai: 'OpenAI',
@@ -58,6 +60,8 @@ export const AI_PROVIDER_TYPES: Record<AiProviderType, string> = {
 };
 
 export const AI_DEFAULT_BASE_URLS: Record<AiProviderType, string> = {
+  gemini: 'https://generativelanguage.googleapis.com/v1beta/openai',
+  openrouter: 'https://openrouter.ai/api/v1',
   abhibots: 'https://opus.abhibots.com',
   openai: 'https://api.openai.com/v1',
   anthropic: 'https://api.anthropic.com',
@@ -67,6 +71,16 @@ export const AI_DEFAULT_BASE_URLS: Record<AiProviderType, string> = {
 };
 
 export const AI_DEFAULT_MODELS: Record<AiProviderType, string[]> = {
+  gemini: ['gemini-2.0-flash', 'gemini-2.0-flash-lite-preview-02-05', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+  openrouter: [
+    'google/gemini-2.0-flash-exp:free',
+    'google/gemini-2.0-flash-001',
+    'meta-llama/llama-3.3-70b-instruct:free',
+    'meta-llama/llama-3.3-70b-instruct',
+    'deepseek/deepseek-chat',
+    'anthropic/claude-3.5-sonnet',
+    'openai/gpt-4o',
+  ],
   abhibots: ['claude-sonnet-5', 'claude-3-5-sonnet', 'claude-opus-4-5'],
   openai: ['gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'gpt-4o-mini'],
   anthropic: ['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-3-5-sonnet-20241022'],
@@ -76,6 +90,14 @@ export const AI_DEFAULT_MODELS: Record<AiProviderType, string[]> = {
 };
 
 export const AI_MODEL_PRICING: Record<string, { input: number; output: number }> = {
+  'gemini-2.0-flash': { input: 0.1, output: 0.4 },
+  'gemini-2.0-flash-lite-preview-02-05': { input: 0.075, output: 0.3 },
+  'gemini-1.5-flash': { input: 0.075, output: 0.3 },
+  'gemini-1.5-pro': { input: 1.25, output: 5.0 },
+  'google/gemini-2.0-flash-exp:free': { input: 0.0, output: 0.0 },
+  'google/gemini-2.0-flash-001': { input: 0.1, output: 0.4 },
+  'meta-llama/llama-3.3-70b-instruct:free': { input: 0.0, output: 0.0 },
+  'meta-llama/llama-3.3-70b-instruct': { input: 0.13, output: 0.4 },
   'claude-sonnet-5': { input: 3.0, output: 15.0 },
   'claude-3-5-sonnet': { input: 3.0, output: 15.0 },
   'gpt-5': { input: 1.25, output: 10.0 },
@@ -142,7 +164,7 @@ const AiProviderSchema = new Schema<IAiProvider>(
     name: { type: String, required: true },
     type: {
       type: String,
-      enum: ['openai', 'anthropic', 'grok', 'deepseek', 'zhipu', 'abhibots'],
+      enum: ['openai', 'anthropic', 'grok', 'deepseek', 'zhipu', 'abhibots', 'gemini', 'openrouter'],
       required: true,
       index: true,
     },

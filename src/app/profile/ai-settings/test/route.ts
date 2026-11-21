@@ -118,6 +118,36 @@ export async function POST(req: NextRequest) {
         }),
         signal: AbortSignal.timeout(12_000),
       });
+    } else if (provider === 'gemini') {
+      res = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gemini-2.0-flash',
+          max_tokens: 5,
+          messages: [{ role: 'user', content: 'Hi' }],
+        }),
+        signal: AbortSignal.timeout(12_000),
+      });
+    } else if (provider === 'openrouter') {
+      res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'HTTP-Referer': 'https://crevoai.com',
+          'X-Title': 'Crevo',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.0-flash-exp:free',
+          max_tokens: 5,
+          messages: [{ role: 'user', content: 'Hi' }],
+        }),
+        signal: AbortSignal.timeout(12_000),
+      });
     } else {
       return NextResponse.json({ success: false, message: 'Unsupported AI provider.' }, { status: 400 });
     }

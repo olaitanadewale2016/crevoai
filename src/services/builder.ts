@@ -270,7 +270,12 @@ export async function startBuilderSession(params: {
   templateUrl?: string | null;
 }) {
   const { project, user, builder, goal, templateId, templateUrl } = params;
-  const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+  const appUrl = (
+    process.env.APP_URL ||
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '') ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '') ||
+    'https://crevoai-web.vercel.app'
+  ).replace(/\/+$/, '');
   const aiConfig = await getAiConfigForUser(user);
   if (!aiConfig) throw new Error('No active AI provider configured.');
 
@@ -465,7 +470,12 @@ export async function buildDynamicHtml(
   project: IProject,
   mode: 'preview' | 'app' | 'published'
 ): Promise<string> {
-  const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+  const appUrl = (
+    process.env.APP_URL ||
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '') ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '') ||
+    'https://crevoai-web.vercel.app'
+  ).replace(/\/+$/, '');
   const baseHref =
     mode === 'preview' ? `/preview/${project._id}/` : mode === 'app' ? `/app/${project._id}/` : '/';
 

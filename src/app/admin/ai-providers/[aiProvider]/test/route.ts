@@ -231,6 +231,58 @@ export async function POST(
         { message: data.error?.message || `xAI Grok connection failed (HTTP ${res.status})` },
         { status: 422 }
       );
+    } else if (type === 'gemini') {
+      const testModel = model || 'gemini-2.0-flash';
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: testModel,
+          max_tokens: 5,
+          messages: [{ role: 'user', content: 'Hi' }],
+        }),
+        signal: AbortSignal.timeout(12000),
+      });
+
+      if (res.ok) {
+        return NextResponse.json({ message: 'Connection successful! Google Gemini API key is active.' });
+      }
+
+      const data = await res.json().catch(() => ({}));
+      return NextResponse.json(
+        { message: data.error?.message || `Google Gemini connection failed (HTTP ${res.status})` },
+        { status: 422 }
+      );
+    } else if (type === 'openrouter') {
+      const testModel = model || 'google/gemini-2.0-flash-exp:free';
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'HTTP-Referer': 'https://crevoai.com',
+          'X-Title': 'Crevo',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: testModel,
+          max_tokens: 5,
+          messages: [{ role: 'user', content: 'Hi' }],
+        }),
+        signal: AbortSignal.timeout(12000),
+      });
+
+      if (res.ok) {
+        return NextResponse.json({ message: 'Connection successful! OpenRouter API key is active.' });
+      }
+
+      const data = await res.json().catch(() => ({}));
+      return NextResponse.json(
+        { message: data.error?.message || `OpenRouter connection failed (HTTP ${res.status})` },
+        { status: 422 }
+      );
     } else {
       // Zhipu or generic
       const isAnthropicFormat = baseUrl.includes('anthropic');

@@ -50,9 +50,22 @@ export async function POST(req: NextRequest) {
   // Handle event types
   switch (eventType) {
     case 'status': {
+      const statusVal = data.status || '';
+      if (project && (statusVal === 'failed' || statusVal === 'cancelled')) {
+        project.build_status = statusVal;
+        if (data.message) {
+          project.conversation_history = project.conversation_history || [];
+          project.conversation_history.push({
+            role: 'assistant',
+            content: `Build ${statusVal}: ${data.message}`,
+            created_at: new Date(),
+          });
+        }
+        await project.save();
+      }
       if (!pusherActive) {
         await broadcastEvent(`session.${sessionId}`, 'status', {
-          status: data.status || '',
+          status: statusVal,
           message: data.message || '',
         });
       }
@@ -144,6 +157,16 @@ export async function POST(req: NextRequest) {
 
     case 'error': {
       const errorMsg = data.error || 'Unknown builder error';
+      if (project) {
+        project.build_status = 'failed';
+        project.conversation_history = project.conversation_history || [];
+        project.conversation_history.push({
+          role: 'assistant',
+          content: `Build failed: ${errorMsg}`,
+          created_at: new Date(),
+        });
+        await project.save();
+      }
       if (!pusherActive) {
         await broadcastEvent(`session.${sessionId}`, 'error', { error: errorMsg });
       }

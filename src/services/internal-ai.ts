@@ -12,6 +12,8 @@ const CHEAP_MODELS: Record<string, string> = {
   deepseek: 'deepseek-chat',
   zhipu: 'glm-4.5-air',
   abhibots: 'claude-sonnet-5',
+  gemini: 'gemini-2.0-flash',
+  openrouter: 'google/gemini-2.0-flash-exp:free',
 };
 
 export const STATIC_HERO_HEADLINES = [
