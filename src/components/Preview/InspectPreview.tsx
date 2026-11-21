@@ -10,7 +10,9 @@ import { usePreviewInspector } from '@/hooks/usePreviewInspector';
 import { usePreviewThemeSync } from '@/hooks/usePreviewThemeSync';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { Button } from '@/components/ui/button';
-import { MousePointerClick, Loader2, Palette, Undo2, Redo2, Bot, Cog, Wrench } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { MousePointerClick, Loader2, Palette, Undo2, Redo2, Bot, Cog, Wrench, History, Clock } from 'lucide-react';
+import axios from 'axios';
 import { toast } from 'sonner';
 import type { InspectorElement, ElementMention, PendingEdit } from '@/types/inspector';
 import { formatStyleEditMessage } from '@/lib/style-save';
@@ -108,6 +110,59 @@ export function InspectPreview({
     const previousMode = useRef<PreviewMode>(mode);
     const [isSaving, setIsSaving] = useState(false);
     const [iframeReady, setIframeReady] = useState(false);
+
+    // Revision history state
+    interface RevisionItem {
+        id: number;
+        label: string;
+        file_count: number;
+        timestamp: string;
+    }
+    const [revisionsOpen, setRevisionsOpen] = useState(false);
+    const [revisions, setRevisions] = useState<RevisionItem[]>([]);
+    const [currentRevisionIndex, setCurrentRevisionIndex] = useState<number>(-1);
+    const [isLoadingRevisions, setIsLoadingRevisions] = useState(false);
+    const [isRestoringRevision, setIsRestoringRevision] = useState(false);
+
+    const fetchRevisions = useCallback(async () => {
+        if (!projectId) return;
+        setIsLoadingRevisions(true);
+        try {
+            const res = await axios.get(`/builder/projects/${projectId}/revisions`);
+            if (res.data) {
+                const list = Array.isArray(res.data.revisions) ? res.data.revisions : [];
+                setRevisions(list);
+                setCurrentRevisionIndex(typeof res.data.current === 'number' ? res.data.current : list.length - 1);
+            }
+        } catch {
+            setRevisions([]);
+        } finally {
+            setIsLoadingRevisions(false);
+        }
+    }, [projectId]);
+
+    const handleRestoreRevision = async (targetIndex: number) => {
+        if (!projectId || targetIndex === currentRevisionIndex || isRestoringRevision || isUndoRedoDisabled) return;
+        setIsRestoringRevision(true);
+        try {
+            const steps = Math.abs(currentRevisionIndex - targetIndex);
+            const isBack = targetIndex < currentRevisionIndex;
+            for (let i = 0; i < steps; i++) {
+                if (isBack) {
+                    await axios.post(`/builder/projects/${projectId}/undo`);
+                } else {
+                    await axios.post(`/builder/projects/${projectId}/redo`);
+                }
+            }
+            toast.success(t('Restored checkpoint'));
+            await fetchRevisions();
+            if (onUndo) onUndo();
+        } catch {
+            toast.error(t('Failed to restore checkpoint'));
+        } finally {
+            setIsRestoringRevision(false);
+        }
+    };
 
     // Use the preview inspector hook - only enabled in inspect mode
     const {
@@ -389,6 +444,93 @@ export function InspectPreview({
                         >
                             {isRedoing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Redo2 className="h-3.5 w-3.5" />}
                         </Button>
+
+                        {/* Revision History Panel */}
+                        <Popover open={revisionsOpen} onOpenChange={(open) => {
+                            setRevisionsOpen(open);
+                            if (open) fetchRevisions();
+                        }}>
+                            <PopoverTrigger asChild>
+                                <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className="h-7 w-7 relative"
+                                    title={t('Revision History')}
+                                    disabled={isUndoRedoDisabled}
+                                >
+                                    <History className="h-3.5 w-3.5" />
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-80 p-0 shadow-lg border-border" align="end">
+                                <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-border bg-muted/30">
+                                    <div className="flex items-center gap-1.5 font-medium text-xs">
+                                        <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                                        <span>{t('Revision History')}</span>
+                                    </div>
+                                    {revisions.length > 0 && (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
+                                            {revisions.length} {t('versions')}
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="max-h-72 overflow-y-auto p-2 divide-y divide-border/40">
+                                    {isLoadingRevisions ? (
+                                        <div className="flex items-center justify-center py-6 text-xs text-muted-foreground gap-2">
+                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                            <span>{t('Loading history...')}</span>
+                                        </div>
+                                    ) : revisions.length === 0 ? (
+                                        <div className="py-6 px-3 text-center text-xs text-muted-foreground">
+                                            <History className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                                            <p>{t('No past revisions recorded yet.')}</p>
+                                            <p className="text-[11px] mt-1 text-muted-foreground/70">
+                                                {t('Checkpoints are captured on AI builds and style edits.')}
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        revisions.map((rev, idx) => {
+                                            const isCurrent = idx === currentRevisionIndex;
+                                            return (
+                                                <div
+                                                    key={rev.id ?? idx}
+                                                    className={`flex items-start justify-between gap-2 py-2 px-2 rounded-md transition-colors ${
+                                                        isCurrent ? 'bg-primary/10 border border-primary/20' : 'hover:bg-muted/50'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-start gap-2 min-w-0">
+                                                        <span className={`mt-1 h-2 w-2 rounded-full shrink-0 ${isCurrent ? 'bg-primary' : 'bg-muted-foreground/40'}`} />
+                                                        <div className="min-w-0">
+                                                            <p className="text-xs font-medium truncate text-foreground">
+                                                                {rev.label || `${t('Checkpoint')} #${idx + 1}`}
+                                                            </p>
+                                                            <p className="text-[10px] text-muted-foreground">
+                                                                {rev.timestamp ? new Date(rev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}
+                                                                {rev.file_count ? ` · ${rev.file_count} files` : ''}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    {isCurrent ? (
+                                                        <span className="inline-flex items-center text-[10px] font-semibold text-primary shrink-0 px-1.5 py-0.5 rounded bg-primary/15">
+                                                            {t('Current')}
+                                                        </span>
+                                                    ) : (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="ghost"
+                                                            disabled={isRestoringRevision || isUndoRedoDisabled}
+                                                            onClick={() => handleRestoreRevision(idx)}
+                                                            className="h-6 px-2 text-[11px] shrink-0 hover:bg-primary hover:text-primary-foreground"
+                                                        >
+                                                            {t('Restore')}
+                                                        </Button>
+                                                    )}
+                                                </div>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            </PopoverContent>
+                        </Popover>
                     </div>
                 </div>
 
