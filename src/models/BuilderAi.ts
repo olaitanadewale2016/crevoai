@@ -46,17 +46,19 @@ export function getBuilderFullUrl(builder: { url: string; port: number }): strin
 }
 
 // 2. AiProvider
-export type AiProviderType = 'openai' | 'anthropic' | 'grok' | 'deepseek' | 'zhipu';
+export type AiProviderType = 'openai' | 'anthropic' | 'grok' | 'deepseek' | 'zhipu' | 'abhibots';
 
 export const AI_PROVIDER_TYPES: Record<AiProviderType, string> = {
-  openai: 'OpenAI',
+  abhibots: 'Abhibots (Opus / Claude 5)',
   anthropic: 'Anthropic (Claude)',
+  openai: 'OpenAI',
   grok: 'xAI (Grok)',
   deepseek: 'DeepSeek',
   zhipu: 'ZhipuAI (GLM)',
 };
 
 export const AI_DEFAULT_BASE_URLS: Record<AiProviderType, string> = {
+  abhibots: 'https://opus.abhibots.com',
   openai: 'https://api.openai.com/v1',
   anthropic: 'https://api.anthropic.com',
   grok: 'https://api.x.ai/v1',
@@ -65,6 +67,7 @@ export const AI_DEFAULT_BASE_URLS: Record<AiProviderType, string> = {
 };
 
 export const AI_DEFAULT_MODELS: Record<AiProviderType, string[]> = {
+  abhibots: ['claude-sonnet-5', 'claude-3-5-sonnet', 'claude-opus-4-5'],
   openai: ['gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'gpt-4o-mini'],
   anthropic: ['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-3-5-sonnet-20241022'],
   grok: ['grok-4-1-fast-non-reasoning', 'grok-4', 'grok-3', 'grok-3-mini', 'grok-beta'],
@@ -73,6 +76,8 @@ export const AI_DEFAULT_MODELS: Record<AiProviderType, string[]> = {
 };
 
 export const AI_MODEL_PRICING: Record<string, { input: number; output: number }> = {
+  'claude-sonnet-5': { input: 3.0, output: 15.0 },
+  'claude-3-5-sonnet': { input: 3.0, output: 15.0 },
   'gpt-5': { input: 1.25, output: 10.0 },
   'gpt-5-mini': { input: 0.25, output: 2.0 },
   'gpt-5-nano': { input: 0.05, output: 0.4 },
@@ -137,7 +142,7 @@ const AiProviderSchema = new Schema<IAiProvider>(
     name: { type: String, required: true },
     type: {
       type: String,
-      enum: ['openai', 'anthropic', 'grok', 'deepseek', 'zhipu'],
+      enum: ['openai', 'anthropic', 'grok', 'deepseek', 'zhipu', 'abhibots'],
       required: true,
       index: true,
     },

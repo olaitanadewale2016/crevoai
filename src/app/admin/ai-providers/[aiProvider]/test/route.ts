@@ -117,8 +117,9 @@ export async function POST(
         { message: data.error?.message || `OpenAI connection failed (HTTP ${res.status})` },
         { status: 422 }
       );
-    } else if (type === 'anthropic') {
-      const testModel = model || 'claude-3-5-sonnet-20241022';
+    } else if (type === 'anthropic' || type === 'abhibots') {
+      const defaultTestModel = type === 'abhibots' ? 'claude-sonnet-5' : 'claude-3-5-sonnet-20241022';
+      const testModel = model || defaultTestModel;
       const res = await fetch(`${baseUrl}/v1/messages`, {
         method: 'POST',
         headers: {
@@ -128,14 +129,15 @@ export async function POST(
         },
         body: JSON.stringify({
           model: testModel,
-          max_tokens: 5,
-          messages: [{ role: 'user', content: 'Hi' }],
+          max_tokens: 10,
+          messages: [{ role: 'user', content: 'Hello!' }],
         }),
         signal: AbortSignal.timeout(12000),
       });
 
       if (res.ok) {
-        return NextResponse.json({ message: 'Connection successful! Anthropic API key is active.' });
+        const label = type === 'abhibots' ? 'Abhibots (Opus / Claude 5)' : 'Anthropic';
+        return NextResponse.json({ message: `Connection successful! ${label} is active.` });
       }
 
       const data = await res.json().catch(() => ({}));

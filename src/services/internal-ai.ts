@@ -11,6 +11,7 @@ const CHEAP_MODELS: Record<string, string> = {
   grok: 'grok-4-1-fast-non-reasoning',
   deepseek: 'deepseek-chat',
   zhipu: 'glm-4.5-air',
+  abhibots: 'claude-sonnet-5',
 };
 
 export const STATIC_HERO_HEADLINES = [
@@ -73,7 +74,7 @@ async function callInternalAiJsonArray(prompt: string): Promise<string[] | null>
     const baseUrl = (provider.config?.base_url || AI_DEFAULT_BASE_URLS[provider.type]).replace(/\/+$/, '');
 
     let text = '';
-    if (provider.type === 'anthropic' || provider.type === 'zhipu') {
+    if (provider.type === 'anthropic' || provider.type === 'zhipu' || provider.type === 'abhibots') {
       const res = await fetch(`${baseUrl}/v1/messages`, {
         method: 'POST',
         headers: {

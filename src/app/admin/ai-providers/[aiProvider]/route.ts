@@ -3,7 +3,7 @@ import { connectDB, isValidObjectId } from '@/lib/db';
 import { getSessionContext, isDemoAdminUser } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { encryptJson } from '@/lib/crypto';
-import { AiProvider } from '@/models/BuilderAi';
+import { AiProvider, AiProviderType } from '@/models/BuilderAi';
 import { Plan } from '@/models/Billing';
 import { setSetting, removeSetting, clearSettingsCache } from '@/lib/settings';
 import { clearAdminStatsCache } from '@/services/admin-stats';
@@ -38,6 +38,7 @@ export async function PUT(
 
   const body = await parseRequestBody<{
     name?: string;
+    type?: AiProviderType;
     api_key?: string;
     default_model?: string;
     max_tokens?: number;
@@ -49,6 +50,7 @@ export async function PUT(
   }>(req);
 
   if (body.name !== undefined && body.name.trim()) provider.name = body.name.trim();
+  if (body.type !== undefined && body.type) provider.type = body.type;
   if (body.status !== undefined) provider.status = body.status;
 
   // IMPORTANT: Only update credentials if a non-empty API key was intentionally supplied.

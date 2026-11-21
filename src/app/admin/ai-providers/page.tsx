@@ -9,14 +9,20 @@ import { AiProvider, Plan } from '@/models';
 export const dynamic = 'force-dynamic';
 
 const PROVIDER_TYPES = {
-  openai: 'OpenAI',
+  abhibots: 'Abhibots (Opus / Claude 5)',
   anthropic: 'Anthropic (Claude)',
-  grok: 'xAI (Grok)',
+  openai: 'OpenAI',
   deepseek: 'DeepSeek',
+  grok: 'xAI (Grok)',
   zhipu: 'ZhipuAI (GLM)',
 };
 
 const DEFAULT_MODELS = {
+  abhibots: [
+    'claude-sonnet-5',
+    'claude-3-5-sonnet',
+    'claude-opus-4-5',
+  ],
   anthropic: [
     'claude-3-7-sonnet-20250219',
     'claude-3-5-sonnet-20241022',
@@ -52,6 +58,11 @@ const DEFAULT_MODELS = {
 };
 
 const MODEL_PRICING = {
+  abhibots: {
+    'claude-sonnet-5': { input: 3.0, output: 15.0 },
+    'claude-3-5-sonnet': { input: 3.0, output: 15.0 },
+    'claude-opus-4-5': { input: 5.0, output: 25.0 },
+  },
   openai: {
     'gpt-4o': { input: 2.5, output: 10.0 },
     'gpt-4o-mini': { input: 0.15, output: 0.6 },

@@ -103,6 +103,21 @@ export async function POST(req: NextRequest) {
         }),
         signal: AbortSignal.timeout(10_000),
       });
+    } else if (provider === 'abhibots') {
+      res = await fetch('https://opus.abhibots.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-5',
+          max_tokens: 5,
+          messages: [{ role: 'user', content: 'Hello!' }],
+        }),
+        signal: AbortSignal.timeout(12_000),
+      });
     } else {
       return NextResponse.json({ success: false, message: 'Unsupported AI provider.' }, { status: 400 });
     }
