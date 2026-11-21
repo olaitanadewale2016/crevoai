@@ -23,8 +23,11 @@ export async function GET(
   ];
 
   for (const candidate of localCandidates) {
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-      const buf = fs.readFileSync(candidate);
+    if (
+      fs.existsSync(/*turbopackIgnore: true*/ candidate) &&
+      fs.statSync(/*turbopackIgnore: true*/ candidate).isFile()
+    ) {
+      const buf = fs.readFileSync(/*turbopackIgnore: true*/ candidate);
       return new NextResponse(buf, {
         headers: {
           'Content-Type': guessContentType(rawKey),
