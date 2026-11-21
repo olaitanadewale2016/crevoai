@@ -234,6 +234,7 @@ async function performRequest(
         return;
       }
       if (globalNextRouter) {
+        await globalRefreshShared?.();
         globalNextRouter.push(json.redirect, { scroll: !options.preserveScroll });
         globalNextRouter.refresh();
       } else {
@@ -394,6 +395,44 @@ export function AppPageProvider({
       if (globalNextRouter === nextRouter) globalNextRouter = null;
     };
   }, [nextRouter, setFlash, refreshShared]);
+
+  // Real-time synchronization of theme, title, and metadata to DOM when sharedProps change
+  useEffect(() => {
+    if (typeof document === 'undefined' || !sharedProps.appSettings) return;
+    const settings = sharedProps.appSettings;
+    if (settings.color_theme) {
+      document.documentElement.setAttribute('data-theme', settings.color_theme);
+    }
+    if (settings.site_name) {
+      (window as any).__APP_NAME__ = settings.site_name;
+    }
+  }, [sharedProps.appSettings]);
+
+  // Real-time Pusher listener for immediate setting updates across all client sessions
+  useEffect(() => {
+    const key = sharedProps.appSettings?.pusher_key;
+    const cluster = sharedProps.appSettings?.pusher_cluster || 'mt1';
+    if (!key || typeof window === 'undefined') return;
+
+    let pusherInstance: any = null;
+    let channel: any = null;
+
+    import('pusher-js')
+      .then(({ default: Pusher }) => {
+        pusherInstance = new Pusher(key, { cluster });
+        channel = pusherInstance.subscribe('public-system');
+        channel.bind('settings.updated', () => {
+          refreshShared();
+          nextRouter?.refresh();
+        });
+      })
+      .catch(() => {});
+
+    return () => {
+      if (channel) channel.unbind_all();
+      if (pusherInstance) pusherInstance.disconnect();
+    };
+  }, [sharedProps.appSettings?.pusher_key, sharedProps.appSettings?.pusher_cluster, refreshShared, nextRouter]);
 
   // Global Radix DropdownMenu popper reposition fix (ported from Install/resources/js/bootstrap.ts)
   useEffect(() => {

@@ -72,6 +72,25 @@ export async function getSetting<T = any>(key: string, defaultValue?: T): Promis
   }
 }
 
+export async function invalidateAllSettingsCaches(group?: string): Promise<void> {
+  try {
+    await clearSettingsCache();
+    await cacheForgetPrefix('landing_page:config:');
+    await cacheForgetPrefix('internal_ai:');
+    try {
+      const { revalidatePath } = await import('next/cache');
+      revalidatePath('/', 'layout');
+    } catch {}
+    try {
+      const { broadcastEvent } = await import('@/lib/broadcast');
+      await broadcastEvent('public-system', 'settings.updated', {
+        timestamp: Date.now(),
+        group: group || 'all',
+      });
+    } catch {}
+  } catch {}
+}
+
 export async function setSetting(
   key: string,
   value: unknown,
@@ -92,7 +111,7 @@ export async function setSetting(
 
   const parsed = parseValue(serialized, finalType);
   await cacheSet(`setting.${key}`, parsed === null ? MISSING_SENTINEL : parsed, CACHE_TTL);
-  await cacheForget(`settings.group.${finalGroup}`);
+  await invalidateAllSettingsCaches(finalGroup);
 }
 
 export async function setSettingsMany(
@@ -118,7 +137,7 @@ export async function setSettingsMany(
     await cacheSet(`setting.${key}`, parsed === null ? MISSING_SENTINEL : parsed, CACHE_TTL);
   }
 
-  await cacheForget(`settings.group.${group}`);
+  await invalidateAllSettingsCaches(group);
 }
 
 export async function getSettingGroup(group: string): Promise<Record<string, any>> {
@@ -143,10 +162,7 @@ export async function getSettingGroup(group: string): Promise<Record<string, any
 export async function removeSetting(key: string): Promise<void> {
   await connectDB();
   const doc = await SystemSetting.findOneAndDelete({ key }).lean();
-  await cacheForget(`setting.${key}`);
-  if (doc?.group) {
-    await cacheForget(`settings.group.${doc.group}`);
-  }
+  await invalidateAllSettingsCaches(doc?.group);
 }
 
 export async function clearSettingsCache(): Promise<void> {
