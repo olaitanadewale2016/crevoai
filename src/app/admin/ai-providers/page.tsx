@@ -21,13 +21,23 @@ const PROVIDER_TYPES = {
 
 const DEFAULT_MODELS = {
   gemini: [
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
+    'gemini-2.0-pro-exp-02-05',
     'gemini-2.0-flash',
-    'gemini-2.0-flash-lite-preview-02-05',
-    'gemini-1.5-flash',
+    'gemini-2.0-flash-lite',
+    'gemini-2.0-flash-thinking-exp-01-21',
     'gemini-1.5-pro',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-8b',
   ],
   openrouter: [
     'openrouter/free',
+    'google/gemini-2.0-flash-exp:free',
+    'google/gemini-2.0-flash-thinking-exp:free',
+    'google/gemini-2.0-pro-exp-02-05:free',
+    'google/gemini-1.5-flash:free',
+    'google/gemini-1.5-pro:free',
     'google/gemma-4-31b-it:free',
     'google/gemma-4-26b-a4b-it:free',
     'nvidia/nemotron-3.5-lightning:free',
@@ -39,6 +49,7 @@ const DEFAULT_MODELS = {
     'baidu/ernie-5.5-flash-preview:free',
     'liquid/lfm-3-1.7b:free',
     'recursive/flint-v1.0:free',
+    'meta-llama/llama-3.3-70b-instruct:free',
     'meta-llama/llama-3.3-70b-instruct',
     'deepseek/deepseek-chat',
     'anthropic/claude-3.5-sonnet',
@@ -85,13 +96,24 @@ const DEFAULT_MODELS = {
 
 const MODEL_PRICING = {
   gemini: {
+    'gemini-2.5-pro': { input: 1.25, output: 5.0 },
+    'gemini-2.5-flash': { input: 0.15, output: 0.6 },
+    'gemini-2.0-pro-exp-02-05': { input: 0.0, output: 0.0 },
     'gemini-2.0-flash': { input: 0.1, output: 0.4 },
+    'gemini-2.0-flash-lite': { input: 0.075, output: 0.3 },
     'gemini-2.0-flash-lite-preview-02-05': { input: 0.075, output: 0.3 },
+    'gemini-2.0-flash-thinking-exp-01-21': { input: 0.0, output: 0.0 },
     'gemini-1.5-flash': { input: 0.075, output: 0.3 },
+    'gemini-1.5-flash-8b': { input: 0.0375, output: 0.15 },
     'gemini-1.5-pro': { input: 1.25, output: 5.0 },
   },
   openrouter: {
     'openrouter/free': { input: 0.0, output: 0.0 },
+    'google/gemini-2.0-flash-exp:free': { input: 0.0, output: 0.0 },
+    'google/gemini-2.0-flash-thinking-exp:free': { input: 0.0, output: 0.0 },
+    'google/gemini-2.0-pro-exp-02-05:free': { input: 0.0, output: 0.0 },
+    'google/gemini-1.5-flash:free': { input: 0.0, output: 0.0 },
+    'google/gemini-1.5-pro:free': { input: 0.0, output: 0.0 },
     'google/gemma-4-31b-it:free': { input: 0.0, output: 0.0 },
     'google/gemma-4-26b-a4b-it:free': { input: 0.0, output: 0.0 },
     'nvidia/nemotron-3.5-lightning:free': { input: 0.0, output: 0.0 },
