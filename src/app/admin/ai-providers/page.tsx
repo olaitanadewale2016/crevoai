@@ -3,6 +3,7 @@ import AiProviders from '@/Pages/Admin/AiProviders';
 import { connectDB } from '@/lib/db';
 import { getSessionContext, serializeUser } from '@/lib/auth';
 import { getSharedAppProps } from '@/services/shared-context';
+import { decryptJson, maskApiKey } from '@/lib/crypto';
 import { AiProvider, Plan } from '@/models';
 
 export const dynamic = 'force-dynamic';
@@ -106,24 +107,39 @@ export default async function AdminAiProvidersPage() {
 
   const countMap = new Map(planCounts.map((c) => [String(c._id), c.count]));
 
-  const serializedProviders = providerDocs.map((p) => ({
-    id: String(p._id) as any,
-    name: p.name,
-    type: p.type as any,
-    type_label: PROVIDER_TYPES[p.type as keyof typeof PROVIDER_TYPES] || p.type,
-    status: (p.status || 'active') as 'active' | 'inactive',
-    is_default: Boolean(p.is_default),
-    has_credentials: Boolean(p.credentials),
-    available_models: p.available_models?.length
-      ? p.available_models
-      : DEFAULT_MODELS[p.type as keyof typeof DEFAULT_MODELS] || [],
-    config: p.config || {},
-    plans_count: countMap.get(String(p._id)) || 0,
-    total_requests: p.total_requests || 0,
-    last_used_at: p.last_used_at ? new Date(p.last_used_at).toISOString() : null,
-    created_at: p.created_at ? new Date(p.created_at).toISOString() : new Date().toISOString(),
-    updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : new Date().toISOString(),
-  }));
+  const serializedProviders = providerDocs.map((p) => {
+    let maskedKey: string | null = null;
+    if (p.credentials) {
+      try {
+        const creds = decryptJson<{ api_key?: string }>(p.credentials);
+        if (creds?.api_key) {
+          maskedKey = maskApiKey(creds.api_key);
+        }
+      } catch {
+        maskedKey = '••••••••••••••••';
+      }
+    }
+
+    return {
+      id: String(p._id) as any,
+      name: p.name,
+      type: p.type as any,
+      type_label: PROVIDER_TYPES[p.type as keyof typeof PROVIDER_TYPES] || p.type,
+      status: (p.status || 'active') as 'active' | 'inactive',
+      is_default: Boolean(p.is_default),
+      has_credentials: Boolean(p.credentials),
+      masked_key: maskedKey,
+      available_models: p.available_models?.length
+        ? p.available_models
+        : DEFAULT_MODELS[p.type as keyof typeof DEFAULT_MODELS] || [],
+      config: p.config || {},
+      plans_count: countMap.get(String(p._id)) || 0,
+      total_requests: p.total_requests || 0,
+      last_used_at: p.last_used_at ? new Date(p.last_used_at).toISOString() : null,
+      created_at: p.created_at ? new Date(p.created_at).toISOString() : new Date().toISOString(),
+      updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : new Date().toISOString(),
+    };
+  });
 
   return (
     <AiProviders

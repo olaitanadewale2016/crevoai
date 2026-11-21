@@ -96,6 +96,7 @@ interface ProviderFormProps {
     showApiKey: boolean;
     setShowApiKey: (show: boolean) => void;
     isEdit?: boolean;
+    maskedKey?: string | null;
     errors?: Record<string, string>;
     onTestDirect?: () => void;
     isTestingDirect?: boolean;
@@ -109,11 +110,13 @@ function ProviderForm({
     showApiKey,
     setShowApiKey,
     isEdit = false,
+    maskedKey,
     errors = {},
     onTestDirect,
     isTestingDirect = false,
 }: ProviderFormProps) {
     const { t } = useTranslation();
+    const [isFieldActive, setIsFieldActive] = useState(false);
 
     return (
         <div className="space-y-4 py-4">
@@ -155,15 +158,43 @@ function ProviderForm({
             )}
 
             <div className="space-y-2">
-                <Label htmlFor="api_key">
-                    {t('API Key')} {isEdit && <span className="text-muted-foreground">({t('leave empty to keep existing key')})</span>}
-                </Label>
+                <div className="flex items-center justify-between">
+                    <Label htmlFor="ai_provider_key_input">{t('API Key')}</Label>
+                    {isEdit && (
+                        <span className="text-xs text-muted-foreground">({t('leave empty to keep existing')})</span>
+                    )}
+                </div>
+
+                {isEdit && maskedKey && (
+                    <div className="flex items-center justify-between bg-muted/60 rounded-md px-3 py-2 border text-xs">
+                        <span className="text-muted-foreground flex items-center gap-1.5">
+                            <Check className="h-3.5 w-3.5 text-emerald-600" />
+                            {t('Active Key')}:
+                        </span>
+                        <code className="font-mono font-medium text-foreground bg-background px-1.5 py-0.5 rounded border text-[11px]">
+                            {maskedKey}
+                        </code>
+                    </div>
+                )}
+
                 <div className="flex gap-2">
                     <div className="relative flex-1">
                         <Input
-                            id="api_key"
+                            id="ai_provider_key_input"
+                            name="ai_provider_secret_token_never_autofill"
                             type={showApiKey ? 'text' : 'password'}
-                            placeholder={isEdit ? '••••••••••••••••' : t('Enter API key')}
+                            autoComplete="new-password"
+                            autoCorrect="off"
+                            autoCapitalize="off"
+                            spellCheck={false}
+                            data-lpignore="true"
+                            data-1p-ignore="true"
+                            data-bwignore="true"
+                            data-form-type="other"
+                            readOnly={!isFieldActive}
+                            onFocus={() => setIsFieldActive(true)}
+                            onClick={() => setIsFieldActive(true)}
+                            placeholder={isEdit ? t('Paste new key to replace, or leave empty') : t('Enter API key')}
                             value={formData.api_key}
                             onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
                             className={errors.api_key ? 'border-destructive' : ''}
@@ -196,7 +227,9 @@ function ProviderForm({
                             ) : (
                                 <Zap className="h-3.5 w-3.5" />
                             )}
-                            {t('Test Connection Live')}
+                            {isEdit && !formData.api_key.trim()
+                                ? t('Test Active Key Connection')
+                                : t('Test Connection Live')}
                         </Button>
                     </div>
                 )}
@@ -769,6 +802,7 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
                         showApiKey={showApiKey}
                         setShowApiKey={setShowApiKey}
                         isEdit
+                        maskedKey={selectedProvider?.masked_key}
                         errors={formErrors}
                         onTestDirect={handleTestDirect}
                         isTestingDirect={isTestingDirect}

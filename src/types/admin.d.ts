@@ -1,4 +1,4 @@
-﻿import type {
+import type {
     Subscription,
     Transaction,
     Plan,
@@ -284,6 +284,7 @@ export interface AiProvider {
     status: 'active' | 'inactive';
     is_default?: boolean;
     has_credentials: boolean;
+    masked_key?: string | null;
     available_models: string[];
     config: AiProviderConfig;
     plans_count?: number;
