@@ -15,7 +15,7 @@ import { useTranslation } from '@/contexts/LanguageContext';
 import { THEME_PRESETS } from '@/lib/theme-presets';
 
 interface Template {
-    id: number;
+    id: string | number;
     name: string;
     description: string | null;
     thumbnail: string | null;
@@ -23,8 +23,9 @@ interface Template {
 }
 
 interface PromptInputProps {
-    onSubmit: (prompt: string, templateId: number | null, themePreset: string | null) => void;
+    onSubmit: (prompt: string, templateId: string | null, themePreset: string | null) => void;
     disabled?: boolean;
+    isLoading?: boolean;
     suggestions?: string[];
     typingPrompts?: string[];
     isLoadingSuggestions?: boolean;
@@ -95,6 +96,7 @@ function useTypingAnimation(texts: string[], typingSpeed = 50, pauseDuration = 2
 export function PromptInput({
     onSubmit,
     disabled = false,
+    isLoading = false,
     suggestions = DEFAULT_SUGGESTIONS,
     typingPrompts = DEFAULT_TYPING_PROMPTS,
     isLoadingSuggestions = false,
@@ -103,7 +105,7 @@ export function PromptInput({
     const { t, isRtl } = useTranslation();
     const [prompt, setPrompt] = useState('');
     const [isFocused, setIsFocused] = useState(false);
-    const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
+    const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
     const [selectedThemePreset, setSelectedThemePreset] = useState<string>('automatic');
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -114,10 +116,9 @@ export function PromptInput({
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (prompt.trim() && !disabled) {
+        if (prompt.trim() && !disabled && !isLoading) {
             const themeToSubmit = selectedThemePreset === 'automatic' ? null : selectedThemePreset;
             onSubmit(prompt.trim(), selectedTemplateId, themeToSubmit);
-            setPrompt('');
         }
     };
 
@@ -167,23 +168,26 @@ export function PromptInput({
                             <span>{t('to start')}</span>
                         </div>
                         <div className="flex items-center gap-2 sm:gap-3 ms-auto">
-                            {/* Template Selector - always shows "Automatic" */}
-                            <Select value={selectedTemplateId?.toString() ?? 'automatic'} onValueChange={(v) => setSelectedTemplateId(v === 'automatic' ? null : parseInt(v))}>
-                                <SelectTrigger className="w-[140px]">
-                                    <SelectValue />
+                            {/* Template Selector */}
+                            <Select
+                                value={selectedTemplateId ?? 'automatic'}
+                                onValueChange={(v) => setSelectedTemplateId(v === 'automatic' ? null : v)}
+                            >
+                                <SelectTrigger className="w-[150px]">
+                                    <SelectValue placeholder={t('Template')} />
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="automatic">
                                         <div className="flex items-center gap-2">
                                             <LayoutTemplate className="h-4 w-4 shrink-0" />
-                                            <span>{t('Automatic')}</span>
+                                            <span className="truncate">{t('Automatic')}</span>
                                         </div>
                                     </SelectItem>
                                     {userSelectableTemplates.map((template) => (
-                                        <SelectItem key={template.id} value={template.id.toString()}>
+                                        <SelectItem key={String(template.id)} value={String(template.id)}>
                                             <div className="flex items-center gap-2">
                                                 <LayoutTemplate className="h-4 w-4 shrink-0" />
-                                                <span>{template.name}</span>
+                                                <span className="truncate">{template.name}</span>
                                             </div>
                                         </SelectItem>
                                     ))}
@@ -221,14 +225,23 @@ export function PromptInput({
                             </Select>
                             <Button
                                 type="submit"
-                                disabled={!prompt.trim() || disabled}
-                                className="shrink-0"
+                                disabled={!prompt.trim() || disabled || isLoading}
+                                className="shrink-0 min-w-[80px]"
                             >
-                                <span className="hidden sm:inline">{t('Start')}</span>
-                                {isRtl ? (
-                                    <ArrowLeft className="h-4 w-4 sm:ms-2" />
+                                {isLoading ? (
+                                    <div className="flex items-center gap-2">
+                                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                                        <span className="hidden sm:inline">{t('Starting...')}</span>
+                                    </div>
                                 ) : (
-                                    <ArrowRight className="h-4 w-4 sm:ms-2" />
+                                    <>
+                                        <span className="hidden sm:inline">{t('Start')}</span>
+                                        {isRtl ? (
+                                            <ArrowLeft className="h-4 w-4 sm:ms-2" />
+                                        ) : (
+                                            <ArrowRight className="h-4 w-4 sm:ms-2" />
+                                        )}
+                                    </>
                                 )}
                             </Button>
                         </div>

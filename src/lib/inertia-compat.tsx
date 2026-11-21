@@ -284,10 +284,9 @@ async function performRequest(
         window.location.href = json.redirect;
         return;
       }
+      emitNavEvent('start', json.redirect, 'get');
       if (globalNextRouter) {
-        await globalRefreshShared?.();
         globalNextRouter.push(json.redirect, { scroll: !options.preserveScroll });
-        globalNextRouter.refresh();
       } else {
         window.location.href = json.redirect;
       }

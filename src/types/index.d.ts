@@ -65,14 +65,14 @@ export interface ProjectsPageProps extends PageProps {
 }
 
 export interface Template {
-    id: number;
+    id: string | number;
     slug: string;
     name: string;
     description: string | null;
     thumbnail: string | null;
     is_system: boolean;
     plans?: Plan[];
-    plan_ids?: number[];
+    plan_ids?: (string | number)[];
 }
 
 export type ColorTheme = 'neutral' | 'blue' | 'green' | 'orange' | 'red' | 'rose' | 'violet' | 'yellow';

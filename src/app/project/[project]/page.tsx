@@ -32,27 +32,14 @@ async function generateSuggestedSubdomain(name: string): Promise<string> {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/-{2,}/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 50)
+    .slice(0, 30)
     .replace(/-+$/g, '');
 
   if (!base || base.length < 3) {
-    base = base ? `${base}-app` : 'project';
+    base = 'project';
   }
 
-  const blocked = await getAllBlockedSubdomains();
-  let candidate = base;
-  let counter = 1;
-
-  while (blocked.includes(candidate) || !(await isSubdomainAvailable(candidate))) {
-    candidate = `${base}-${counter}`;
-    counter++;
-    if (counter > 100) {
-      candidate = `${base}-${generateAlnumCode(6, false)}`;
-      break;
-    }
-  }
-
-  return candidate;
+  return `${base}-${generateAlnumCode(6, false)}`;
 }
 
 export default async function ProjectChatPage({
@@ -93,7 +80,6 @@ export default async function ProjectChatPage({
     customDomainCount,
     sysFirebaseCfg,
     sysAdminSa,
-    buildCredits,
   ] = await Promise.all([
     getSharedAppProps(),
     getBroadcastConfig(),
@@ -107,8 +93,9 @@ export default async function ProjectChatPage({
     Project.countDocuments({ user_id: user._id, deleted_at: null, custom_domain: { $ne: null } }),
     getSystemFirebaseConfig(),
     getSystemAdminServiceAccount(),
-    getUserCreditsSnapshot(user),
   ]);
+
+  const buildCredits = sharedProps.userCredits;
 
   // Normalize broadcast config for Pusher / Reverb client
   const pusherConfig: BroadcastConfig =

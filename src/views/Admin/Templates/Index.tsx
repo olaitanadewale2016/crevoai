@@ -47,12 +47,12 @@ import {
 import type { PageProps } from '@/types';
 
 interface Plan {
-    id: number;
+    id: string | number;
     name: string;
 }
 
 interface Template {
-    id: number;
+    id: string | number;
     slug: string;
     name: string;
     description: string;
@@ -131,7 +131,7 @@ export default function Index(directProps?: Partial<TemplatesPageProps>) {
         name: '',
         description: '',
         zip_file: null as File | null,
-        plan_ids: [] as number[],
+        plan_ids: [] as (string | number)[],
     });
 
     // Edit form
@@ -139,7 +139,7 @@ export default function Index(directProps?: Partial<TemplatesPageProps>) {
         name: '',
         description: '',
         zip_file: null as File | null,
-        plan_ids: [] as number[],
+        plan_ids: [] as (string | number)[],
         _method: 'PUT' as const,
     });
 
