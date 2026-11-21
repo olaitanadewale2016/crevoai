@@ -1,0 +1,45 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { connectDB } from '@/lib/db';
+import { getSessionContext } from '@/lib/auth';
+import { parseRequestBody } from '@/lib/http';
+import { Project } from '@/models/Project';
+import { THEME_PRESETS } from '@/lib/theme-presets';
+
+export const dynamic = 'force-dynamic';
+
+export async function PUT(
+  req: NextRequest,
+  props: { params: Promise<{ project: string }> }
+) {
+  const { project: projectId } = await props.params;
+  const ctx = await getSessionContext(req);
+  if (!ctx) {
+    return NextResponse.json({ error: 'Unauthenticated.' }, { status: 401 });
+  }
+
+  await connectDB();
+  const project = await Project.findOne({
+    _id: projectId,
+    user_id: ctx.user._id,
+  });
+
+  if (!project) {
+    return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+
+  const body = await parseRequestBody<{ theme_preset?: string }>(req);
+  const theme = body.theme_preset || 'default';
+
+  if (!THEME_PRESETS.some((p) => p.id === theme)) {
+    return NextResponse.json({ error: 'Invalid theme preset.' }, { status: 422 });
+  }
+
+  project.theme_preset = theme;
+  await project.save();
+
+  return NextResponse.json({
+    success: true,
+    theme_preset: theme,
+    message: 'Theme preset updated successfully.',
+  });
+}
