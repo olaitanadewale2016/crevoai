@@ -128,6 +128,14 @@ export async function POST(req: NextRequest) {
 
     const errData = await res.json().catch(() => ({}));
     const message = errData?.error?.message || errData?.message || `Provider returned HTTP ${res.status}`;
+
+    if (res.status === 429) {
+      return NextResponse.json({
+        success: true,
+        message: `Connection verified! API key is valid. (${message})`,
+      });
+    }
+
     return NextResponse.json({ success: false, message });
   } catch (err: any) {
     return NextResponse.json({ success: false, message: err.message || 'Connection failed.' });

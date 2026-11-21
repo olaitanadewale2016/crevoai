@@ -168,10 +168,19 @@ export async function POST(
       }
 
       if (res.status === 401) {
-        return NextResponse.json({ message: 'Invalid Anthropic API key.' }, { status: 422 });
+        const label = type === 'abhibots' ? 'Abhibots' : 'Anthropic';
+        return NextResponse.json({ message: `Invalid ${label} API key.` }, { status: 422 });
       }
 
-      return NextResponse.json({ message: errMsg || `Anthropic connection failed (HTTP ${res.status})` }, { status: 422 });
+      if (res.status === 429) {
+        const label = type === 'abhibots' ? 'Abhibots (Opus / Claude 5)' : 'Anthropic';
+        return NextResponse.json({
+          message: `Connection verified! ${label} API key is valid. (${errMsg || 'Service busy / rate limit'})`,
+        });
+      }
+
+      const label = type === 'abhibots' ? 'Abhibots' : 'Anthropic';
+      return NextResponse.json({ message: errMsg || `${label} connection failed (HTTP ${res.status})` }, { status: 422 });
     } else if (type === 'deepseek') {
       const testModel = model || 'deepseek-chat';
       const res = await fetch(`${baseUrl}/chat/completions`, {
