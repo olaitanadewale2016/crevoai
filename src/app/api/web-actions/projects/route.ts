@@ -83,5 +83,17 @@ export async function POST(req: NextRequest) {
     build_status: 'idle',
   });
 
+  const isAjax =
+    req.headers.get('x-requested-with') === 'XMLHttpRequest' ||
+    req.headers.get('accept')?.includes('application/json');
+
+  if (isAjax) {
+    return NextResponse.json({
+      success: true,
+      redirect: `/project/${project._id}`,
+      projectId: project._id,
+    });
+  }
+
   return NextResponse.redirect(new URL(`/project/${project._id}`, req.url), 303);
 }

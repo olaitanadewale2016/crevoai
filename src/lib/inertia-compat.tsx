@@ -213,6 +213,28 @@ async function performRequest(
       return;
     }
 
+    // Handle native fetch redirects (HTTP 302/303 followed by browser)
+    if (res.redirected && res.url) {
+      try {
+        const redirectedUrl = new URL(res.url);
+        const targetPath = `${redirectedUrl.pathname}${redirectedUrl.search}${redirectedUrl.hash}`;
+        if (targetPath !== window.location.pathname + window.location.search) {
+          if (globalNextRouter) {
+            await globalRefreshShared?.();
+            globalNextRouter.push(targetPath, { scroll: !options.preserveScroll });
+          } else {
+            window.location.href = targetPath;
+          }
+          options.onSuccess?.({ props: {} });
+          emitNavEvent('finish', targetPath, effectiveMethod);
+          options.onFinish?.();
+          return;
+        }
+      } catch {
+        // ignore and fallback
+      }
+    }
+
     let json: any = {};
     const ct = res.headers.get('content-type') || '';
     if (ct.includes('application/json')) {

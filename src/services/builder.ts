@@ -270,10 +270,9 @@ export async function startBuilderSession(params: {
   templateUrl?: string | null;
 }) {
   const { project, user, builder, goal, templateId, templateUrl } = params;
+  const rawAppUrl = process.env.APP_URL || '';
   const appUrl = (
-    process.env.APP_URL ||
-    (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '') ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '') ||
+    (rawAppUrl && !rawAppUrl.includes('crevoai.vercel.app') ? rawAppUrl : '') ||
     'https://crevoai-web.vercel.app'
   ).replace(/\/+$/, '');
   const aiConfig = await getAiConfigForUser(user);
@@ -344,11 +343,26 @@ export async function startBuilderSession(params: {
     };
   }
 
-  const res = await builderFetch(builder, '/api/run', {
+  let res = await builderFetch(builder, '/api/run', {
     method: 'POST',
     body: payload,
     timeoutMs: 30_000,
   });
+
+  if (!res.ok && payload.pusher) {
+    const errClone = res.clone();
+    const errBody = await errClone.text().catch(() => '');
+    if (errBody.toLowerCase().includes('pusher')) {
+      console.warn('Builder /api/run rejected Pusher config, retrying without pusher:', errBody);
+      const retryPayload = { ...payload };
+      delete retryPayload.pusher;
+      res = await builderFetch(builder, '/api/run', {
+        method: 'POST',
+        body: retryPayload,
+        timeoutMs: 30_000,
+      });
+    }
+  }
 
   if (res.status === 409) {
     const conflict = await res.json().catch(() => ({}));
@@ -470,10 +484,9 @@ export async function buildDynamicHtml(
   project: IProject,
   mode: 'preview' | 'app' | 'published'
 ): Promise<string> {
+  const rawAppUrl = process.env.APP_URL || '';
   const appUrl = (
-    process.env.APP_URL ||
-    (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '') ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '') ||
+    (rawAppUrl && !rawAppUrl.includes('crevoai.vercel.app') ? rawAppUrl : '') ||
     'https://crevoai-web.vercel.app'
   ).replace(/\/+$/, '');
   const baseHref =
