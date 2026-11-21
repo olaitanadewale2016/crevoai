@@ -102,6 +102,26 @@ function objectToFormData(obj: Record<string, any>, form = new FormData(), prefi
   return form;
 }
 
+const ACTION_REWRITES: Record<string, string> = {
+  '/projects': '/api/web-actions/projects',
+  '/admin/ai-builders': '/api/web-actions/admin/ai-builders',
+  '/admin/ai-providers': '/api/web-actions/admin/ai-providers',
+  '/admin/ai-templates': '/api/web-actions/admin/ai-templates',
+  '/admin/languages': '/api/web-actions/admin/languages',
+  '/admin/plans': '/api/web-actions/admin/plans',
+  '/admin/subscriptions': '/api/web-actions/admin/subscriptions',
+  '/admin/users': '/api/web-actions/admin/users',
+  '/login': '/api/web-actions/login',
+  '/register': '/api/web-actions/register',
+  '/forgot-password': '/api/web-actions/forgot-password',
+  '/reset-password': '/api/web-actions/reset-password',
+  '/confirm-password': '/api/web-actions/confirm-password',
+  '/profile': '/api/web-actions/profile',
+  '/upgrade': '/api/web-actions/upgrade',
+  '/install/admin': '/api/web-actions/install/admin',
+  '/install/database': '/api/web-actions/install/database',
+};
+
 async function performRequest(
   method: 'get' | 'post' | 'put' | 'patch' | 'delete',
   url: string,
@@ -113,8 +133,17 @@ async function performRequest(
       ? (data._method.toLowerCase() as VisitOptions['method']) || method
       : method;
 
+  let requestUrl = url;
+  if (effectiveMethod !== 'get') {
+    const [pathPart, queryPart] = url.split('?');
+    const cleanPath = pathPart.replace(/\/+$/, '');
+    if (ACTION_REWRITES[cleanPath]) {
+      requestUrl = ACTION_REWRITES[cleanPath] + (queryPart ? `?${queryPart}` : '');
+    }
+  }
+
   options.onStart?.();
-  emitNavEvent('start', url, effectiveMethod);
+  emitNavEvent('start', requestUrl, effectiveMethod);
 
   try {
     if (effectiveMethod === 'get') {
@@ -170,7 +199,7 @@ async function performRequest(
       }
     }
 
-    const res = await fetch(url, {
+    const res = await fetch(requestUrl, {
       method: fetchMethod,
       headers: reqHeaders,
       body,

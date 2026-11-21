@@ -100,6 +100,13 @@ export async function PUT(
   return NextResponse.json({ success: true, template });
 }
 
+export async function POST(
+  req: NextRequest,
+  props: { params: Promise<{ template: string }> }
+) {
+  return PUT(req, props);
+}
+
 export async function DELETE(
   req: NextRequest,
   props: { params: Promise<{ template: string }> }

@@ -118,10 +118,25 @@ export default async function CreatePage() {
     });
   }
 
-  // Templates available for user's plan (always includes system templates)
+  // Templates available for user's plan (always includes system templates and templates with no plan restrictions)
   const templateQuery = plan
-    ? { $or: [{ is_system: true }, { plan_ids: plan._id }] }
-    : { is_system: true };
+    ? {
+        $or: [
+          { is_system: true },
+          { plan_ids: plan._id },
+          { plan_ids: { $size: 0 } },
+          { plan_ids: null },
+          { plan_ids: { $exists: false } },
+        ],
+      }
+    : {
+        $or: [
+          { is_system: true },
+          { plan_ids: { $size: 0 } },
+          { plan_ids: null },
+          { plan_ids: { $exists: false } },
+        ],
+      };
   const templateDocs = await Template.find(templateQuery).sort({ created_at: 1 }).lean();
 
   const templates = templateDocs.map((tpl) => ({

@@ -208,6 +208,8 @@ export async function POST(
     if (template) {
       const available =
         template.is_system ||
+        !template.plan_ids ||
+        template.plan_ids.length === 0 ||
         Boolean(
           plan && (template.plan_ids || []).some((pid) => String(pid) === String(plan._id))
         );
