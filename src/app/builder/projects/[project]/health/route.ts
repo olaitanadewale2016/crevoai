@@ -25,7 +25,10 @@ export async function GET(
 
   let builder = project?.builder_id ? await Builder.findById(project.builder_id) : null;
   if (!builder) {
-    builder = await Builder.findOne({ is_active: true });
+    builder = await Builder.findOne({ status: 'active' });
+  }
+  if (!builder) {
+    builder = await Builder.findOne();
   }
 
   if (!builder) {

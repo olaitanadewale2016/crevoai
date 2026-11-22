@@ -290,6 +290,7 @@ export async function startBuilderSession(params: {
   const pusher = await getPusherConfigForBuilder();
   const plan = await getUserCurrentPlan(user);
   const prompts = await getSettingGroup('prompts');
+  const firebaseCfg = await getProjectFirebaseConfig(project);
   const { history, isCompacted } = buildOptimizedHistoryForBuilder(project);
 
   const themeObj = project.theme_preset
@@ -318,7 +319,7 @@ export async function startBuilderSession(params: {
     },
     project_capabilities: {
       firebase: {
-        enabled: Boolean(plan?.enable_firebase),
+        enabled: Boolean(plan?.enable_firebase) && Boolean(firebaseCfg),
         collection_prefix: `projects/${project._id}`,
       },
       storage: {

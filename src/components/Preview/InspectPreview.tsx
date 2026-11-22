@@ -555,7 +555,7 @@ export function InspectPreview({
                             src={`${previewUrl}?t=${refreshTrigger}`}
                             className="absolute inset-0 w-full h-full border-0"
                             title="Preview"
-                            sandbox="allow-scripts allow-same-origin"
+                            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
                         />
 
                         {/* Confetti canvas */}

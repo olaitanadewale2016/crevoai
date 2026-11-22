@@ -20,7 +20,7 @@ import { useUserChannel } from '@/hooks/useUserChannel';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { PageProps, User } from '@/types';
 import type { UserNotification } from '@/types/notifications';
-import { Home, Eye, Code, Loader2, Hammer, ExternalLink, Brain, Settings, Globe } from 'lucide-react';
+import { Home, Eye, Code, Loader2, Hammer, ExternalLink, Brain, Settings, Globe, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import axios from 'axios';
@@ -248,6 +248,7 @@ export default function Chat({
     const [failedMessages, setFailedMessages] = useState<Array<{message: string; timestamp: number}>>([]);
     const [initialLoading, setInitialLoading] = useState(true);
     const [publishModalOpen, setPublishModalOpen] = useState(false);
+    const [isChatCollapsed, setIsChatCollapsed] = useState(false);
 
     // File attachment state for @mentions and uploads
     const [localProjectFiles, setLocalProjectFiles] = useState<AttachedFile[]>(initialProjectFiles ?? []);
@@ -696,8 +697,10 @@ export default function Chat({
             <Toaster />
 
             <div className="h-screen flex bg-background text-foreground">
-                {/* Start: Chat Column - Full width on mobile, fixed width on larger screens */}
-                <div className="w-full md:w-[420px] shrink-0 md:border-e flex flex-col">
+                {/* Start: Chat Column - Full width on mobile, fixed width on larger screens, collapsible */}
+                <div className={`transition-all duration-300 ease-in-out shrink-0 md:border-e flex flex-col ${
+                    isChatCollapsed ? 'w-0 overflow-hidden hidden md:hidden' : 'w-full md:w-[420px]'
+                }`}>
                     {/* Chat Header */}
                     <div className="h-14 px-4 border-b flex items-center justify-between shrink-0 bg-background">
                         <div className="min-w-0 flex-1">
@@ -748,6 +751,15 @@ export default function Chat({
                                 <Link href="/create">
                                     <Home className="h-4 w-4" />
                                 </Link>
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="hidden md:flex text-muted-foreground hover:text-foreground"
+                                onClick={() => setIsChatCollapsed(true)}
+                                title={t('Full Preview (Hide Chat)')}
+                            >
+                                <PanelLeftClose className="h-4 w-4" />
                             </Button>
                         </div>
                     </div>
@@ -891,12 +903,34 @@ export default function Chat({
                     </div>
                 </div>
 
-                {/* Right: Preview/Code Column - Hidden on mobile */}
-                <div className="hidden md:flex flex-1 flex-col overflow-hidden">
+                {/* Right: Preview/Code Column - Hidden on mobile unless chat is collapsed, takes full width on desktop */}
+                <div className={`${isChatCollapsed ? 'flex' : 'hidden md:flex'} flex-1 flex-col overflow-hidden`}>
                     {/* Preview Header */}
                     <div className="h-14 px-4 border-b flex items-center justify-between shrink-0 bg-background">
-                        {/* View toggle */}
-                        <div className="flex items-center border rounded-lg overflow-hidden">
+                        <div className="flex items-center gap-3">
+                            {/* Collapse/Expand Chat Toggle Button */}
+                            <Button
+                                variant={isChatCollapsed ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => setIsChatCollapsed((prev) => !prev)}
+                                className="h-8 px-2.5 text-xs flex items-center gap-1.5"
+                                title={isChatCollapsed ? t('Show Chat') : t('Full Preview')}
+                            >
+                                {isChatCollapsed ? (
+                                    <>
+                                        <PanelLeftOpen className="h-4 w-4" />
+                                        <span className="font-medium">{t('Show Chat')}</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <PanelLeftClose className="h-4 w-4" />
+                                        <span className="hidden lg:inline">{t('Full Preview')}</span>
+                                    </>
+                                )}
+                            </Button>
+
+                            {/* View toggle */}
+                            <div className="flex items-center border rounded-lg overflow-hidden">
                             <button
                                 onClick={() => setViewMode('preview')}
                                 className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${
