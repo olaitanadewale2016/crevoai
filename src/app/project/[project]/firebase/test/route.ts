@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { getSessionContext, getUserCurrentPlan } from '@/lib/auth';
+import { getSessionContext, getUserCurrentPlan, canUpdateProject } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { Project } from '@/models/Project';
 import {
@@ -21,19 +21,23 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthenticated.' }, { status: 401 });
   }
 
+  const isAdmin = ctx.user.role === 'admin';
   const plan = await getUserCurrentPlan(ctx.user);
-  if (!plan?.enable_firebase) {
+  if (!isAdmin && !plan?.enable_firebase) {
     return NextResponse.json({ error: 'Firebase is not enabled for your plan.' }, { status: 403 });
   }
 
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canUpdateProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   const body = await parseRequestBody<{ config?: FirebaseWebConfig }>(req);

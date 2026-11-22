@@ -1,9 +1,8 @@
 'use client';
 
 import { getAssetUrl } from '@/lib/assets';
-import { useState, useEffect, useCallback, FormEvent, useMemo } from 'react';
+import { useState, useEffect, useCallback, FormEvent, useMemo, useRef } from 'react';
 import { Link, router } from '@/lib/inertia-compat';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,18 +37,24 @@ import {
     Check,
     Copy,
     Database,
+    ExternalLink,
     Eye,
     EyeOff,
+    FileText,
+    Film,
     Globe,
     HardDrive,
+    Image as ImageIcon,
     ImagePlus,
     Key,
     Loader2,
     Lock,
+    Music,
     RefreshCw,
     Settings2,
     Sparkles,
     Trash2,
+    Upload,
     X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -68,6 +73,7 @@ interface SubdomainUsage {
 
 interface FirebaseSettings {
     enabled: boolean;
+    supabaseEnabled?: boolean;
     canUseOwnConfig: boolean;
     usesSystemFirebase: boolean;
     customConfig: FirebaseConfigType | null;
@@ -87,6 +93,22 @@ interface StorageSettings {
     usedBytes: number;
     limitMb: number | null;
     unlimited: boolean;
+    maxFileSizeMb?: number;
+}
+
+interface ProjectFileItem {
+    id: string;
+    filename: string;
+    original_filename: string;
+    mime_type: string;
+    size: number;
+    human_size: string;
+    is_image: boolean;
+    is_pdf?: boolean;
+    is_video?: boolean;
+    is_audio?: boolean;
+    url: string;
+    created_at?: string;
 }
 
 interface CustomDomainUsage {
@@ -197,22 +219,67 @@ export function ProjectSettingsPanel({
     const [isSavingKnowledge, setIsSavingKnowledge] = useState(false);
 
     // Share image state
+    const [shareImage, setShareImage] = useState<string | null>(project.share_image ?? null);
+    const shareImageInputRef = useRef<HTMLInputElement>(null);
     const [isUploadingImage, setIsUploadingImage] = useState(false);
     const [isDeletingImage, setIsDeletingImage] = useState(false);
 
+    useEffect(() => {
+        setShareImage(project.share_image ?? null);
+    }, [project.share_image]);
+
+    // Storage files state
+    const [storageUsedBytes, setStorageUsedBytes] = useState<number>(storage?.usedBytes ?? 0);
+    const [projectFilesList, setProjectFilesList] = useState<ProjectFileItem[]>([]);
+    const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+    const [isUploadingFile, setIsUploadingFile] = useState(false);
+    const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
+    const [copiedFileId, setCopiedFileId] = useState<string | null>(null);
+    const storageFileInputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        if (storage?.usedBytes !== undefined) {
+            setStorageUsedBytes(storage.usedBytes);
+        }
+    }, [storage?.usedBytes]);
+
+    const fetchProjectFiles = useCallback(async () => {
+        setIsLoadingFiles(true);
+        try {
+            const res = await axios.get(`/project/${project.id}/files?per_page=50`);
+            if (Array.isArray(res.data?.files)) {
+                setProjectFilesList(res.data.files);
+            }
+            if (typeof res.data?.storage_used === 'number') {
+                setStorageUsedBytes(res.data.storage_used);
+            }
+        } catch {
+            // Ignore transient load failure
+        } finally {
+            setIsLoadingFiles(false);
+        }
+    }, [project.id]);
+
+    useEffect(() => {
+        if (activeTab === 'storage') {
+            fetchProjectFiles();
+        }
+    }, [activeTab, fetchProjectFiles]);
+
     // Supabase Database state
+    const canUseSupabase = Boolean(firebase?.supabaseEnabled ?? firebase?.enabled);
     const [supabaseUrl, setSupabaseUrl] = useState('');
     const [supabaseAnonKey, setSupabaseAnonKey] = useState('');
     const [supabaseConfigured, setSupabaseConfigured] = useState(false);
     const [supabaseTablePrefix, setSupabaseTablePrefix] = useState(
-        `proj_${project.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}_`
+        `proj_${project.id.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 12)}_`
     );
     const [isSavingSupabase, setIsSavingSupabase] = useState(false);
     const [isTestingSupabase, setIsTestingSupabase] = useState(false);
     const [showSupabaseKey, setShowSupabaseKey] = useState(false);
 
     useEffect(() => {
-        if (!firebase?.enabled) return;
+        if (!canUseSupabase) return;
         axios
             .get(`/project/${project.id}/supabase/config`)
             .then((res) => {
@@ -226,7 +293,7 @@ export function ProjectSettingsPanel({
                 }
             })
             .catch(() => {});
-    }, [project.id, firebase?.enabled]);
+    }, [project.id, canUseSupabase]);
 
     const handleTestSupabase = async () => {
         if (!supabaseUrl.trim() || !supabaseAnonKey.trim()) {
@@ -334,22 +401,25 @@ export function ProjectSettingsPanel({
         e.preventDefault();
         setIsSavingGeneral(true);
 
-        router.put(`/project/${project.id}/settings/general`, {
-            published_title: title,
-            published_description: description,
-            published_visibility: visibility,
-        }, {
-            preserveScroll: true,
-            onSuccess: () => {
-                toast.success(t('Settings saved'));
-            },
-            onError: () => {
-                toast.error(t('Failed to save settings'));
-            },
-            onFinish: () => {
-                setIsSavingGeneral(false);
-            },
-        });
+        try {
+            await axios.put(`/project/${project.id}/settings/general`, {
+                published_title: title,
+                published_description: description,
+                published_visibility: visibility,
+            });
+            toast.success(t('Settings saved'));
+            router.reload();
+        } catch (err: unknown) {
+            const error = err as {
+                response?: { data?: { error?: string; errors?: Record<string, string | string[]> } };
+            };
+            const firstFieldErr = error.response?.data?.errors
+                ? Object.values(error.response.data.errors).flat()[0]
+                : undefined;
+            toast.error(firstFieldErr || error.response?.data?.error || t('Failed to save settings'));
+        } finally {
+            setIsSavingGeneral(false);
+        }
     };
 
     const handlePublish = async () => {
@@ -393,59 +463,109 @@ export function ProjectSettingsPanel({
         e.preventDefault();
         setIsSavingKnowledge(true);
 
-        router.put(`/project/${project.id}/settings/knowledge`, {
-            custom_instructions: customInstructions,
-        }, {
-            preserveScroll: true,
-            onSuccess: () => {
-                toast.success(t('Custom instructions saved'));
-            },
-            onError: () => {
-                toast.error(t('Failed to save custom instructions'));
-            },
-            onFinish: () => {
-                setIsSavingKnowledge(false);
-            },
-        });
+        try {
+            await axios.put(`/project/${project.id}/settings/knowledge`, {
+                custom_instructions: customInstructions,
+            });
+            toast.success(t('Custom instructions saved'));
+            router.reload();
+        } catch (err: unknown) {
+            const error = err as { response?: { data?: { error?: string } } };
+            toast.error(error.response?.data?.error || t('Failed to save custom instructions'));
+        } finally {
+            setIsSavingKnowledge(false);
+        }
     };
 
     const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
+        const inputEl = e.target;
+        const file = inputEl.files?.[0];
         if (!file) return;
 
         setIsUploadingImage(true);
         const formData = new FormData();
         formData.append('share_image', file);
 
-        router.post(`/project/${project.id}/settings/share-image`, formData, {
-            preserveScroll: true,
-            onSuccess: () => {
-                toast.success(t('Share image uploaded'));
-            },
-            onError: () => {
-                toast.error(t('Failed to upload image'));
-            },
-            onFinish: () => {
-                setIsUploadingImage(false);
-            },
-        });
+        try {
+            const res = await axios.post(`/project/${project.id}/settings/share-image`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            if (res.data?.share_image) {
+                setShareImage(res.data.share_image);
+            }
+            toast.success(t('Share image uploaded'));
+            router.reload();
+        } catch (err: unknown) {
+            const error = err as { response?: { data?: { error?: string } } };
+            toast.error(error.response?.data?.error || t('Failed to upload image'));
+        } finally {
+            setIsUploadingImage(false);
+            inputEl.value = '';
+        }
     };
 
     const handleDeleteImage = async () => {
         setIsDeletingImage(true);
 
-        router.delete(`/project/${project.id}/settings/share-image`, {
-            preserveScroll: true,
-            onSuccess: () => {
-                toast.success(t('Share image removed'));
-            },
-            onError: () => {
-                toast.error(t('Failed to remove image'));
-            },
-            onFinish: () => {
-                setIsDeletingImage(false);
-            },
-        });
+        try {
+            await axios.delete(`/project/${project.id}/settings/share-image`);
+            setShareImage(null);
+            toast.success(t('Share image removed'));
+            router.reload();
+        } catch (err: unknown) {
+            const error = err as { response?: { data?: { error?: string } } };
+            toast.error(error.response?.data?.error || t('Failed to remove image'));
+        } finally {
+            setIsDeletingImage(false);
+        }
+    };
+
+    const handleStorageFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const inputEl = e.target;
+        const file = inputEl.files?.[0];
+        if (!file) return;
+
+        setIsUploadingFile(true);
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const res = await axios.post(`/project/${project.id}/files`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            if (res.data?.file) {
+                setProjectFilesList((prev) => [res.data.file, ...prev]);
+            }
+            if (typeof res.data?.storage_used === 'number') {
+                setStorageUsedBytes(res.data.storage_used);
+            }
+            toast.success(t('File uploaded'));
+            router.reload();
+        } catch (err: unknown) {
+            const error = err as { response?: { data?: { error?: string } } };
+            toast.error(error.response?.data?.error || t('Failed to upload file'));
+        } finally {
+            setIsUploadingFile(false);
+            inputEl.value = '';
+        }
+    };
+
+    const handleDeleteStorageFile = async (fileId: string) => {
+        setDeletingFileId(fileId);
+        try {
+            const res = await axios.delete(`/project/${project.id}/files/${fileId}`);
+            setProjectFilesList((prev) => prev.filter((item) => item.id !== fileId));
+            if (typeof res.data?.storage_used === 'number') {
+                setStorageUsedBytes(res.data.storage_used);
+            }
+            toast.success(t('File deleted'));
+            router.reload();
+        } catch (err: unknown) {
+            const error = err as { response?: { data?: { error?: string } } };
+            toast.error(error.response?.data?.error || t('Failed to delete file'));
+        } finally {
+            setDeletingFileId(null);
+        }
     };
 
     const getAvailabilityIcon = () => {
@@ -558,14 +678,14 @@ export function ProjectSettingsPanel({
                                         {t('This image will be shown when your project is shared on social media.')}
                                     </p>
 
-                                    {project.share_image ? (
+                                    {shareImage ? (
                                         <div className="relative group w-full aspect-[1200/630] rounded-lg border overflow-hidden bg-muted">
                                             <img
-                                                src={getAssetUrl(project.share_image)}
+                                                src={getAssetUrl(shareImage)}
                                                 alt="Share preview"
                                                 className="w-full h-full object-cover"
                                             />
-                                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                            <div className="absolute inset-0 bg-black/40 sm:bg-black/50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex items-end sm:items-center justify-end sm:justify-center p-3 sm:p-0 gap-2">
                                                 <Button
                                                     type="button"
                                                     variant="secondary"
@@ -583,7 +703,7 @@ export function ProjectSettingsPanel({
                                             </div>
                                         </div>
                                     ) : (
-                                        <label className="flex flex-col items-center justify-center w-full aspect-[1200/630] rounded-lg border-2 border-dashed hover:border-primary/50 transition-colors cursor-pointer bg-muted/50">
+                                        <label className="flex flex-col items-center justify-center w-full aspect-[1200/630] rounded-lg border-2 border-dashed hover:border-primary/50 transition-colors cursor-pointer bg-muted/50 px-4 text-center">
                                             <div className="flex flex-col items-center justify-center py-6">
                                                 {isUploadingImage ? (
                                                     <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -597,9 +717,10 @@ export function ProjectSettingsPanel({
                                                 )}
                                             </div>
                                             <input
+                                                ref={shareImageInputRef}
                                                 type="file"
                                                 className="hidden"
-                                                accept="image/jpeg,image/png,image/webp"
+                                                accept="image/jpeg,image/png,image/webp,image/gif"
                                                 onChange={handleImageUpload}
                                                 disabled={isUploadingImage}
                                             />
@@ -608,7 +729,7 @@ export function ProjectSettingsPanel({
                                 </div>
 
                                 <div className="flex justify-end">
-                                    <Button type="submit" disabled={isSavingGeneral}>
+                                    <Button type="submit" disabled={isSavingGeneral} className="w-full sm:w-auto">
                                         {isSavingGeneral && <Loader2 className="h-4 w-4 me-2 animate-spin" />}
                                         {t('Save Changes')}
                                     </Button>
@@ -623,10 +744,10 @@ export function ProjectSettingsPanel({
                     <div className="space-y-6">
                         <Card>
                             <CardHeader>
-                                <div className="flex items-center justify-between">
-                                    <div>
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                    <div className="min-w-0">
                                         <CardTitle className="flex items-center gap-2">
-                                            <Globe className="h-5 w-5" />
+                                            <Globe className="h-5 w-5 shrink-0" />
                                             {t('Subdomain')}
                                         </CardTitle>
                                         <CardDescription>
@@ -634,7 +755,7 @@ export function ProjectSettingsPanel({
                                         </CardDescription>
                                     </div>
                                     {isPublished && (
-                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-success/10 text-success">
+                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-success/10 text-success w-fit shrink-0">
                                             <Check className="h-3 w-3 me-1" />
                                             {t('Published')}
                                         </span>
@@ -656,8 +777,8 @@ export function ProjectSettingsPanel({
                                     <>
                                         <div className="space-y-2">
                                             <Label htmlFor="subdomain">{t('Subdomain')}</Label>
-                                            <div className="flex items-center gap-2">
-                                                <div className="relative flex-1">
+                                            <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                                                <div className="relative flex-1 min-w-0">
                                                     <Input
                                                         id="subdomain"
                                                         value={subdomain}
@@ -683,13 +804,13 @@ export function ProjectSettingsPanel({
 
                                         {isPublished && (
                                             <div className="rounded-lg border p-3 bg-muted/50">
-                                                <p className="text-sm text-muted-foreground">
+                                                <p className="text-sm text-muted-foreground break-all">
                                                     {t('Your project is live at:')}{' '}
                                                     <a
                                                         href={`https://${project.subdomain}.${baseDomain}`}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
-                                                        className="text-primary hover:underline"
+                                                        className="text-primary hover:underline break-all"
                                                     >
                                                         {project.subdomain}.{baseDomain}
                                                     </a>
@@ -703,7 +824,7 @@ export function ProjectSettingsPanel({
                                             </p>
                                         )}
 
-                                        <div className="flex gap-2">
+                                        <div className="flex flex-wrap gap-2">
                                             <Button
                                                 onClick={handlePublish}
                                                 disabled={
@@ -774,7 +895,7 @@ export function ProjectSettingsPanel({
                                 </div>
 
                                 <div className="flex justify-end">
-                                    <Button type="submit" disabled={isSavingKnowledge}>
+                                    <Button type="submit" disabled={isSavingKnowledge} className="w-full sm:w-auto">
                                         {isSavingKnowledge && <Loader2 className="h-4 w-4 me-2 animate-spin" />}
                                         {t('Save Instructions')}
                                     </Button>
@@ -791,7 +912,7 @@ export function ProjectSettingsPanel({
                         <Card>
                             <CardHeader>
                                 <CardTitle className="flex items-center gap-2">
-                                    <Key className="h-5 w-5" />
+                                    <Key className="h-5 w-5 shrink-0" />
                                     {t('API Token')}
                                 </CardTitle>
                                 <CardDescription>
@@ -803,22 +924,26 @@ export function ProjectSettingsPanel({
                                     <>
                                         <div className="space-y-2">
                                             <Label>{t('Current Token')}</Label>
-                                            <div className="flex items-center gap-2">
+                                            <div className="flex items-center gap-1.5 sm:gap-2">
                                                 <Input
                                                     value={showToken ? apiToken : '••••••••••••••••••••••••••••••••'}
                                                     readOnly
-                                                    className="font-mono text-sm"
+                                                    className="font-mono text-xs sm:text-sm min-w-0 flex-1"
                                                 />
                                                 <Button
+                                                    type="button"
                                                     variant="ghost"
                                                     size="icon"
+                                                    className="shrink-0"
                                                     onClick={() => setShowToken(!showToken)}
                                                 >
                                                     {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                                                 </Button>
                                                 <Button
+                                                    type="button"
                                                     variant="ghost"
                                                     size="icon"
+                                                    className="shrink-0"
                                                     onClick={() => {
                                                         navigator.clipboard.writeText(apiToken);
                                                         toast.success(t('Token copied to clipboard'));
@@ -831,7 +956,7 @@ export function ProjectSettingsPanel({
                                                 {t('Use this token in your app\'s X-Project-Token header.')}
                                             </p>
                                         </div>
-                                        <div className="flex gap-2">
+                                        <div className="flex flex-wrap gap-2">
                                             <AlertDialog>
                                                 <AlertDialogTrigger asChild>
                                                     <Button variant="outline" disabled={isGeneratingToken}>
@@ -908,7 +1033,7 @@ export function ProjectSettingsPanel({
                                         </div>
                                     </>
                                 ) : (
-                                    <div className="flex flex-col items-center justify-center py-8 border-2 border-dashed rounded-lg bg-muted/20">
+                                    <div className="flex flex-col items-center justify-center py-8 px-4 text-center border-2 border-dashed rounded-lg bg-muted/20">
                                         <Key className="h-10 w-10 text-muted-foreground/30 mb-3" />
                                         <p className="text-sm text-muted-foreground mb-4">
                                             {t('No API token generated yet')}
@@ -937,48 +1062,216 @@ export function ProjectSettingsPanel({
                             </CardContent>
                         </Card>
 
-                        {/* Storage Usage Card */}
-                        {storage?.enabled && (
-                            <Card>
-                                <CardHeader>
-                                    <CardTitle className="flex items-center gap-2">
-                                        <HardDrive className="h-5 w-5" />
-                                        {t('File Storage')}
-                                    </CardTitle>
-                                    <CardDescription>
-                                        {t('Storage usage for this project.')}
-                                    </CardDescription>
-                                </CardHeader>
-                                <CardContent>
-                                    <div className="space-y-2">
-                                        <div className="flex items-center justify-between text-sm">
-                                            <span>{t('Used:')} {formatBytes(storage.usedBytes)}</span>
-                                            <span>
-                                                {storage.unlimited ? (
-                                                    <Badge variant="secondary">{t('Unlimited')}</Badge>
+                        {/* File Storage Quota & Project Files Card */}
+                        <Card>
+                            <CardHeader>
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <CardTitle className="flex items-center gap-2">
+                                            <HardDrive className="h-5 w-5 shrink-0" />
+                                            {t('File Storage')}
+                                        </CardTitle>
+                                        <CardDescription>
+                                            {t('Storage usage and uploaded assets for this project.')}
+                                        </CardDescription>
+                                    </div>
+                                    {storage?.enabled && (
+                                        <>
+                                            <input
+                                                ref={storageFileInputRef}
+                                                type="file"
+                                                className="hidden"
+                                                accept="image/*,video/*,audio/*,.pdf,.json"
+                                                onChange={handleStorageFileUpload}
+                                                disabled={isUploadingFile}
+                                            />
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                className="w-full sm:w-auto shrink-0"
+                                                onClick={() => storageFileInputRef.current?.click()}
+                                                disabled={isUploadingFile}
+                                            >
+                                                {isUploadingFile ? (
+                                                    <Loader2 className="h-4 w-4 me-2 animate-spin" />
                                                 ) : (
-                                                    t(':total MB total', { total: storage.limitMb ?? 0 })
+                                                    <Upload className="h-4 w-4 me-2" />
                                                 )}
-                                            </span>
+                                                {t('Upload File')}
+                                            </Button>
+                                        </>
+                                    )}
+                                </div>
+                            </CardHeader>
+                            <CardContent className="space-y-5">
+                                {storage?.enabled ? (
+                                    <>
+                                        <div className="space-y-2">
+                                            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                                                <span>{t('Used:')} {formatBytes(storageUsedBytes)}</span>
+                                                <span>
+                                                    {storage.unlimited ? (
+                                                        <Badge variant="secondary">{t('Unlimited')}</Badge>
+                                                    ) : (
+                                                        t(':total MB total', { total: storage.limitMb ?? 0 })
+                                                    )}
+                                                </span>
+                                            </div>
+                                            {!storage.unlimited && storage.limitMb && storage.limitMb > 0 && (
+                                                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                                                    <div
+                                                        className="h-full bg-primary transition-all"
+                                                        style={{
+                                                            width: `${Math.min(100, (storageUsedBytes / (storage.limitMb * 1024 * 1024)) * 100)}%`,
+                                                        }}
+                                                    />
+                                                </div>
+                                            )}
+                                            <p className="text-xs text-muted-foreground">
+                                                {t('Files uploaded via dashboard or generated app count toward the same quota.')}
+                                                {storage.maxFileSizeMb ? ` (${t('Max file size')}: ${storage.maxFileSizeMb}MB)` : ''}
+                                            </p>
                                         </div>
-                                        {!storage.unlimited && storage.limitMb && (
-                                            <div className="h-2 bg-muted rounded-full overflow-hidden">
-                                                <div
-                                                    className="h-full bg-primary transition-all"
-                                                    style={{
-                                                        width: `${Math.min(100, (storage.usedBytes / (storage.limitMb * 1024 * 1024)) * 100)}%`,
-                                                    }}
-                                                />
+                                    </>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center py-8 px-4 text-center border-2 border-dashed rounded-lg bg-muted/20">
+                                        <HardDrive className="h-10 w-10 text-muted-foreground/30 mb-3" />
+                                        <p className="text-sm text-muted-foreground">
+                                            {t('File storage is not available on your current plan.')}
+                                        </p>
+                                        <Button variant="outline" size="sm" className="mt-4" asChild>
+                                            <Link href="/billing/plans">{t('View Plans')}</Link>
+                                        </Button>
+                                    </div>
+                                )}
+
+                                {(storage?.enabled || projectFilesList.length > 0) && (
+                                    <div className="space-y-2 pt-2 border-t">
+                                        <div className="flex items-center justify-between">
+                                            <Label>{t('Uploaded Files')} ({projectFilesList.length})</Label>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={fetchProjectFiles}
+                                                disabled={isLoadingFiles}
+                                            >
+                                                {isLoadingFiles ? (
+                                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                ) : (
+                                                    <RefreshCw className="h-3.5 w-3.5" />
+                                                )}
+                                            </Button>
+                                        </div>
+
+                                        {isLoadingFiles && projectFilesList.length === 0 ? (
+                                            <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+                                                <Loader2 className="h-4 w-4 me-2 animate-spin" />
+                                                {t('Loading files...')}
+                                            </div>
+                                        ) : projectFilesList.length === 0 ? (
+                                            <p className="text-xs text-muted-foreground py-4 text-center border rounded-lg bg-muted/20">
+                                                {t('No files uploaded yet.')}
+                                            </p>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                {projectFilesList.map((file) => {
+                                                    const resolvedUrl =
+                                                        (file.url.startsWith('http') || file.url.startsWith('/')
+                                                            ? file.url
+                                                            : getAssetUrl(file.url)) || file.url;
+                                                    return (
+                                                        <div
+                                                            key={file.id}
+                                                            className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-lg border bg-muted/20"
+                                                        >
+                                                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                                                                {file.is_image ? (
+                                                                    <img
+                                                                        src={resolvedUrl}
+                                                                        alt={file.original_filename}
+                                                                        className="h-9 w-9 rounded object-cover border shrink-0 bg-background"
+                                                                    />
+                                                                ) : (
+                                                                    <div className="h-9 w-9 rounded border bg-background flex items-center justify-center shrink-0 text-muted-foreground">
+                                                                        {file.is_video ? (
+                                                                            <Film className="h-4 w-4" />
+                                                                        ) : file.is_audio ? (
+                                                                            <Music className="h-4 w-4" />
+                                                                        ) : file.is_pdf ? (
+                                                                            <FileText className="h-4 w-4" />
+                                                                        ) : (
+                                                                            <ImageIcon className="h-4 w-4" />
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                                <div className="min-w-0 flex-1">
+                                                                    <p className="text-sm font-medium truncate">
+                                                                        {file.original_filename}
+                                                                    </p>
+                                                                    <p className="text-xs text-muted-foreground truncate">
+                                                                        {file.human_size}
+                                                                    </p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-center gap-1 shrink-0 self-end sm:self-center">
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    className="h-8 w-8"
+                                                                    onClick={() => {
+                                                                        navigator.clipboard.writeText(resolvedUrl);
+                                                                        setCopiedFileId(file.id);
+                                                                        toast.success(t('File URL copied'));
+                                                                        setTimeout(() => setCopiedFileId(null), 1500);
+                                                                    }}
+                                                                >
+                                                                    {copiedFileId === file.id ? (
+                                                                        <Check className="h-3.5 w-3.5 text-success" />
+                                                                    ) : (
+                                                                        <Copy className="h-3.5 w-3.5" />
+                                                                    )}
+                                                                </Button>
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    className="h-8 w-8"
+                                                                    asChild
+                                                                >
+                                                                    <a
+                                                                        href={resolvedUrl}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                    >
+                                                                        <ExternalLink className="h-3.5 w-3.5" />
+                                                                    </a>
+                                                                </Button>
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    className="h-8 w-8 text-destructive hover:text-destructive"
+                                                                    onClick={() => handleDeleteStorageFile(file.id)}
+                                                                    disabled={deletingFileId === file.id}
+                                                                >
+                                                                    {deletingFileId === file.id ? (
+                                                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                                    ) : (
+                                                                        <Trash2 className="h-3.5 w-3.5" />
+                                                                    )}
+                                                                </Button>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                         )}
-                                        <p className="text-xs text-muted-foreground">
-                                            {t('Files uploaded via dashboard or generated app count toward the same quota.')}
-                                        </p>
                                     </div>
-                                </CardContent>
-                            </Card>
-                        )}
-
+                                )}
+                            </CardContent>
+                        </Card>
                     </div>
                 );
 
@@ -1008,7 +1301,7 @@ export function ProjectSettingsPanel({
                                     </CardDescription>
                                 </CardHeader>
                                 <CardContent>
-                                    <div className="flex flex-col items-center justify-center py-8 border-2 border-dashed rounded-lg bg-muted/20">
+                                    <div className="flex flex-col items-center justify-center py-8 px-4 text-center border-2 border-dashed rounded-lg bg-muted/20">
                                         <Database className="h-10 w-10 text-muted-foreground/30 mb-3" />
                                         <p className="text-sm text-muted-foreground">
                                             {t('Firebase Firestore is not available on your current plan.')}
@@ -1024,25 +1317,25 @@ export function ProjectSettingsPanel({
                         {/* Supabase Database Configuration Card */}
                         <Card>
                             <CardHeader>
-                                <div className="flex items-center justify-between">
-                                    <div>
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                    <div className="min-w-0">
                                         <CardTitle className="flex items-center gap-2">
-                                            <Database className="h-5 w-5 text-emerald-500" />
-                                            {t('Supabase Database (PostgreSQL & Auth)')}
+                                            <Database className="h-5 w-5 text-emerald-500 shrink-0" />
+                                            <span>{t('Supabase Database (PostgreSQL & Auth)')}</span>
                                         </CardTitle>
                                         <CardDescription className="mt-1">
                                             {t('Connect your Supabase project to enable PostgreSQL tables, Row-Level Security, and Supabase Auth in your generated website.')}
                                         </CardDescription>
                                     </div>
-                                    {firebase?.enabled && (
-                                        <Badge variant={supabaseConfigured ? 'default' : 'secondary'}>
+                                    {canUseSupabase && (
+                                        <Badge variant={supabaseConfigured ? 'default' : 'secondary'} className="w-fit shrink-0">
                                             {supabaseConfigured ? t('Connected') : t('Optional')}
                                         </Badge>
                                     )}
                                 </div>
                             </CardHeader>
                             <CardContent>
-                                {firebase?.enabled ? (
+                                {canUseSupabase ? (
                                     <div className="space-y-4">
                                         <div className="space-y-2">
                                             <Label htmlFor="supabase-url">{t('Supabase Project URL')}</Label>
@@ -1062,12 +1355,13 @@ export function ProjectSettingsPanel({
                                                     placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                                                     value={supabaseAnonKey}
                                                     onChange={(e) => setSupabaseAnonKey(e.target.value)}
-                                                    className="font-mono text-xs"
+                                                    className="font-mono text-xs min-w-0 flex-1"
                                                 />
                                                 <Button
                                                     type="button"
                                                     variant="outline"
                                                     size="icon"
+                                                    className="shrink-0"
                                                     onClick={() => setShowSupabaseKey(!showSupabaseKey)}
                                                 >
                                                     {showSupabaseKey ? (
@@ -1077,7 +1371,7 @@ export function ProjectSettingsPanel({
                                                     )}
                                                 </Button>
                                             </div>
-                                            <p className="text-xs text-muted-foreground">
+                                            <p className="text-xs text-muted-foreground break-words">
                                                 {t('Injected at runtime into your app as window.__APP_CONFIG__.supabase (table prefix: :prefix)', {
                                                     prefix: supabaseTablePrefix,
                                                 })}
@@ -1116,7 +1410,7 @@ export function ProjectSettingsPanel({
                                         </div>
                                     </div>
                                 ) : (
-                                    <div className="flex flex-col items-center justify-center py-8 border-2 border-dashed rounded-lg bg-muted/20">
+                                    <div className="flex flex-col items-center justify-center py-8 px-4 text-center border-2 border-dashed rounded-lg bg-muted/20">
                                         <Database className="h-10 w-10 text-muted-foreground/30 mb-3" />
                                         <p className="text-sm text-muted-foreground">
                                             {t('Supabase database integration requires a plan with Database access enabled.')}
@@ -1146,31 +1440,31 @@ export function ProjectSettingsPanel({
     }
 
     return (
-        <ScrollArea className="h-full">
-            <div className="p-6 space-y-6">
+        <div className="h-full overflow-y-auto overflow-x-hidden">
+            <div className="p-4 sm:p-6 space-y-6 max-w-4xl mx-auto w-full min-w-0">
                 {/* Tab Navigation - horizontal pills */}
-                <div className="flex items-center gap-1 p-1 bg-muted rounded-lg w-fit">
+                <div className="flex items-center gap-1 p-1 bg-muted rounded-lg w-full sm:w-fit overflow-x-auto no-scrollbar">
                     {tabConfig.map((tab) => (
                         <button
                             key={tab.key}
                             onClick={() => setActiveTab(tab.key)}
                             type="button"
                             className={cn(
-                                'flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
+                                'flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap shrink-0',
                                 activeTab === tab.key
                                     ? 'bg-background text-foreground shadow-sm'
                                     : 'text-muted-foreground hover:text-foreground'
                             )}
                         >
-                            <tab.icon className="h-4 w-4" />
+                            <tab.icon className="h-4 w-4 shrink-0" />
                             {t(tab.labelKey)}
                         </button>
                     ))}
                 </div>
 
                 {/* Content */}
-                {renderContent()}
+                <div className="min-w-0">{renderContent()}</div>
             </div>
-        </ScrollArea>
+        </div>
     );
 }

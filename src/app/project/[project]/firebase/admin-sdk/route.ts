@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { getSessionContext, getUserCurrentPlan } from '@/lib/auth';
+import { getSessionContext, getUserCurrentPlan, canViewProject, canUpdateProject } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { Project } from '@/models/Project';
 import {
-  getSystemAdminServiceAccount,
   getProjectAdminServiceAccount,
   testFirebaseAdminConnection,
   FirebaseServiceAccount,
@@ -26,11 +25,14 @@ export async function GET(
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canViewProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   const saInfo = await getProjectAdminServiceAccount(project);
@@ -61,12 +63,13 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthenticated.' }, { status: 401 });
   }
 
+  const isAdmin = ctx.user.role === 'admin';
   const plan = await getUserCurrentPlan(ctx.user);
-  if (!plan?.enable_firebase) {
+  if (!isAdmin && !plan?.enable_firebase) {
     return NextResponse.json({ error: 'Firebase is not enabled for your plan.' }, { status: 403 });
   }
 
-  if (!(plan as any)?.allow_user_firebase_config) {
+  if (!isAdmin && !plan?.allow_user_firebase_config) {
     return NextResponse.json(
       { error: 'Your plan does not allow custom Firebase configurations.' },
       { status: 403 }
@@ -76,11 +79,14 @@ export async function POST(
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canUpdateProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   if (project.uses_system_firebase) {
@@ -143,11 +149,14 @@ export async function DELETE(
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canUpdateProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   project.firebase_admin_service_account = null as any;

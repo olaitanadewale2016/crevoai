@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { getSessionContext } from '@/lib/auth';
+import { getSessionContext, canUpdateProject } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { Project } from '@/models/Project';
 import { r2PutObject, r2DeleteObject } from '@/lib/r2';
@@ -15,17 +15,20 @@ export async function POST(
   const { project: projectId } = await props.params;
   const ctx = await getSessionContext(req);
   if (!ctx) {
-    return NextResponse.redirect(new URL('/login', req.url), 303);
+    return NextResponse.json({ error: 'Unauthenticated.' }, { status: 401 });
   }
 
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canUpdateProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   const { files } = await parseRequestBody(req);
@@ -38,12 +41,12 @@ export async function POST(
     return NextResponse.json({ error: 'Share image must not exceed 2MB.' }, { status: 422 });
   }
 
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
   if (!allowedTypes.includes(shareFile.type)) {
     return NextResponse.json({ error: 'Invalid image format.' }, { status: 422 });
   }
 
-  const ext = shareFile.name.split('.').pop() || 'png';
+  const ext = (shareFile.name.split('.').pop() || 'png').replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'png';
   const path = `share-images/${generateHexToken(16)}.${ext}`;
 
   if (project.share_image) {
@@ -74,17 +77,20 @@ export async function DELETE(
   const { project: projectId } = await props.params;
   const ctx = await getSessionContext(req);
   if (!ctx) {
-    return NextResponse.redirect(new URL('/login', req.url), 303);
+    return NextResponse.json({ error: 'Unauthenticated.' }, { status: 401 });
   }
 
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canUpdateProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   if (project.share_image) {
@@ -96,5 +102,5 @@ export async function DELETE(
   if (req.headers.get('x-inertia')) {
     return NextResponse.redirect(new URL(`/project/${projectId}/settings`, req.url), 303);
   }
-  return NextResponse.json({ success: true, message: 'Share image removed.' });
+  return NextResponse.json({ success: true, share_image: null, message: 'Share image removed.' });
 }

@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { getSessionContext, getUserCurrentPlan } from '@/lib/auth';
+import { getSessionContext, getUserCurrentPlan, canViewProject, canUpdateProject } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { Project } from '@/models/Project';
 import {
   getProjectFirebaseConfig,
-  getSystemFirebaseConfig,
   validateFirebaseWebConfig,
   FirebaseWebConfig,
 } from '@/lib/firebase-admin';
@@ -23,26 +22,30 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthenticated.' }, { status: 401 });
   }
 
+  const isAdmin = ctx.user.role === 'admin';
   const plan = await getUserCurrentPlan(ctx.user);
-  if (!plan?.enable_firebase) {
+  if (!isAdmin && !plan?.enable_firebase) {
     return NextResponse.json({ error: 'Firebase is not enabled for your plan.' }, { status: 403 });
   }
 
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canViewProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   const config = await getProjectFirebaseConfig(project);
   return NextResponse.json({
     config,
     uses_system_firebase: Boolean(project.uses_system_firebase),
-    can_use_own_config: Boolean((plan as any)?.allow_user_firebase_config),
+    can_use_own_config: isAdmin || Boolean(plan?.allow_user_firebase_config),
     collection_prefix: project.uses_system_firebase ? `projects/${project._id}/` : '',
     admin_sdk_configured: Boolean(project.firebase_admin_service_account),
   });
@@ -58,19 +61,23 @@ export async function PUT(
     return NextResponse.json({ error: 'Unauthenticated.' }, { status: 401 });
   }
 
+  const isAdmin = ctx.user.role === 'admin';
   const plan = await getUserCurrentPlan(ctx.user);
-  if (!plan?.enable_firebase) {
+  if (!isAdmin && !plan?.enable_firebase) {
     return NextResponse.json({ error: 'Firebase is not enabled for your plan.' }, { status: 403 });
   }
 
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canUpdateProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   const body = await parseRequestBody<{
@@ -91,7 +98,7 @@ export async function PUT(
     });
   }
 
-  if (!(plan as any)?.allow_user_firebase_config) {
+  if (!isAdmin && !plan?.allow_user_firebase_config) {
     return NextResponse.json(
       { error: 'Your plan does not allow custom Firebase configurations.' },
       { status: 403 }
@@ -131,11 +138,14 @@ export async function DELETE(
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canUpdateProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   project.uses_system_firebase = true;

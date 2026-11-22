@@ -30,6 +30,7 @@ interface SubdomainUsage {
 
 interface FirebaseSettings {
     enabled: boolean;
+    supabaseEnabled?: boolean;
     canUseOwnConfig: boolean;
     usesSystemFirebase: boolean;
     customConfig: FirebaseConfig | null;
@@ -49,6 +50,7 @@ interface StorageSettings {
     usedBytes: number;
     limitMb: number | null;
     unlimited: boolean;
+    maxFileSizeMb?: number;
 }
 
 interface CustomDomainUsage {
@@ -98,23 +100,23 @@ export default function Settings({
         <>
             <Head title={`Settings - ${project.name}`} />
 
-            <div className="h-screen bg-background flex flex-col">
+            <div className="h-[100dvh] bg-background flex flex-col overflow-hidden">
                 {/* Header */}
-                <div className="h-14 px-4 border-b flex items-center justify-between bg-background shrink-0">
-                    <div>
-                        <h1 className="text-sm font-semibold">{project.name}</h1>
-                        <p className="text-xs text-muted-foreground">Project Settings</p>
+                <div className="h-14 px-3 sm:px-4 border-b flex items-center justify-between gap-3 bg-background shrink-0">
+                    <div className="min-w-0 flex-1">
+                        <h1 className="text-sm font-semibold truncate">{project.name}</h1>
+                        <p className="text-xs text-muted-foreground truncate">Project Settings</p>
                     </div>
-                    <Button variant="outline" size="sm" asChild>
+                    <Button variant="outline" size="sm" className="shrink-0" asChild>
                         <Link href={`/project/${project.id}`}>
-                            <ArrowLeft className="h-4 w-4 mr-2" />
-                            Back
+                            <ArrowLeft className="h-4 w-4 sm:mr-2" />
+                            <span className="hidden sm:inline">Back</span>
                         </Link>
                     </Button>
                 </div>
 
                 {/* Shared settings panel */}
-                <div className="flex-1 overflow-hidden">
+                <div className="flex-1 min-h-0 overflow-hidden">
                     <ProjectSettingsPanel
                         project={project}
                         baseDomain={baseDomain}

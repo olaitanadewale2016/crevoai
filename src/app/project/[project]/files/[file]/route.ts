@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { getSessionContext } from '@/lib/auth';
+import { getSessionContext, canViewProject, canUpdateProject } from '@/lib/auth';
 import { Project, ProjectFile } from '@/models/Project';
 import { r2GetObject, r2DeleteObject } from '@/lib/r2';
 
@@ -19,11 +19,14 @@ export async function GET(
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canViewProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   const doc = await ProjectFile.findOne({
@@ -61,11 +64,14 @@ export async function DELETE(
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canUpdateProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   const doc = await ProjectFile.findOne({

@@ -125,11 +125,14 @@ export default async function ProjectChatPage({
         volume: 50,
       };
 
+  const isAdmin = user.role === 'admin';
+
   // Subdomain permissions & usage
-  const planSubdomainsEnabled = Boolean(plan?.enable_subdomains);
+  const planSubdomainsEnabled = isAdmin || Boolean(plan?.enable_subdomains);
   const unlimitedSubdomains =
-    planSubdomainsEnabled &&
-    (plan?.max_subdomains_per_user === null || plan?.max_subdomains_per_user === -1);
+    isAdmin ||
+    (planSubdomainsEnabled &&
+      (plan?.max_subdomains_per_user === null || plan?.max_subdomains_per_user === -1));
   const subdomainLimit = planSubdomainsEnabled
     ? unlimitedSubdomains
       ? null
@@ -150,13 +153,14 @@ export default async function ProjectChatPage({
     canUseSubdomains &&
       (unlimitedSubdomains || (subdomainLimit !== null && subdomainLimit > 0 && subdomainCount < subdomainLimit))
   );
-  const canUsePrivateVisibility = Boolean(plan?.allow_private_visibility);
+  const canUsePrivateVisibility = isAdmin || Boolean(plan?.allow_private_visibility);
 
   // Custom domain permissions & usage
-  const planCustomDomainsEnabled = Boolean(plan?.enable_custom_domains);
+  const planCustomDomainsEnabled = isAdmin || Boolean(plan?.enable_custom_domains);
   const unlimitedCustomDomains =
-    planCustomDomainsEnabled &&
-    (plan?.max_custom_domains_per_user === null || plan?.max_custom_domains_per_user === -1);
+    isAdmin ||
+    (planCustomDomainsEnabled &&
+      (plan?.max_custom_domains_per_user === null || plan?.max_custom_domains_per_user === -1));
   const customDomainLimit = planCustomDomainsEnabled
     ? unlimitedCustomDomains
       ? null
@@ -215,28 +219,29 @@ export default async function ProjectChatPage({
         client_email: hasCustomAdminSa ? customAdminSa?.client_email ?? null : null,
       };
 
-  const firebaseSettings = plan
-    ? {
-        enabled: Boolean(plan.enable_firebase),
-        canUseOwnConfig: Boolean(plan.allow_user_firebase_config),
-        usesSystemFirebase,
-        customConfig: customFbConfig,
-        systemConfigured: sysFirebaseConfigured,
-        collectionPrefix: `projects/${project._id}`,
-        adminSdkConfigured,
-        adminSdkStatus,
-      }
-    : undefined;
+  const firebaseSettings = {
+    enabled: isAdmin || Boolean(plan?.enable_firebase),
+    supabaseEnabled: isAdmin || Boolean(plan?.enable_supabase || plan?.enable_firebase),
+    canUseOwnConfig: isAdmin || Boolean(plan?.allow_user_firebase_config),
+    usesSystemFirebase,
+    customConfig: customFbConfig,
+    systemConfigured: sysFirebaseConfigured,
+    collectionPrefix: `projects/${project._id}`,
+    adminSdkConfigured,
+    adminSdkStatus,
+  };
 
   // Storage settings & project files for @mention autocomplete
   // Chat image attachments are always enabled with plan-based multi-image limits
-  const fileStorageEnabled = true;
+  const fileStorageEnabled = isAdmin || Boolean(plan?.enable_file_storage);
+  const storageUnlimited =
+    isAdmin || (Boolean(plan) && (plan?.max_storage_mb === null || plan?.max_storage_mb === -1));
   const maxImagesPerPrompt =
-    user.role === 'admin' || plan?.monthly_build_credits === -1
+    isAdmin || plan?.monthly_build_credits === -1
       ? 10
       : plan?.max_images_per_prompt || ((plan?.price ?? 0) > 0 ? 6 : 2);
   const allowedEfforts: Array<'low' | 'medium' | 'high'> =
-    user.role === 'admin' ||
+    isAdmin ||
     plan?.monthly_build_credits === -1 ||
     buildCredits?.usingOwnKey ||
     (plan?.price ?? 0) > 0 ||
@@ -244,14 +249,16 @@ export default async function ProjectChatPage({
       ? ['low', 'medium', 'high']
       : ['low', 'medium'];
   const storageSettings = {
-    enabled: true,
+    enabled: fileStorageEnabled,
     usedBytes: Number(project.storage_used_bytes ?? 0),
-    limitMb:
-      plan?.max_storage_mb === null || plan?.max_storage_mb === -1
-        ? null
-        : (plan?.max_storage_mb ?? 100),
-    unlimited: plan?.max_storage_mb === null || plan?.max_storage_mb === -1,
-    maxFileSizeMb: Number(plan?.max_file_size_mb ?? 10),
+    limitMb: storageUnlimited ? null : (plan?.max_storage_mb ?? 100),
+    unlimited: storageUnlimited,
+    maxFileSizeMb:
+      plan?.max_file_size_mb && plan.max_file_size_mb > 0
+        ? Number(plan.max_file_size_mb)
+        : isAdmin
+          ? 100
+          : 10,
     maxImagesPerPrompt,
     allowedEfforts,
     allowedTypes: [
@@ -264,25 +271,23 @@ export default async function ProjectChatPage({
     ],
   };
 
-  const projectFiles = fileStorageEnabled
-    ? (
-        await ProjectFile.find({
-          project_id: project._id,
-          mime_type: { $regex: '^image/', $options: 'i' },
-        })
-          .sort({ created_at: -1 })
-          .limit(100)
-          .lean()
-      ).map((f) => ({
-        id: String(f._id) as any,
-        filename: f.original_filename,
-        mime_type: f.mime_type,
-        size: Number(f.size),
-        human_size: formatHumanFileSize(Number(f.size)),
-        is_image: true,
-        url: `/project/${project._id}/files/${String(f._id)}`,
-      }))
-    : [];
+  const projectFiles = (
+    await ProjectFile.find({
+      project_id: project._id,
+      mime_type: { $regex: '^image/', $options: 'i' },
+    })
+      .sort({ created_at: -1 })
+      .limit(100)
+      .lean()
+  ).map((f) => ({
+    id: String(f._id) as any,
+    filename: f.original_filename,
+    mime_type: f.mime_type,
+    size: Number(f.size),
+    human_size: formatHumanFileSize(Number(f.size)),
+    is_image: true,
+    url: `/project/${project._id}/files/${String(f._id)}`,
+  }));
 
   const suggestedSubdomain = project.subdomain || (await generateSuggestedSubdomain(project.name));
   const hasActiveSession = Boolean(project.build_session_id && project.builder_id);

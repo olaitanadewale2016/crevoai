@@ -85,8 +85,12 @@ function ProjectAdminSdkUpload({ projectId, configured, projectInfoId, clientEma
     const handleTestConnection = async () => {
         setTesting(true);
         try {
-            await axios.post(`/project/${projectId}/firebase/admin-sdk/test`);
-            toast.success(t('Connection successful!'));
+            const res = await axios.post(`/project/${projectId}/firebase/admin-sdk/test`);
+            if (res.data?.success) {
+                toast.success(t('Connection successful!'));
+            } else {
+                toast.error(t('Connection failed') + ': ' + (res.data?.error || t('Unknown error')));
+            }
         } catch (error: unknown) {
             const err = error as { response?: { data?: { error?: string } } };
             toast.error(t('Connection failed') + ': ' + (err.response?.data?.error || 'Unknown error'));
@@ -109,20 +113,20 @@ function ProjectAdminSdkUpload({ projectId, configured, projectInfoId, clientEma
 
     if (configured) {
         return (
-            <div className="flex items-start justify-between gap-4">
-                <div className="flex items-start gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 sm:gap-4">
+                <div className="flex items-start gap-3 min-w-0">
                     <CheckCircle className="h-5 w-5 text-success mt-0.5 shrink-0" />
-                    <div className="space-y-1">
+                    <div className="space-y-1 min-w-0">
                         <p className="font-medium">{t('Admin SDK Configured')}</p>
-                        <p className="text-sm text-muted-foreground">
-                            {t('Project ID')}: <code className="bg-muted px-1 py-0.5 rounded">{projectInfoId}</code>
+                        <p className="text-sm text-muted-foreground break-all">
+                            {t('Project ID')}: <code className="bg-muted px-1 py-0.5 rounded break-all">{projectInfoId}</code>
                         </p>
-                        <p className="text-sm text-muted-foreground truncate max-w-md">
+                        <p className="text-sm text-muted-foreground break-all">
                             {t('Service Account')}: {clientEmail}
                         </p>
                     </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2 shrink-0 self-end sm:self-start">
                     <Button
                         type="button"
                         variant="outline"
@@ -208,6 +212,7 @@ export function FirebaseConfig({
 }: FirebaseConfigProps) {
     const { t } = useTranslation();
     const [useSystem, setUseSystem] = useState(usesSystemFirebase);
+    const [savedUsesSystem, setSavedUsesSystem] = useState(usesSystemFirebase);
     const [configJson, setConfigJson] = useState(
         customConfig ? JSON.stringify(customConfig, null, 2) : ''
     );
@@ -286,10 +291,15 @@ export function FirebaseConfig({
                 use_system_firebase: useSystem,
                 config: useSystem ? null : JSON.parse(configJson),
             });
+            setSavedUsesSystem(useSystem);
+            if (useSystem) {
+                setConfigJson('');
+            }
             toast.success(t('Firebase configuration saved'));
             setConfigErrors([]);
+            router.reload();
         } catch (err: unknown) {
-            const error = err as { response?: { data?: { errors?: Record<string, string[]> | string[]; message?: string } } };
+            const error = err as { response?: { data?: { errors?: Record<string, string[]> | string[]; error?: string; message?: string } } };
             const rawErrors = error.response?.data?.errors;
             let errors: string[];
             if (Array.isArray(rawErrors)) {
@@ -297,10 +307,11 @@ export function FirebaseConfig({
             } else if (rawErrors && typeof rawErrors === 'object') {
                 errors = Object.values(rawErrors).flat();
             } else {
-                errors = [error.response?.data?.message || t('Failed to save configuration')];
+                const msg = error.response?.data?.error || error.response?.data?.message || t('Failed to save configuration');
+                errors = [msg];
             }
             setConfigErrors(errors);
-            toast.error(t('Failed to save configuration'));
+            toast.error(errors[0] || t('Failed to save configuration'));
         } finally {
             setIsSaving(false);
         }
@@ -311,9 +322,11 @@ export function FirebaseConfig({
         try {
             await axios.delete(`/project/${projectId}/firebase/config`);
             setUseSystem(true);
+            setSavedUsesSystem(true);
             setConfigJson('');
             setConfigErrors([]);
             toast.success(t('Firebase configuration reset to system default'));
+            router.reload();
         } catch {
             toast.error(t('Failed to reset configuration'));
         } finally {
@@ -322,9 +335,20 @@ export function FirebaseConfig({
     };
 
     const handleTestConnection = async () => {
+        let payload: Record<string, unknown> = {};
+        if (!useSystem && configJson.trim()) {
+            const { valid, errors } = validateConfig(configJson);
+            if (!valid) {
+                setConfigErrors(errors);
+                toast.error(errors[0] || t('Invalid configuration'));
+                return;
+            }
+            payload = { config: JSON.parse(configJson) };
+        }
+
         setConnectionStatus('testing');
         try {
-            const response = await axios.post(`/project/${projectId}/firebase/test`);
+            const response = await axios.post(`/project/${projectId}/firebase/test`, payload);
             if (response.data.success) {
                 setConnectionStatus('success');
                 toast.success(t('Connection successful!'));
@@ -332,9 +356,10 @@ export function FirebaseConfig({
                 setConnectionStatus('error');
                 toast.error(response.data.error || t('Connection failed'));
             }
-        } catch {
+        } catch (err: unknown) {
             setConnectionStatus('error');
-            toast.error(t('Failed to test connection'));
+            const error = err as { response?: { data?: { error?: string } } };
+            toast.error(error.response?.data?.error || t('Failed to test connection'));
         }
     };
 
@@ -362,17 +387,17 @@ export function FirebaseConfig({
         <div className="space-y-6">
             <Card>
                 <CardHeader>
-                    <div className="flex items-center justify-between">
-                        <div>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="min-w-0">
                             <CardTitle className="flex items-center gap-2">
-                                <Database className="h-5 w-5" />
+                                <Database className="h-5 w-5 shrink-0" />
                                 {t('Firebase Database')}
                             </CardTitle>
                             <CardDescription>
                                 {t('Configure Firebase Firestore for your generated app.')}
                             </CardDescription>
                         </div>
-                        <Badge variant={systemConfigured ? 'default' : 'secondary'}>
+                        <Badge variant={systemConfigured ? 'default' : 'secondary'} className="w-fit shrink-0">
                             {systemConfigured ? t('System Configured') : t('Not Configured')}
                         </Badge>
                     </div>
@@ -380,9 +405,9 @@ export function FirebaseConfig({
                 <CardContent className="space-y-6">
                     {/* Collection Prefix Info */}
                     <div className="rounded-lg border p-3 bg-muted/50">
-                        <p className="text-sm text-muted-foreground">
+                        <p className="text-sm text-muted-foreground break-words">
                             <strong>{t('Collection Prefix:')}</strong>{' '}
-                            <code className="text-xs bg-background px-1 py-0.5 rounded">{collectionPrefix}</code>
+                            <code className="text-xs bg-background px-1.5 py-0.5 rounded break-all">{collectionPrefix}</code>
                         </p>
                         <p className="text-xs text-muted-foreground mt-1">
                             {t('All your Firestore collections will be automatically prefixed with this path.')}
@@ -391,8 +416,8 @@ export function FirebaseConfig({
 
                     {/* System vs Custom Toggle */}
                     {canUseOwnConfig && (
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="space-y-0.5 min-w-0">
                                 <Label htmlFor="use-system">{t('Use System Firebase')}</Label>
                                 <p className="text-xs text-muted-foreground">
                                     {useSystem
@@ -461,7 +486,7 @@ export function FirebaseConfig({
                             </Button>
                         )}
 
-                        {canUseOwnConfig && !useSystem && (
+                        {canUseOwnConfig && (!useSystem || useSystem !== savedUsesSystem) && (
                             <Button onClick={handleSaveConfig} disabled={isSaving}>
                                 {isSaving && <Loader2 className="h-4 w-4 me-2 animate-spin" />}
                                 {t('Save Configuration')}

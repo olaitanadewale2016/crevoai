@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { getSessionContext, getUserCurrentPlan } from '@/lib/auth';
+import { getSessionContext, getUserCurrentPlan, canUpdateProject } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { getSetting } from '@/lib/settings';
 import { Project } from '@/models/Project';
@@ -23,25 +23,29 @@ export async function POST(
     return NextResponse.json({ error: 'Subdomain publishing is not enabled on this platform.' }, { status: 403 });
   }
 
+  const isAdmin = ctx.user.role === 'admin';
   const plan = await getUserCurrentPlan(ctx.user);
-  if (!plan?.enable_subdomains) {
+  if (!isAdmin && !plan?.enable_subdomains) {
     return NextResponse.json({ error: 'Your plan does not include subdomain publishing.' }, { status: 403 });
   }
 
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
   }
+  if (!(await canUpdateProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
+  }
 
   const isNewSubdomain = !project.subdomain;
-  if (isNewSubdomain && plan.max_subdomains_per_user !== null && plan.max_subdomains_per_user !== undefined && plan.max_subdomains_per_user > 0) {
+  if (!isAdmin && isNewSubdomain && plan?.max_subdomains_per_user !== null && plan?.max_subdomains_per_user !== undefined && plan.max_subdomains_per_user > 0) {
     const currentCount = await Project.countDocuments({
-      user_id: ctx.user._id,
+      user_id: project.user_id,
       subdomain: { $ne: null },
       deleted_at: null,
     });
@@ -52,7 +56,7 @@ export async function POST(
 
   const body = await parseRequestBody<{ subdomain?: string; visibility?: 'public' | 'private' }>(req);
   const rawSubdomain = body.subdomain || '';
-  const visibility = body.visibility || 'public';
+  const visibility = body.visibility === 'private' ? 'private' : 'public';
 
   const subdomain = normalizeSubdomain(rawSubdomain);
   const errors = await validateSubdomain(subdomain);
@@ -65,7 +69,7 @@ export async function POST(
     return NextResponse.json({ error: 'This subdomain is already taken.' }, { status: 422 });
   }
 
-  if (visibility === 'private' && !(plan as any)?.enable_private_visibility) {
+  if (visibility === 'private' && !isAdmin && !plan?.allow_private_visibility) {
     return NextResponse.json({ error: 'Your plan does not include private visibility.' }, { status: 403 });
   }
 

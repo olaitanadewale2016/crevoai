@@ -350,10 +350,10 @@ export function CustomDomainCard({ project, customDomain }: CustomDomainCardProp
     return (
         <Card>
             <CardHeader>
-                <div className="flex items-center justify-between">
-                    <div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="min-w-0">
                         <CardTitle className="flex items-center gap-2">
-                            <Globe className="h-5 w-5" />
+                            <Globe className="h-5 w-5 shrink-0" />
                             {t('Custom Domain')}
                         </CardTitle>
                         <CardDescription>
@@ -362,6 +362,7 @@ export function CustomDomainCard({ project, customDomain }: CustomDomainCardProp
                     </div>
                     {project.custom_domain && (
                         <Badge
+                            className="w-fit shrink-0"
                             variant={
                                 project.custom_domain_ssl_status === 'active'
                                     ? 'success'
@@ -432,46 +433,57 @@ export function CustomDomainCard({ project, customDomain }: CustomDomainCardProp
                                         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-medium">
                                             3
                                         </span>
-                                        <div className="flex-1 space-y-3 pt-0.5">
+                                        <div className="flex-1 min-w-0 space-y-3 pt-0.5">
                                             <span className="text-muted-foreground">
                                                 {t('Add an A record with these values:')}
                                             </span>
-                                            <div className="rounded-lg border p-3 bg-muted/50">
-                                                <div className="grid gap-2 text-sm">
-                                                    <div className="grid grid-cols-3 gap-2 font-medium text-xs text-muted-foreground">
+                                            <div className="rounded-lg border p-3 bg-muted/50 overflow-hidden">
+                                                <div className="grid gap-3 sm:gap-2 text-sm">
+                                                    <div className="hidden sm:grid sm:grid-cols-3 gap-2 font-medium text-xs text-muted-foreground">
                                                         <span>{t('Type')}</span>
                                                         <span>{t('Host / Name')}</span>
                                                         <span>{t('Value')}</span>
                                                     </div>
-                                                    <div className="grid grid-cols-3 gap-2 items-center">
-                                                        <code className="text-xs bg-background px-2 py-1 rounded border">
-                                                            {verificationInstructions.record_type}
-                                                        </code>
-                                                        <div className="flex items-center gap-1">
-                                                            <code className="text-xs bg-background px-2 py-1 rounded border truncate flex-1">
-                                                                {verificationInstructions.host}
+                                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:items-center">
+                                                        <div className="space-y-1 sm:space-y-0">
+                                                            <span className="text-[11px] font-medium text-muted-foreground sm:hidden block">{t('Type')}</span>
+                                                            <code className="text-xs bg-background px-2 py-1 rounded border inline-block sm:block w-fit sm:w-auto">
+                                                                {verificationInstructions.record_type}
                                                             </code>
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="icon"
-                                                                className="h-7 w-7 shrink-0"
-                                                                onClick={() => copyToClipboard(verificationInstructions.host)}
-                                                            >
-                                                                <Copy className="h-3 w-3" />
-                                                            </Button>
                                                         </div>
-                                                        <div className="flex items-center gap-1">
-                                                            <code className="text-xs bg-background px-2 py-1 rounded border truncate flex-1">
-                                                                {verificationInstructions.value}
-                                                            </code>
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="icon"
-                                                                className="h-7 w-7 shrink-0"
-                                                                onClick={() => copyToClipboard(verificationInstructions.value)}
-                                                            >
-                                                                <Copy className="h-3 w-3" />
-                                                            </Button>
+                                                        <div className="space-y-1 sm:space-y-0 min-w-0">
+                                                            <span className="text-[11px] font-medium text-muted-foreground sm:hidden block">{t('Host / Name')}</span>
+                                                            <div className="flex items-center gap-1 min-w-0">
+                                                                <code className="text-xs bg-background px-2 py-1 rounded border truncate flex-1 min-w-0">
+                                                                    {verificationInstructions.host}
+                                                                </code>
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    className="h-7 w-7 shrink-0"
+                                                                    onClick={() => copyToClipboard(verificationInstructions.host)}
+                                                                >
+                                                                    <Copy className="h-3 w-3" />
+                                                                </Button>
+                                                            </div>
+                                                        </div>
+                                                        <div className="space-y-1 sm:space-y-0 min-w-0">
+                                                            <span className="text-[11px] font-medium text-muted-foreground sm:hidden block">{t('Value')}</span>
+                                                            <div className="flex items-center gap-1 min-w-0">
+                                                                <code className="text-xs bg-background px-2 py-1 rounded border truncate flex-1 min-w-0">
+                                                                    {verificationInstructions.value}
+                                                                </code>
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    className="h-7 w-7 shrink-0"
+                                                                    onClick={() => copyToClipboard(verificationInstructions.value)}
+                                                                >
+                                                                    <Copy className="h-3 w-3" />
+                                                                </Button>
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -535,16 +547,16 @@ export function CustomDomainCard({ project, customDomain }: CustomDomainCardProp
                                                 {t('Domain Active')}
                                             </p>
                                         </div>
-                                        <p className="text-sm text-muted-foreground">
+                                        <p className="text-sm text-muted-foreground break-all">
                                             {t('Your domain is live at:')}{' '}
                                             <a
                                                 href={`https://${project.custom_domain}`}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="text-primary hover:underline inline-flex items-center gap-1"
+                                                className="text-primary hover:underline inline-flex items-center gap-1 break-all"
                                             >
                                                 {project.custom_domain}
-                                                <ExternalLink className="h-3 w-3" />
+                                                <ExternalLink className="h-3 w-3 shrink-0" />
                                             </a>
                                         </p>
                                     </div>
@@ -613,7 +625,7 @@ export function CustomDomainCard({ project, customDomain }: CustomDomainCardProp
                         )}
 
                         {/* Action buttons */}
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                             {!project.custom_domain_verified && (
                                 <Button
                                     onClick={handleVerifyDomain}

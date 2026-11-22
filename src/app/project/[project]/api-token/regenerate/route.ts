@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { getSessionContext } from '@/lib/auth';
+import { getSessionContext, canUpdateProject } from '@/lib/auth';
 import { Project } from '@/models/Project';
 import { generateHexToken } from '@/lib/crypto';
 
@@ -19,11 +19,14 @@ export async function POST(
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canUpdateProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   const token = `wb_${generateHexToken(24)}`;

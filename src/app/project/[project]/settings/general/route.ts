@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { getSessionContext, getUserCurrentPlan } from '@/lib/auth';
+import { getSessionContext, getUserCurrentPlan, canUpdateProject } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { Project } from '@/models/Project';
 
@@ -13,17 +13,20 @@ export async function PUT(
   const { project: projectId } = await props.params;
   const ctx = await getSessionContext(req);
   if (!ctx) {
-    return NextResponse.redirect(new URL('/login', req.url), 303);
+    return NextResponse.json({ error: 'Unauthenticated.' }, { status: 401 });
   }
 
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canUpdateProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   const body = await parseRequestBody<{
@@ -34,14 +37,15 @@ export async function PUT(
 
   const title = (body.published_title || '').trim().slice(0, 255);
   const desc = (body.published_description || '').trim().slice(0, 150);
-  const visibility = body.published_visibility || 'public';
+  const visibility = body.published_visibility === 'private' ? 'private' : 'public';
 
   if (visibility === 'private') {
     const plan = await getUserCurrentPlan(ctx.user);
-    const allowPrivate = (plan as any)?.enable_private_visibility ?? false;
+    const allowPrivate = ctx.user.role === 'admin' || Boolean(plan?.allow_private_visibility);
     if (!allowPrivate) {
+      const msg = 'Your plan does not include private visibility.';
       return NextResponse.json(
-        { errors: { published_visibility: 'Your plan does not include private visibility.' } },
+        { error: msg, errors: { published_visibility: msg } },
         { status: 422 }
       );
     }
@@ -55,5 +59,11 @@ export async function PUT(
   if (req.headers.get('x-inertia')) {
     return NextResponse.redirect(new URL(`/project/${projectId}/settings`, req.url), 303);
   }
-  return NextResponse.json({ success: true, message: 'Settings updated.' });
+  return NextResponse.json({
+    success: true,
+    message: 'Settings updated.',
+    published_title: project.published_title,
+    published_description: project.published_description,
+    published_visibility: project.published_visibility,
+  });
 }

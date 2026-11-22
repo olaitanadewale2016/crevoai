@@ -839,7 +839,7 @@ export async function buildDynamicHtml(
       appConfig.supabase = {
         url: supa.url,
         anonKey: supa.anonKey,
-        tablePrefix: `proj_${String(project._id).replace(/[^a-zA-Z0-9]/g, '_').slice(0, 16)}_`,
+        tablePrefix: `proj_${String(project._id).replace(/[^a-zA-Z0-9]/g, '_').slice(0, 12)}_`,
       };
     }
   }

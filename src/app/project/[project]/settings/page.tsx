@@ -89,11 +89,14 @@ export default async function ProjectSettingsPage({
     getSystemAdminServiceAccount(),
   ]);
 
+  const isAdmin = user.role === 'admin';
+
   // Subdomain permissions & usage
-  const planSubdomainsEnabled = Boolean(plan?.enable_subdomains);
+  const planSubdomainsEnabled = isAdmin || Boolean(plan?.enable_subdomains);
   const unlimitedSubdomains =
-    planSubdomainsEnabled &&
-    (plan?.max_subdomains_per_user === null || plan?.max_subdomains_per_user === -1);
+    isAdmin ||
+    (planSubdomainsEnabled &&
+      (plan?.max_subdomains_per_user === null || plan?.max_subdomains_per_user === -1));
   const subdomainLimit = planSubdomainsEnabled
     ? unlimitedSubdomains
       ? null
@@ -115,13 +118,14 @@ export default async function ProjectSettingsPage({
       (unlimitedSubdomains ||
         (subdomainLimit !== null && subdomainLimit > 0 && subdomainCount < subdomainLimit))
   );
-  const canUsePrivateVisibility = Boolean(plan?.allow_private_visibility);
+  const canUsePrivateVisibility = isAdmin || Boolean(plan?.allow_private_visibility);
 
   // Custom domain permissions & usage
-  const planCustomDomainsEnabled = Boolean(plan?.enable_custom_domains);
+  const planCustomDomainsEnabled = isAdmin || Boolean(plan?.enable_custom_domains);
   const unlimitedCustomDomains =
-    planCustomDomainsEnabled &&
-    (plan?.max_custom_domains_per_user === null || plan?.max_custom_domains_per_user === -1);
+    isAdmin ||
+    (planCustomDomainsEnabled &&
+      (plan?.max_custom_domains_per_user === null || plan?.max_custom_domains_per_user === -1));
   const customDomainLimit = planCustomDomainsEnabled
     ? unlimitedCustomDomains
       ? null
@@ -180,32 +184,34 @@ export default async function ProjectSettingsPage({
         client_email: hasCustomAdminSa ? customAdminSa?.client_email ?? null : null,
       };
 
-  const firebaseSettings = plan
-    ? {
-        enabled: Boolean(plan.enable_firebase),
-        canUseOwnConfig: Boolean(plan.allow_user_firebase_config),
-        usesSystemFirebase,
-        customConfig: customFbConfig,
-        systemConfigured: sysFirebaseConfigured,
-        collectionPrefix: `projects/${project._id}`,
-        adminSdkConfigured,
-        adminSdkStatus,
-      }
-    : undefined;
+  const firebaseSettings = {
+    enabled: isAdmin || Boolean(plan?.enable_firebase),
+    supabaseEnabled: isAdmin || Boolean(plan?.enable_supabase || plan?.enable_firebase),
+    canUseOwnConfig: isAdmin || Boolean(plan?.allow_user_firebase_config),
+    usesSystemFirebase,
+    customConfig: customFbConfig,
+    systemConfigured: sysFirebaseConfigured,
+    collectionPrefix: `projects/${project._id}`,
+    adminSdkConfigured,
+    adminSdkStatus,
+  };
 
   // Storage settings
-  const storageSettings =
-    plan && plan.enable_file_storage
-      ? {
-          enabled: true,
-          usedBytes: Number(project.storage_used_bytes ?? 0),
-          limitMb:
-            plan.max_storage_mb === null || plan.max_storage_mb === -1
-              ? null
-              : (plan.max_storage_mb ?? 0),
-          unlimited: plan.max_storage_mb === null || plan.max_storage_mb === -1,
-        }
-      : undefined;
+  const storageUnlimited =
+    isAdmin || (Boolean(plan) && (plan?.max_storage_mb === null || plan?.max_storage_mb === -1));
+  const storageEnabled = isAdmin || Boolean(plan?.enable_file_storage);
+  const storageSettings = {
+    enabled: storageEnabled,
+    usedBytes: Number(project.storage_used_bytes ?? 0),
+    limitMb: storageUnlimited ? null : (plan?.max_storage_mb ?? 0),
+    unlimited: storageUnlimited,
+    maxFileSizeMb:
+      plan?.max_file_size_mb && plan.max_file_size_mb > 0
+        ? Number(plan.max_file_size_mb)
+        : isAdmin
+          ? 100
+          : 10,
+  };
 
   const suggestedSubdomain = project.subdomain || (await generateSuggestedSubdomain(project.name));
 

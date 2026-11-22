@@ -81,6 +81,7 @@ interface Project {
 
 interface FirebaseSettings {
     enabled: boolean;
+    supabaseEnabled?: boolean;
     canUseOwnConfig: boolean;
     usesSystemFirebase: boolean;
     customConfig: {
@@ -259,7 +260,9 @@ export default function Chat({
     const [failedMessages, setFailedMessages] = useState<Array<{ message: string; timestamp: number }>>([]);
     const [initialLoading, setInitialLoading] = useState(true);
     const [publishModalOpen, setPublishModalOpen] = useState(false);
-    const [mobileView, setMobileView] = useState<'chat' | 'preview' | 'code'>('chat');
+    const [mobileView, setMobileView] = useState<'chat' | 'preview' | 'code' | 'settings'>(() =>
+        getInitialViewMode() === 'settings' ? 'settings' : 'chat'
+    );
     const [mobileFilesOpen, setMobileFilesOpen] = useState(false);
     const allowedEfforts: Array<'low' | 'medium' | 'high'> =
         storage?.allowedEfforts && storage.allowedEfforts.length > 0
@@ -287,8 +290,9 @@ export default function Chat({
     }, []);
 
     // Handle files dropped onto the chat input — upload via axios and add as badges
+    // Handle files dropped onto the chat input - upload via axios and add as badges
     const handleFilesDropped = useCallback(async (files: File[]) => {
-        if (!storage?.enabled || !project.id) return;
+        if (!project.id) return;
         const formData = new FormData();
         for (const file of files) {
             formData.set('file', file);
@@ -311,7 +315,7 @@ export default function Chat({
                 // Upload errors are handled server-side; skip failed files
             }
         }
-    }, [storage?.enabled, project.id, handleFileUploaded]);
+    }, [project.id, handleFileUploaded]);
 
     // Element selection state for inspect mode
     const [selectedElement, setSelectedElement] = useState<ElementMention | null>(null);
@@ -973,7 +977,7 @@ export default function Chat({
                             placeholder={t('Describe what you want to build...')}
                             isLoading={isLoading}
                             onCancel={cancelBuild}
-                            storageEnabled={storage?.enabled ?? true}
+                            storageEnabled={true}
                             projectId={project.id}
                             maxFileSizeMb={storage?.maxFileSizeMb ?? 10}
                             maxImagesPerPrompt={storage?.maxImagesPerPrompt ?? 4}
@@ -991,8 +995,8 @@ export default function Chat({
                     </div>
                 </div>
 
-                {/* Right: Preview/Code Column - Hidden on mobile when mobileView === 'chat', always visible on desktop */}
-                <div className={`${mobileView !== 'chat' ? 'flex' : 'hidden md:flex'} flex-1 flex-col overflow-hidden pb-14 md:pb-0`}>
+                {/* Right: Preview/Code/Settings Column - Hidden on mobile when mobileView === 'chat', always visible on desktop */}
+                <div className={`${mobileView !== 'chat' ? 'flex' : 'hidden md:flex'} flex-1 min-w-0 flex-col overflow-hidden pb-16 md:pb-0`}>
                     {/* Preview Header */}
                     <div className="h-14 px-3 md:px-4 border-b flex items-center justify-between gap-2 shrink-0 bg-background">
                         {/* View toggle */}
@@ -1028,7 +1032,10 @@ export default function Chat({
                             </button>
                             <div className="w-px h-6 bg-border" />
                             <button
-                                onClick={() => setViewMode('settings')}
+                                onClick={() => {
+                                    setViewMode('settings');
+                                    if (mobileView !== 'chat') setMobileView('settings');
+                                }}
                                 className={`flex items-center gap-1.5 md:gap-2 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium transition-all ${
                                     viewMode === 'settings'
                                         ? 'bg-primary text-primary-foreground'
@@ -1223,19 +1230,19 @@ export default function Chat({
                     </div>
                 </div>
 
-                {/* Mobile Bottom View Toggle (Chat vs Preview vs Code) — hides when virtual keypad / input is focused */}
+                {/* Mobile Bottom View Toggle (Chat vs Preview vs Code vs Settings) — hides when virtual keypad / input is focused */}
                 {!isInputFocused && (
-                    <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-40 md:hidden flex items-center bg-card/95 backdrop-blur-md border border-border/80 shadow-lg rounded-full p-1 gap-1">
+                    <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-40 md:hidden flex items-center bg-card/95 backdrop-blur-md border border-border/80 shadow-lg rounded-full p-1 gap-0.5 max-w-[calc(100vw-1rem)] overflow-x-auto no-scrollbar">
                         <button
                             type="button"
                             onClick={() => setMobileView('chat')}
-                            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
+                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
                                 mobileView === 'chat'
                                     ? 'bg-primary text-primary-foreground shadow-sm'
                                     : 'text-muted-foreground hover:text-foreground'
                             }`}
                         >
-                            <MessageSquare className="h-3.5 w-3.5" />
+                            <MessageSquare className="h-3.5 w-3.5 shrink-0" />
                             <span>{t('Chat')}</span>
                             {isLoading && (
                                 <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse ms-0.5" />
@@ -1247,13 +1254,13 @@ export default function Chat({
                                 setMobileView('preview');
                                 setViewMode('preview');
                             }}
-                            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
+                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
                                 mobileView !== 'chat' && viewMode === 'preview'
                                     ? 'bg-primary text-primary-foreground shadow-sm'
                                     : 'text-muted-foreground hover:text-foreground'
                             }`}
                         >
-                            <Eye className="h-3.5 w-3.5" />
+                            <Eye className="h-3.5 w-3.5 shrink-0" />
                             <span>{t('Preview')}</span>
                         </button>
                         <button
@@ -1262,14 +1269,29 @@ export default function Chat({
                                 setMobileView('code');
                                 setViewMode('code');
                             }}
-                            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all ${
+                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
                                 mobileView !== 'chat' && viewMode === 'code'
                                     ? 'bg-primary text-primary-foreground shadow-sm'
                                     : 'text-muted-foreground hover:text-foreground'
                             }`}
                         >
-                            <Code className="h-3.5 w-3.5" />
+                            <Code className="h-3.5 w-3.5 shrink-0" />
                             <span>{t('Code')}</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setMobileView('settings');
+                                setViewMode('settings');
+                            }}
+                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
+                                mobileView !== 'chat' && viewMode === 'settings'
+                                    ? 'bg-primary text-primary-foreground shadow-sm'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                        >
+                            <Settings className="h-3.5 w-3.5 shrink-0" />
+                            <span>{t('Settings')}</span>
                         </button>
                     </div>
                 )}

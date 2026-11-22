@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { getSessionContext, getUserCurrentPlan } from '@/lib/auth';
+import { getSessionContext, getUserCurrentPlan, canViewProject, canUpdateProject } from '@/lib/auth';
 import { parseRequestBody, formatHumanFileSize } from '@/lib/http';
 import { Project, ProjectFile } from '@/models/Project';
 import { r2PutObject, getPublicAssetUrl } from '@/lib/r2';
@@ -21,11 +21,14 @@ export async function GET(
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canViewProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   const { searchParams } = new URL(req.url);
@@ -56,7 +59,7 @@ export async function GET(
     is_video: f.mime_type.startsWith('video/'),
     is_audio: f.mime_type.startsWith('audio/'),
     source: f.source,
-    url: getPublicAssetUrl(f.path),
+    url: getPublicAssetUrl(f.path) || `/storage/${f.path}`,
     created_at: new Date(f.created_at).toISOString(),
   }));
 
@@ -83,16 +86,20 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthenticated.' }, { status: 401 });
   }
 
+  const isAdmin = ctx.user.role === 'admin';
   const plan = await getUserCurrentPlan(ctx.user);
 
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canUpdateProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   const { files } = await parseRequestBody(req);
@@ -102,14 +109,19 @@ export async function POST(
   }
 
   const isImageUpload = (uploadFile.type || '').startsWith('image/');
-  if (!plan?.enable_file_storage && !isImageUpload && ctx.user.role !== 'admin') {
+  if (!isAdmin && !plan?.enable_file_storage && !isImageUpload) {
     return NextResponse.json(
       { error: 'File storage is not enabled for your plan.' },
       { status: 403 }
     );
   }
 
-  const maxFileSizeMb = plan?.max_file_size_mb || 10;
+  const maxFileSizeMb =
+    plan?.max_file_size_mb && plan.max_file_size_mb > 0
+      ? plan.max_file_size_mb
+      : isAdmin
+        ? 100
+        : 10;
   if (uploadFile.size > maxFileSizeMb * 1024 * 1024) {
     return NextResponse.json(
       { error: `File size exceeds the ${maxFileSizeMb}MB limit.` },
@@ -117,9 +129,12 @@ export async function POST(
     );
   }
 
-  const limitMb = plan?.max_storage_mb || 100;
+  const rawLimitMb = plan?.max_storage_mb;
+  const isUnlimitedStorage =
+    isAdmin || (Boolean(plan) && (rawLimitMb === null || rawLimitMb === -1));
+  const limitMb = typeof rawLimitMb === 'number' && rawLimitMb >= 0 ? rawLimitMb : 100;
   const currentUsed = project.storage_used_bytes || 0;
-  if (limitMb > 0 && currentUsed + uploadFile.size > limitMb * 1024 * 1024) {
+  if (!isUnlimitedStorage && currentUsed + uploadFile.size > limitMb * 1024 * 1024) {
     return NextResponse.json(
       { error: 'Storage limit exceeded for this project.' },
       { status: 422 }
@@ -163,7 +178,11 @@ export async function POST(
       size: doc.size,
       human_size: formatHumanFileSize(doc.size),
       is_image: doc.mime_type.startsWith('image/'),
-      url: getPublicAssetUrl(doc.path),
+      is_pdf: doc.mime_type === 'application/pdf',
+      is_video: doc.mime_type.startsWith('video/'),
+      is_audio: doc.mime_type.startsWith('audio/'),
+      url: getPublicAssetUrl(doc.path) || `/storage/${doc.path}`,
+      created_at: doc.created_at ? new Date(doc.created_at).toISOString() : new Date().toISOString(),
     },
     storage_used: project.storage_used_bytes,
   });
