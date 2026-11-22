@@ -229,32 +229,40 @@ export default async function ProjectChatPage({
     : undefined;
 
   // Storage settings & project files for @mention autocomplete
-  const fileStorageEnabled = Boolean(plan?.enable_file_storage);
+  // Chat image attachments are always enabled with plan-based multi-image limits
+  const fileStorageEnabled = true;
   const maxImagesPerPrompt =
     user.role === 'admin' || plan?.monthly_build_credits === -1
       ? 10
       : plan?.max_images_per_prompt || ((plan?.price ?? 0) > 0 ? 6 : 2);
-  const storageSettings = fileStorageEnabled
-    ? {
-        enabled: true,
-        usedBytes: Number(project.storage_used_bytes ?? 0),
-        limitMb:
-          plan?.max_storage_mb === null || plan?.max_storage_mb === -1
-            ? null
-            : (plan?.max_storage_mb ?? 0),
-        unlimited: plan?.max_storage_mb === null || plan?.max_storage_mb === -1,
-        maxFileSizeMb: Number(plan?.max_file_size_mb ?? 10),
-        maxImagesPerPrompt,
-        allowedTypes: [
-          'image/png',
-          'image/jpeg',
-          'image/jpg',
-          'image/gif',
-          'image/webp',
-          'image/svg+xml',
-        ],
-      }
-    : undefined;
+  const allowedEfforts: Array<'low' | 'medium' | 'high'> =
+    user.role === 'admin' ||
+    plan?.monthly_build_credits === -1 ||
+    buildCredits?.usingOwnKey ||
+    (plan?.price ?? 0) > 0 ||
+    (user.build_credits ?? 0) >= 100_000
+      ? ['low', 'medium', 'high']
+      : ['low', 'medium'];
+  const storageSettings = {
+    enabled: true,
+    usedBytes: Number(project.storage_used_bytes ?? 0),
+    limitMb:
+      plan?.max_storage_mb === null || plan?.max_storage_mb === -1
+        ? null
+        : (plan?.max_storage_mb ?? 100),
+    unlimited: plan?.max_storage_mb === null || plan?.max_storage_mb === -1,
+    maxFileSizeMb: Number(plan?.max_file_size_mb ?? 10),
+    maxImagesPerPrompt,
+    allowedEfforts,
+    allowedTypes: [
+      'image/png',
+      'image/jpeg',
+      'image/jpg',
+      'image/gif',
+      'image/webp',
+      'image/svg+xml',
+    ],
+  };
 
   const projectFiles = fileStorageEnabled
     ? (

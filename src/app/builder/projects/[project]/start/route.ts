@@ -122,16 +122,10 @@ export async function POST(
   let fileRefs: NonNullable<IConversationEntry['files']> | undefined;
 
   if (fileIds.length > 0) {
-    if (!plan || !plan.enable_file_storage) {
-      return NextResponse.json(
-        { error: 'File storage is not enabled for your plan.' },
-        { status: 403 }
-      );
-    }
     const maxImagesForPlan =
-      ctx.user.role === 'admin' || plan.monthly_build_credits === -1
+      ctx.user.role === 'admin' || plan?.monthly_build_credits === -1
         ? 10
-        : plan.max_images_per_prompt || ((plan.price ?? 0) > 0 ? 6 : 2);
+        : plan?.max_images_per_prompt || ((plan?.price ?? 0) > 0 ? 6 : 2);
 
     const validFileIds = fileIds.filter(isValidObjectId).slice(0, maxImagesForPlan);
     if (validFileIds.length > 0) {

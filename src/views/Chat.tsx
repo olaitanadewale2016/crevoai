@@ -109,6 +109,7 @@ interface StorageSettings {
     unlimited: boolean;
     maxFileSizeMb?: number;
     maxImagesPerPrompt?: number;
+    allowedEfforts?: Array<'low' | 'medium' | 'high'>;
     allowedTypes?: string[] | null;
 }
 
@@ -260,7 +261,15 @@ export default function Chat({
     const [publishModalOpen, setPublishModalOpen] = useState(false);
     const [mobileView, setMobileView] = useState<'chat' | 'preview' | 'code'>('chat');
     const [mobileFilesOpen, setMobileFilesOpen] = useState(false);
-    const [effort, setEffort] = useState<'low' | 'medium' | 'high'>(project.reasoning_effort || 'medium');
+    const allowedEfforts: Array<'low' | 'medium' | 'high'> =
+        storage?.allowedEfforts && storage.allowedEfforts.length > 0
+            ? storage.allowedEfforts
+            : ['low', 'medium', 'high'];
+    const initialEffort: 'low' | 'medium' | 'high' =
+        project.reasoning_effort && allowedEfforts.includes(project.reasoning_effort)
+            ? project.reasoning_effort
+            : 'medium';
+    const [effort, setEffort] = useState<'low' | 'medium' | 'high'>(initialEffort);
     const [isInputFocused, setIsInputFocused] = useState(false);
     const [outOfCreditsModalOpen, setOutOfCreditsModalOpen] = useState(false);
 
@@ -961,7 +970,7 @@ export default function Chat({
                             placeholder={t('Describe what you want to build...')}
                             isLoading={isLoading}
                             onCancel={cancelBuild}
-                            storageEnabled={storage?.enabled ?? false}
+                            storageEnabled={storage?.enabled ?? true}
                             projectId={project.id}
                             maxFileSizeMb={storage?.maxFileSizeMb ?? 10}
                             maxImagesPerPrompt={storage?.maxImagesPerPrompt ?? 4}
@@ -972,6 +981,7 @@ export default function Chat({
                             onRemoveUploadedFile={handleRemoveUploadedFile}
                             onFilesDropped={handleFilesDropped}
                             effort={effort}
+                            allowedEfforts={allowedEfforts}
                             onEffortChange={setEffort}
                             onFocusChange={setIsInputFocused}
                         />
@@ -1058,9 +1068,9 @@ export default function Chat({
                                                 onClick={() => {
                                                     const canOpenSubdomain = Boolean(
                                                         subdomainsGloballyEnabled &&
-                                                            project.subdomain &&
-                                                            baseDomain &&
-                                                            baseDomain !== 'example.com'
+                                                        project.subdomain &&
+                                                        baseDomain &&
+                                                        baseDomain !== 'example.com'
                                                     );
                                                     window.open(
                                                         canOpenSubdomain

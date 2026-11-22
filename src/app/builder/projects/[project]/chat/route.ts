@@ -80,13 +80,11 @@ export async function POST(
 
   if (fileIds.length > 0) {
     const plan = await getUserCurrentPlan(ctx.user);
-    if (!plan || !plan.enable_file_storage) {
-      return NextResponse.json(
-        { error: 'File storage is not enabled for your plan.' },
-        { status: 403 }
-      );
-    }
-    const validIds = fileIds.filter(isValidObjectId);
+    const maxImagesForPlan =
+      ctx.user.role === 'admin' || plan?.monthly_build_credits === -1
+        ? 10
+        : plan?.max_images_per_prompt || ((plan?.price ?? 0) > 0 ? 6 : 2);
+    const validIds = fileIds.filter(isValidObjectId).slice(0, maxImagesForPlan);
     if (validIds.length > 0) {
       const files = await ProjectFile.find({
         _id: { $in: validIds },

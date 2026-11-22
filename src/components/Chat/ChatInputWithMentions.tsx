@@ -18,7 +18,7 @@ import {
     type LexicalEditor,
 } from 'lexical';
 import { Button } from '@/components/ui/button';
-import { Send, Square, Loader2, X, MousePointerClick, Image, FileText, Mic, MicOff, Zap } from 'lucide-react';
+import { Send, Square, Loader2, X, MousePointerClick, Image, FileText, Mic, MicOff, Zap, Lock } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { ElementMention } from '@/types/inspector';
@@ -75,6 +75,8 @@ interface ChatInputWithMentionsProps {
     onFilesDropped?: (files: File[]) => void;
     /** Current reasoning effort level */
     effort?: 'low' | 'medium' | 'high';
+    /** Effort levels accessible based on user's plan */
+    allowedEfforts?: Array<'low' | 'medium' | 'high'>;
     /** Called when reasoning effort level changes */
     onEffortChange?: (effort: 'low' | 'medium' | 'high') => void;
     /** Called when input focus changes (for mobile virtual keypad layout) */
@@ -205,11 +207,13 @@ export function ChatInputWithMentions({
     onRemoveUploadedFile,
     onFilesDropped,
     effort = 'medium',
+    allowedEfforts = ['low', 'medium', 'high'],
     onEffortChange,
     onFocusChange,
 }: ChatInputWithMentionsProps) {
     const { t } = useTranslation();
     const editorRef = useRef<LexicalEditor | null>(null);
+    const [effortExpanded, setEffortExpanded] = useState(false);
     const defaultPlaceholder = t('Describe what you want to build...');
     const actualPlaceholder = placeholder || defaultPlaceholder;
 
@@ -417,9 +421,9 @@ export function ChatInputWithMentions({
                 </LexicalComposer>
 
                 {/* Footer with hints and buttons */}
-                <div className="flex items-center justify-between px-3 py-2 bg-muted/30 border-t border-border/50">
-                    <div className="flex items-center gap-2">
-                        <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
+                <div className="flex items-center justify-between gap-1.5 px-3 py-2 bg-muted/30 border-t border-border/50">
+                    <div className="flex items-center gap-2 min-w-0">
+                        <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
                             <kbd className="px-1.5 py-0.5 bg-background rounded border border-border text-[10px] font-medium">
                                 Enter
                             </kbd>
@@ -427,40 +431,84 @@ export function ChatInputWithMentions({
                         </div>
                         {onEffortChange && (
                             <div
-                                className="inline-flex items-center rounded-lg border border-border/60 bg-background/80 p-0.5 text-[11px]"
-                                title={t('Reasoning Effort')}
+                                className="group/effort relative inline-flex items-center rounded-lg border border-border/60 bg-background/90 p-0.5 text-[11px] transition-all duration-200 hover:border-primary/40 hover:shadow-xs"
+                                onMouseEnter={() => setEffortExpanded(true)}
+                                onMouseLeave={() => setEffortExpanded(false)}
+                                title={t('Reasoning Effort (:current)', { current: t(effort) })}
                             >
-                                <Zap
-                                    className={cn(
-                                        'h-3 w-3 ms-1.5 me-1 shrink-0 transition-colors',
-                                        effort === 'low'
-                                            ? 'text-emerald-500'
-                                            : effort === 'high'
+                                <button
+                                    type="button"
+                                    onClick={() => setEffortExpanded((prev) => !prev)}
+                                    disabled={disabled || isLoading}
+                                    className="inline-flex items-center gap-1 px-1.5 py-1 rounded-md hover:bg-muted/60 transition-colors shrink-0"
+                                >
+                                    <Zap
+                                        className={cn(
+                                            'h-3.5 w-3.5 shrink-0 transition-colors',
+                                            effort === 'low'
+                                                ? 'text-emerald-500'
+                                                : effort === 'high'
                                                 ? 'text-purple-500'
                                                 : 'text-amber-500'
-                                    )}
-                                />
-                                {(['low', 'medium', 'high'] as const).map((lvl) => (
-                                    <button
-                                        key={lvl}
-                                        type="button"
-                                        disabled={disabled || isLoading}
-                                        onClick={() => onEffortChange(lvl)}
-                                        className={cn(
-                                            'px-1.5 py-0.5 rounded-md font-medium capitalize transition-all',
-                                            effort === lvl
-                                                ? 'bg-primary text-primary-foreground shadow-sm'
-                                                : 'text-muted-foreground hover:text-foreground',
-                                            (disabled || isLoading) && 'opacity-50 cursor-not-allowed'
                                         )}
-                                    >
-                                        {t(lvl)}
-                                    </button>
-                                ))}
+                                    />
+                                    <span
+                                        className={cn(
+                                            'h-1.5 w-1.5 rounded-full shrink-0',
+                                            effort === 'low'
+                                                ? 'bg-emerald-500'
+                                                : effort === 'high'
+                                                ? 'bg-purple-500'
+                                                : 'bg-amber-500'
+                                        )}
+                                    />
+                                </button>
+                                <div
+                                    className={cn(
+                                        'flex items-center gap-0.5 overflow-hidden transition-all duration-200 ease-out',
+                                        effortExpanded
+                                            ? 'max-w-[220px] opacity-100 ps-0.5 pe-0.5'
+                                            : 'max-w-0 opacity-0 pointer-events-none group-hover/effort:max-w-[220px] group-hover/effort:opacity-100 group-hover/effort:pointer-events-auto group-hover/effort:ps-0.5 group-hover/effort:pe-0.5'
+                                    )}
+                                >
+                                    {(['low', 'medium', 'high'] as const).map((lvl) => {
+                                        const isAllowed = allowedEfforts.includes(lvl);
+                                        const isActive = effort === lvl;
+                                        return (
+                                            <button
+                                                key={lvl}
+                                                type="button"
+                                                disabled={disabled || isLoading}
+                                                onClick={() => {
+                                                    if (!isAllowed) {
+                                                        toast.error(
+                                                            t('High reasoning effort requires an upgraded plan or your own AI API key.')
+                                                        );
+                                                        return;
+                                                    }
+                                                    onEffortChange(lvl);
+                                                    setEffortExpanded(false);
+                                                }}
+                                                className={cn(
+                                                    'inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-medium capitalize transition-all whitespace-nowrap',
+                                                    isActive
+                                                        ? 'bg-primary text-primary-foreground shadow-sm'
+                                                        : isAllowed
+                                                        ? 'text-muted-foreground hover:text-foreground hover:bg-muted/60'
+                                                        : 'text-muted-foreground/50 cursor-not-allowed',
+                                                    (disabled || isLoading) && 'opacity-50 cursor-not-allowed'
+                                                )}
+                                            >
+                                                <span>{t(lvl)}</span>
+                                                {!isAllowed && <Lock className="h-2.5 w-2.5 shrink-0" />}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
                             </div>
                         )}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 shrink-0">
                         {/* Voice Speech-to-Text Input Button */}
                         <Button
                             type="button"
@@ -468,7 +516,7 @@ export function ChatInputWithMentions({
                             variant="ghost"
                             onClick={toggleVoiceInput}
                             disabled={disabled || isLoading}
-                            className={`h-8 w-8 p-0 transition-colors ${isListening
+                            className={`h-8 w-8 p-0 shrink-0 transition-colors ${isListening
                                 ? 'text-red-500 bg-red-500/15 animate-pulse hover:bg-red-500/20'
                                 : 'text-muted-foreground hover:text-foreground'
                                 }`}
@@ -481,10 +529,10 @@ export function ChatInputWithMentions({
                             )}
                         </Button>
 
-                        {storageEnabled && projectId && maxFileSizeMb && onFileUploaded && (
+                        {projectId && onFileUploaded && (
                             <ChatUploadButton
                                 projectId={projectId}
-                                maxFileSizeMb={maxFileSizeMb}
+                                maxFileSizeMb={maxFileSizeMb ?? 10}
                                 allowedTypes={allowedTypes ?? null}
                                 maxImages={maxImagesPerPrompt}
                                 currentImageCount={uploadedFiles?.length ?? 0}

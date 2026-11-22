@@ -654,6 +654,8 @@ export async function triggerBuildAndDeployToR2(
   }
 
   try {
+    clearProjectPreviewCache(String(project._id));
+
     const buildRes = await builderFetch(builder, `/api/build-workspace/${project._id}`, {
       method: 'POST',
       timeoutMs: 300_000,
@@ -958,41 +960,44 @@ export async function serveBuiltSiteFromR2(params: {
 
           if (isHtml) {
             const rawHtml = await streamRes.text();
-            const finalHtml = await buildDynamicHtml(rawHtml, project, mode);
-            return new Response(finalHtml, {
+            // Safeguard: never serve uncompiled Vite source index.html (which references /src/main.tsx)
+            if (!rawHtml.includes('/src/main.tsx') && !rawHtml.includes('./src/main.tsx')) {
+              const finalHtml = await buildDynamicHtml(rawHtml, project, mode);
+              return new Response(finalHtml, {
+                status: 200,
+                headers: {
+                  'Content-Type': 'text/html; charset=utf-8',
+                  'Cache-Control': 'no-cache, no-store, must-revalidate',
+                },
+              });
+            }
+          } else {
+            const arrayBuf = await streamRes.arrayBuffer();
+            let streamBuf = Buffer.from(arrayBuf);
+            if (relPath.endsWith('.js') || relPath.endsWith('.mjs')) {
+              const text = streamBuf.toString('utf8');
+              if (text.includes('||"/preview"') || text.includes("||'/preview'")) {
+                streamBuf = Buffer.from(
+                  text.replaceAll('||"/preview"', '||"/"').replaceAll("||'/preview'", "||'/'"),
+                  'utf8'
+                );
+              }
+            }
+            if (project.active_build_id) {
+              cachePreviewAsset(targetKey, streamBuf, resContentType);
+            }
+
+            const isHashedAsset = relPath.startsWith('assets/');
+            return new Response(streamBuf, {
               status: 200,
               headers: {
-                'Content-Type': 'text/html; charset=utf-8',
-                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Content-Type': resContentType,
+                'Cache-Control': isHashedAsset
+                  ? 'public, max-age=31536000, immutable'
+                  : 'no-cache, no-store, must-revalidate',
               },
             });
           }
-
-          const arrayBuf = await streamRes.arrayBuffer();
-          let streamBuf = Buffer.from(arrayBuf);
-          if (relPath.endsWith('.js') || relPath.endsWith('.mjs')) {
-            const text = streamBuf.toString('utf8');
-            if (text.includes('||"/preview"') || text.includes("||'/preview'")) {
-              streamBuf = Buffer.from(
-                text.replaceAll('||"/preview"', '||"/"').replaceAll("||'/preview'", "||'/'"),
-                'utf8'
-              );
-            }
-          }
-          if (project.active_build_id) {
-            cachePreviewAsset(targetKey, streamBuf, resContentType);
-          }
-
-          const isHashedAsset = relPath.startsWith('assets/');
-          return new Response(streamBuf, {
-            status: 200,
-            headers: {
-              'Content-Type': resContentType,
-              'Cache-Control': isHashedAsset
-                ? 'public, max-age=31536000, immutable'
-                : 'no-cache, no-store, must-revalidate',
-            },
-          });
         }
       }
     } catch (err: any) {

@@ -84,12 +84,6 @@ export async function POST(
   }
 
   const plan = await getUserCurrentPlan(ctx.user);
-  if (!plan?.enable_file_storage) {
-    return NextResponse.json(
-      { error: 'File storage is not enabled for your plan.' },
-      { status: 403 }
-    );
-  }
 
   await connectDB();
   const project = await Project.findOne({
@@ -107,7 +101,15 @@ export async function POST(
     return NextResponse.json({ error: 'No file provided.' }, { status: 422 });
   }
 
-  const maxFileSizeMb = plan.max_file_size_mb || 25;
+  const isImageUpload = (uploadFile.type || '').startsWith('image/');
+  if (!plan?.enable_file_storage && !isImageUpload && ctx.user.role !== 'admin') {
+    return NextResponse.json(
+      { error: 'File storage is not enabled for your plan.' },
+      { status: 403 }
+    );
+  }
+
+  const maxFileSizeMb = plan?.max_file_size_mb || 10;
   if (uploadFile.size > maxFileSizeMb * 1024 * 1024) {
     return NextResponse.json(
       { error: `File size exceeds the ${maxFileSizeMb}MB limit.` },
@@ -115,7 +117,7 @@ export async function POST(
     );
   }
 
-  const limitMb = plan.max_storage_mb || 100;
+  const limitMb = plan?.max_storage_mb || 100;
   const currentUsed = project.storage_used_bytes || 0;
   if (limitMb > 0 && currentUsed + uploadFile.size > limitMb * 1024 * 1024) {
     return NextResponse.json(
