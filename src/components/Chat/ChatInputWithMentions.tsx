@@ -18,7 +18,7 @@ import {
     type LexicalEditor,
 } from 'lexical';
 import { Button } from '@/components/ui/button';
-import { Send, Square, Loader2, X, MousePointerClick, Image, FileText, Mic, MicOff } from 'lucide-react';
+import { Send, Square, Loader2, X, MousePointerClick, Image, FileText, Mic, MicOff, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { ElementMention } from '@/types/inspector';
@@ -71,6 +71,10 @@ interface ChatInputWithMentionsProps {
     onRemoveUploadedFile?: (fileId: number | string) => void;
     /** Called when files are dropped onto the input (parent handles upload) */
     onFilesDropped?: (files: File[]) => void;
+    /** Current reasoning effort level */
+    effort?: 'low' | 'medium' | 'high';
+    /** Called when reasoning effort level changes */
+    onEffortChange?: (effort: 'low' | 'medium' | 'high') => void;
 }
 
 // Theme for Lexical editor
@@ -195,6 +199,8 @@ export function ChatInputWithMentions({
     onFileUploaded,
     onRemoveUploadedFile,
     onFilesDropped,
+    effort = 'medium',
+    onEffortChange,
 }: ChatInputWithMentionsProps) {
     const { t } = useTranslation();
     const editorRef = useRef<LexicalEditor | null>(null);
@@ -222,7 +228,7 @@ export function ChatInputWithMentions({
                 : undefined;
 
             if (value.trim() || selectedElement || allFileIds.length > 0) {
-                onSubmit(e || ({ preventDefault: () => {} } as React.FormEvent), fileData);
+                onSubmit(e || ({ preventDefault: () => { } } as React.FormEvent), fileData);
             }
         },
         [value, selectedElement, onSubmit, uploadedFiles, projectFiles]
@@ -322,7 +328,7 @@ export function ChatInputWithMentions({
             if (recognitionRef.current) {
                 try {
                     recognitionRef.current.stop();
-                } catch {}
+                } catch { }
             }
         };
     }, []);
@@ -386,11 +392,47 @@ export function ChatInputWithMentions({
 
                 {/* Footer with hints and buttons */}
                 <div className="flex items-center justify-between px-3 py-2 bg-muted/30 border-t border-border/50">
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <kbd className="px-1.5 py-0.5 bg-background rounded border border-border text-[10px] font-medium">
-                            Enter
-                        </kbd>
-                        <span>{t('to send')}</span>
+                    <div className="flex items-center gap-2">
+                        <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <kbd className="px-1.5 py-0.5 bg-background rounded border border-border text-[10px] font-medium">
+                                Enter
+                            </kbd>
+                            <span>{t('to send')}</span>
+                        </div>
+                        {onEffortChange && (
+                            <div
+                                className="inline-flex items-center rounded-lg border border-border/60 bg-background/80 p-0.5 text-[11px]"
+                                title={t('Reasoning Effort')}
+                            >
+                                <Zap
+                                    className={cn(
+                                        'h-3 w-3 ms-1.5 me-1 shrink-0 transition-colors',
+                                        effort === 'low'
+                                            ? 'text-emerald-500'
+                                            : effort === 'high'
+                                            ? 'text-purple-500'
+                                            : 'text-amber-500'
+                                    )}
+                                />
+                                {(['low', 'medium', 'high'] as const).map((lvl) => (
+                                    <button
+                                        key={lvl}
+                                        type="button"
+                                        disabled={disabled || isLoading}
+                                        onClick={() => onEffortChange(lvl)}
+                                        className={cn(
+                                            'px-1.5 py-0.5 rounded-md font-medium capitalize transition-all',
+                                            effort === lvl
+                                                ? 'bg-primary text-primary-foreground shadow-sm'
+                                                : 'text-muted-foreground hover:text-foreground',
+                                            (disabled || isLoading) && 'opacity-50 cursor-not-allowed'
+                                        )}
+                                    >
+                                        {t(lvl)}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                     </div>
                     <div className="flex items-center gap-2">
                         {/* Voice Speech-to-Text Input Button */}
@@ -400,11 +442,10 @@ export function ChatInputWithMentions({
                             variant="ghost"
                             onClick={toggleVoiceInput}
                             disabled={disabled || isLoading}
-                            className={`h-8 w-8 p-0 transition-colors ${
-                                isListening
+                            className={`h-8 w-8 p-0 transition-colors ${isListening
                                     ? 'text-red-500 bg-red-500/15 animate-pulse hover:bg-red-500/20'
                                     : 'text-muted-foreground hover:text-foreground'
-                            }`}
+                                }`}
                             title={isListening ? t('Listening... (Click to stop)') : t('Voice input')}
                         >
                             {isListening ? (

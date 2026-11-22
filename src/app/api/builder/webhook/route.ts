@@ -205,23 +205,37 @@ export async function POST(req: NextRequest) {
         if (data.build_status) {
           project.build_status = data.build_status;
         }
-        if (data.tokens_used) {
-          project.estimated_tokens = Number(data.tokens_used);
+        const rawTokensUsed = Number(data.tokens_used || data.total_tokens || 0);
+        const prevBilled = Number(project.last_billed_session_tokens || 0);
+        const deltaTokens =
+          rawTokensUsed > prevBilled
+            ? rawTokensUsed - prevBilled
+            : prevBilled === 0
+            ? rawTokensUsed
+            : 0;
+        if (rawTokensUsed > 0) {
+          project.estimated_tokens = rawTokensUsed;
+          if (rawTokensUsed > prevBilled) {
+            project.last_billed_session_tokens = rawTokensUsed;
+          }
         }
         await project.save();
 
         // 1. Deduct credits appropriately and record usage
-        if (project.user_id && data.tokens_used) {
+        if (project.user_id && deltaTokens > 0) {
           try {
+            const deterministicEventId =
+              eventId || `complete:${sessionId}:${rawTokensUsed}:${data.iterations || 0}`;
             await trackBuildCreditUsage({
               userId: String(project.user_id),
               projectId: String(project._id),
-              builderEventId: eventId || null,
+              builderEventId: deterministicEventId,
               model: data.model || 'openrouter/free',
               promptTokens: Number(data.prompt_tokens || 0),
               completionTokens: Number(data.completion_tokens || 0),
-              totalTokens: Number(data.tokens_used || 0),
+              totalTokens: deltaTokens,
               action: 'build',
+              effort: project.reasoning_effort || 'medium',
             });
           } catch (creditErr) {
             console.error('Error tracking build credit usage:', creditErr);

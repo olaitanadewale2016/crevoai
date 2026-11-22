@@ -165,13 +165,19 @@ export default function Create({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const handlePromptSubmit = (prompt: string, templateId: string | null, themePreset: string | null) => {
+    const handlePromptSubmit = (
+        prompt: string,
+        templateId: string | null,
+        themePreset: string | null,
+        effort?: 'low' | 'medium' | 'high'
+    ) => {
         setIsSubmitting(true);
         // Create a new project with the prompt and redirect to it
         router.post('/projects', {
             prompt,
             template_id: templateId,
             theme_preset: themePreset,
+            reasoning_effort: effort || 'medium',
         }, {
             onSuccess: (page) => {
                 const target = page.props?.redirect || (page.props?.projectId ? `/project/${page.props.projectId}` : null);

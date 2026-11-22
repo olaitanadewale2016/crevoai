@@ -62,12 +62,19 @@ export async function POST(req: NextRequest) {
     prompt?: string;
     template_id?: string;
     theme_preset?: string;
+    reasoning_effort?: 'low' | 'medium' | 'high';
+    effort?: 'low' | 'medium' | 'high';
   }>(req);
 
   const prompt = (body.prompt || '').trim();
   if (!prompt) {
     return NextResponse.json({ errors: { prompt: 'The prompt field is required.' } }, { status: 422 });
   }
+
+  const rawEffort = body.reasoning_effort || body.effort || 'medium';
+  const reasoningEffort: 'low' | 'medium' | 'high' = ['low', 'medium', 'high'].includes(String(rawEffort))
+    ? (String(rawEffort) as 'low' | 'medium' | 'high')
+    : 'medium';
 
   const name = prompt.length > 50 ? `${prompt.slice(0, 50)}...` : prompt;
   const projectId = generateUuidV7();
@@ -89,6 +96,7 @@ export async function POST(req: NextRequest) {
     initial_prompt: prompt,
     template_id: templateId,
     theme_preset: body.theme_preset || 'default',
+    reasoning_effort: reasoningEffort,
     last_viewed_at: new Date(),
     build_status: 'idle',
   });

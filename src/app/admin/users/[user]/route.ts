@@ -3,6 +3,9 @@ import { connectDB, isValidObjectId } from '@/lib/db';
 import { getSessionContext, hashPassword, isDemoAdminUser } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { User } from '@/models/User';
+import { Plan } from '@/models/Billing';
+import { refillUserBuildCredits } from '@/services/credits';
+import { broadcastUserCredits } from '@/services/notifications';
 import { cascadeDeleteUser } from '@/services/gdpr-and-cascades';
 
 export const dynamic = 'force-dynamic';
@@ -38,6 +41,7 @@ export async function PUT(
     password?: string;
     role?: 'user' | 'admin';
     status?: 'active' | 'inactive';
+    plan_id?: string | null;
     build_credits?: number;
   }>(req);
 
@@ -58,9 +62,32 @@ export async function PUT(
   }
   if (body.role) user.role = body.role;
   if (body.status) user.status = body.status;
+
+  const oldPlanId = user.plan_id ? String(user.plan_id) : null;
+  let planChanged = false;
+  if (body.plan_id !== undefined) {
+    if (body.plan_id && isValidObjectId(body.plan_id)) {
+      const targetPlan = await Plan.findById(body.plan_id).lean();
+      if (targetPlan) {
+        planChanged = String(targetPlan._id) !== oldPlanId;
+        user.plan_id = targetPlan._id;
+      }
+    } else if (body.plan_id === null || body.plan_id === '') {
+      user.plan_id = null;
+    }
+  }
   if (body.build_credits !== undefined) user.build_credits = Number(body.build_credits);
 
   await user.save();
+
+  // Mirror PHP UserObserver::updated — refill build credits when plan_id changes
+  if (planChanged && body.build_credits === undefined && user.plan_id) {
+    await refillUserBuildCredits(String(user._id), String(user.plan_id));
+  }
+  const freshUser = await User.findById(user._id).lean();
+  if (freshUser) {
+    await broadcastUserCredits(freshUser).catch(() => {});
+  }
 
   if (req.headers.get('x-inertia')) {
     return NextResponse.redirect(new URL('/admin/users', req.url), 303);

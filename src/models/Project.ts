@@ -46,6 +46,7 @@ export interface IProject {
   published_at: Date | null;
   custom_instructions: string | null;
   theme_preset: string | null;
+  reasoning_effort?: 'low' | 'medium' | 'high';
   api_token: string | null;
   firebase_config: string | null; // AES-256-GCM encrypted JSON
   uses_system_firebase: boolean;
@@ -96,6 +97,11 @@ const ProjectSchema = new Schema<IProject>(
     published_at: { type: Date, default: null, index: true },
     custom_instructions: { type: String, default: null, maxlength: 500 },
     theme_preset: { type: String, default: null, maxlength: 50 },
+    reasoning_effort: {
+      type: String,
+      enum: ['low', 'medium', 'high'],
+      default: 'medium',
+    },
     api_token: { type: String, default: () => generateHexToken(32), index: true },
     firebase_config: { type: String, default: null },
     uses_system_firebase: { type: Boolean, default: true },

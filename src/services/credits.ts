@@ -64,29 +64,43 @@ export async function canPerformBuild(user: IUser): Promise<{ allowed: boolean; 
   }
 
   const plan = await getUserCurrentPlan(user);
-  if (!plan) {
-    return { allowed: false, reason: 'You do not have an active plan. Please choose a plan to start building.' };
-  }
-
   const usingOwnKey = await isUserUsingOwnAiKey(user, plan);
+
   if (!usingOwnKey) {
+    if (!plan) {
+      return { allowed: false, reason: 'No active plan. Please subscribe to a plan to start a project.' };
+    }
+
     const unlimited = plan.monthly_build_credits === -1;
-    if (!unlimited && (user.build_credits ?? 0) <= 0) {
+    if ((plan.monthly_build_credits ?? 0) === 0 && !unlimited) {
       return {
         allowed: false,
-        reason: 'You have run out of build credits. Please upgrade your plan or configure your own AI API key.',
+        reason: 'Your plan does not include AI build credits.',
+      };
+    }
+
+    if (!unlimited && (user.build_credits ?? 0) < 1) {
+      return {
+        allowed: false,
+        reason: 'Insufficient build credits. Your credits will reset at the beginning of next month.',
       };
     }
 
     const aiProvider = await resolvePlanAiProvider(plan);
     if (!aiProvider) {
-      return { allowed: false, reason: 'No active AI provider is configured. Please contact the administrator.' };
+      return {
+        allowed: false,
+        reason: 'No AI provider is available for your plan. Please contact your administrator to configure AI settings.',
+      };
     }
   }
 
   const builder = await resolvePlanBuilder(plan);
   if (!builder) {
-    return { allowed: false, reason: 'No active AI builder server is available. Please contact the administrator.' };
+    return {
+      allowed: false,
+      reason: 'No builder service is available for your plan. Please contact your administrator to configure builder settings.',
+    };
   }
 
   return { allowed: true, reason: null };
@@ -116,6 +130,7 @@ export async function trackBuildCreditUsage(params: {
   completionTokens: number;
   totalTokens: number;
   action?: string;
+  effort?: 'low' | 'medium' | 'high';
 }): Promise<{ recorded: boolean; deducted: number }> {
   await connectDB();
   const user = await User.findById(params.userId).lean();
@@ -127,13 +142,22 @@ export async function trackBuildCreditUsage(params: {
 
   let promptTokens = Math.max(0, Math.trunc(params.promptTokens || 0));
   let completionTokens = Math.max(0, Math.trunc(params.completionTokens || 0));
-  const totalTokens = Math.max(0, Math.trunc(params.totalTokens || promptTokens + completionTokens));
+  const rawTotalTokens = Math.max(0, Math.trunc(params.totalTokens || promptTokens + completionTokens));
+
+  if (rawTotalTokens <= 0) {
+    return { recorded: false, deducted: 0 };
+  }
 
   // Mirror TrackBuildCreditUsage 60/40 fallback split when breakdown missing
-  if (promptTokens === 0 && completionTokens === 0 && totalTokens > 0) {
-    promptTokens = Math.round(totalTokens * 0.6);
-    completionTokens = totalTokens - promptTokens;
+  if (promptTokens === 0 && completionTokens === 0 && rawTotalTokens > 0) {
+    promptTokens = Math.round(rawTotalTokens * 0.6);
+    completionTokens = rawTotalTokens - promptTokens;
   }
+
+  // Apply reasoning effort credit multiplier (low = 0.75x, medium = 1.0x, high = 1.5x)
+  const effortMultiplier =
+    params.effort === 'low' ? 0.75 : params.effort === 'high' ? 1.5 : 1.0;
+  const totalTokens = Math.max(1, Math.round(rawTotalTokens * effortMultiplier));
 
   const estimatedCost = calculateAiCost(
     promptTokens,

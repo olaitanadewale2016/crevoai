@@ -336,9 +336,32 @@ export async function getUserCurrentPlan(user: IUser): Promise<IPlan | null> {
     if (plan) return plan;
   }
   if (user.plan_id) {
-    return Plan.findById(user.plan_id).lean();
+    const plan = await Plan.findById(user.plan_id).lean();
+    if (plan) return plan;
   }
-  return null;
+
+  // Fallback to default plan setting or active free plan and auto-provision on user
+  const defaultPlanId = await getSetting<string | null>('default_plan_id', null);
+  let fallbackPlan =
+    defaultPlanId && isValidObjectId(defaultPlanId)
+      ? await Plan.findById(defaultPlanId).lean()
+      : null;
+  if (!fallbackPlan) {
+    fallbackPlan = await Plan.findOne({ is_active: true, price: 0 }).sort({ sort_order: 1 }).lean();
+  }
+  if (fallbackPlan && !user.plan_id) {
+    const initialCredits =
+      fallbackPlan.monthly_build_credits === -1 ? 0 : fallbackPlan.monthly_build_credits || 0;
+    const update: Record<string, unknown> = { plan_id: fallbackPlan._id };
+    if (!user.build_credits && initialCredits > 0) {
+      update.build_credits = initialCredits;
+      update.credits_reset_at = new Date();
+      user.build_credits = initialCredits;
+    }
+    user.plan_id = fallbackPlan._id;
+    await User.updateOne({ _id: user._id }, { $set: update }).catch(() => {});
+  }
+  return fallbackPlan;
 }
 
 export async function checkRateLimit(

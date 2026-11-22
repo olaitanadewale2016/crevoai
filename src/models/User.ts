@@ -60,6 +60,7 @@ export interface IUserAiSettings {
   user_id: mongoose.Types.ObjectId;
   preferred_provider: 'system' | 'openai' | 'anthropic' | 'grok' | 'deepseek' | 'zhipu' | 'abhibots' | 'gemini' | 'openrouter';
   preferred_model: string | null;
+  preferred_effort?: 'low' | 'medium' | 'high';
   openai_api_key: string | null;
   anthropic_api_key: string | null;
   grok_api_key: string | null;
@@ -84,6 +85,11 @@ const UserAiSettingsSchema = new Schema<IUserAiSettings>(
       default: 'system',
     },
     preferred_model: { type: String, default: null },
+    preferred_effort: {
+      type: String,
+      enum: ['low', 'medium', 'high'],
+      default: 'medium',
+    },
     openai_api_key: { type: String, default: null },
     anthropic_api_key: { type: String, default: null },
     grok_api_key: { type: String, default: null },

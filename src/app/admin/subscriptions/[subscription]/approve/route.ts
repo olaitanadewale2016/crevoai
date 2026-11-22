@@ -4,6 +4,9 @@ import { getSessionContext, isDemoMode } from '@/lib/auth';
 import { Subscription, Plan, Transaction } from '@/models/Billing';
 import { User } from '@/models/User';
 import { calculateNextRenewalDate } from '@/services/payment-gateways';
+import { refillUserBuildCredits } from '@/services/credits';
+import { broadcastUserCredits, notifyPaymentCompleted } from '@/services/notifications';
+import { processPaymentCommission } from '@/services/referrals';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,6 +36,12 @@ export async function POST(
   ]);
 
   const now = new Date();
+  // Cancel any previous active subscriptions for this user
+  await Subscription.updateMany(
+    { user_id: sub.user_id, _id: { $ne: sub._id }, status: 'active' },
+    { $set: { status: 'cancelled', cancelled_at: now, ends_at: now } }
+  );
+
   sub.status = 'active';
   sub.approved_by = ctx.user._id;
   sub.approved_at = now;
@@ -41,17 +50,28 @@ export async function POST(
   await sub.save();
 
   if (user && plan) {
-    user.plan_id = plan._id;
-    if (plan.monthly_build_credits) {
-      user.build_credits = Math.max(user.build_credits || 0, plan.monthly_build_credits);
+    await refillUserBuildCredits(String(user._id), String(plan._id));
+    const updatedUser = await User.findById(user._id).lean();
+    if (updatedUser) {
+      await broadcastUserCredits(updatedUser).catch(() => {});
     }
-    await user.save();
   }
 
-  await Transaction.updateMany(
-    { subscription_id: sub._id, status: 'pending' },
-    { $set: { status: 'completed', processed_by: ctx.user._id } }
-  );
+  const pendingTxs = await Transaction.find({ subscription_id: sub._id, status: 'pending' });
+  for (const tx of pendingTxs) {
+    tx.status = 'completed';
+    tx.processed_by = ctx.user._id;
+    await tx.save();
+    await processPaymentCommission(tx).catch(() => {});
+    if (user) {
+      await notifyPaymentCompleted(
+        String(user._id),
+        tx.amount,
+        tx.currency || 'USD',
+        tx.transaction_id
+      ).catch(() => {});
+    }
+  }
 
   if (req.headers.get('x-inertia')) {
     return NextResponse.redirect(new URL('/admin/subscriptions', req.url), 303);

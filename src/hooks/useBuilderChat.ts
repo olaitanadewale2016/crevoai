@@ -73,6 +73,8 @@ export interface SendMessageOptions {
     fileIds?: (number | string)[];
     /** Attached file metadata for display in message bubble */
     attachedFiles?: AttachedFile[];
+    /** Reasoning effort level for AI build */
+    effort?: 'low' | 'medium' | 'high';
 }
 
 const initialProgress: BuildProgress = {
@@ -374,7 +376,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     const reverbConfig: ReverbConfig = useMemo(() => isReverb
         ? { key: pusherConfig.key, host: (pusherConfig as { host: string }).host, port: (pusherConfig as { port: number }).port, scheme: (pusherConfig as { scheme: 'http' | 'https' }).scheme }
         : { key: '', host: '', port: 0, scheme: 'https' as const },
-    [isReverb, pusherConfig]);
+        [isReverb, pusherConfig]);
 
     // Both hooks are always called (React rules), but only one is active
     const pusher = useBuilderPusher({
@@ -545,6 +547,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                 template_url: sendOptions?.templateUrl,
                 history: history.getHistoryForApi(),
                 file_ids: sendOptions?.fileIds ?? [],
+                effort: sendOptions?.effort,
             });
 
             const { session_id } = response.data;

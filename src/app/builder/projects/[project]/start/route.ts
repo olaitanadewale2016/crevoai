@@ -79,6 +79,11 @@ export async function POST(
     ? body.file_ids.map((id: unknown) => String(id).trim()).filter(Boolean)
     : [];
 
+  const rawEffort = body.effort || body.reasoning_effort || project.reasoning_effort || 'medium';
+  const effort: 'low' | 'medium' | 'high' = ['low', 'medium', 'high'].includes(String(rawEffort))
+    ? (String(rawEffort) as 'low' | 'medium' | 'high')
+    : 'medium';
+
   // Block concurrent builds for the same user (verifies with Go builder)
   const blockingProject = await resolveBlockingBuild(String(ctx.user._id));
   if (blockingProject) {
@@ -287,7 +292,7 @@ export async function POST(
       { _id: project._id },
       {
         $push: { conversation_history: userEntry },
-        $set: { compacted_history: null },
+        $set: { compacted_history: null, reasoning_effort: effort },
         $inc: { estimated_tokens: addedTokens, history_version: 1 },
       }
     );
@@ -302,6 +307,7 @@ export async function POST(
 
     const updatedProject = {
       ...project,
+      reasoning_effort: effort,
       conversation_history: updatedHistory,
       compacted_history: null,
     };
@@ -313,6 +319,8 @@ export async function POST(
       goal: promptToSend,
       templateId,
       templateUrl,
+      effort,
+      appUrl,
     });
 
     if (result.status === 409) {

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { getSetting } from '@/lib/settings';
-import { User, Plan } from '@/models';
-import { createSession, attachSessionCookie, getClientIp } from '@/lib/auth';
+import { User, UserAiSettings, Plan } from '@/models';
+import { createSession, attachSessionCookie, getClientIp, hashPassword } from '@/lib/auth';
+import { generateHexToken } from '@/lib/crypto';
 
 export const dynamic = 'force-dynamic';
 
@@ -145,17 +146,35 @@ export async function GET(
     const plan = defaultPlanId
       ? await Plan.findById(defaultPlanId).lean()
       : await Plan.findOne({ is_active: true, price: 0 }).lean();
+    const initialCredits =
+      plan?.monthly_build_credits === -1 ? 0 : plan?.monthly_build_credits || 0;
+    const randomPassword = await hashPassword(generateHexToken(16));
 
     user = await User.create({
       name: profile.name,
       email: profile.email.toLowerCase(),
+      password: randomPassword,
       avatar: profile.avatar,
       role: 'user',
       status: 'active',
       plan_id: plan?._id || null,
-      build_credits: plan?.monthly_build_credits || 0,
+      build_credits: initialCredits,
+      credits_reset_at: plan ? new Date() : null,
       email_verified_at: new Date(),
     });
+
+    await UserAiSettings.findOneAndUpdate(
+      { user_id: user._id },
+      {
+        $setOnInsert: {
+          user_id: user._id,
+          sounds_enabled: true,
+          sound_style: 'playful',
+          sound_volume: 100,
+        },
+      },
+      { upsert: true }
+    ).catch(() => {});
   }
 
   const sessionTimeoutMin = await getSetting<number>('session_timeout', 120);

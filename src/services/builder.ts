@@ -96,12 +96,32 @@ export async function getProjectBuilder(project: IProject, user?: IUser | null):
   return sampled[0] || null;
 }
 
-export async function getAiConfigForUser(user: IUser) {
+export type ReasoningEffort = 'low' | 'medium' | 'high';
+
+function resolveEffortMaxTokens(baseMaxTokens: number, effort: ReasoningEffort): number {
+  switch (effort) {
+    case 'low':
+      return Math.min(baseMaxTokens, 8192);
+    case 'high':
+      return Math.max(baseMaxTokens, 32768);
+    case 'medium':
+    default:
+      return Math.max(8192, Math.min(baseMaxTokens, 16384));
+  }
+}
+
+export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) {
   const plan = await getUserCurrentPlan(user);
   const usingOwnKey = await isUserUsingOwnAiKey(user, plan);
+  const aiSettings = await UserAiSettings.findOne({ user_id: user._id }).lean();
+  const resolvedEffort: ReasoningEffort =
+    effort && ['low', 'medium', 'high'].includes(effort)
+      ? effort
+      : aiSettings?.preferred_effort && ['low', 'medium', 'high'].includes(aiSettings.preferred_effort)
+      ? aiSettings.preferred_effort
+      : 'medium';
 
   if (usingOwnKey) {
-    const aiSettings = await UserAiSettings.findOne({ user_id: user._id }).lean();
     const pType = (aiSettings?.preferred_provider || 'openai') as AiProviderType;
     const encKey = aiSettings?.[`${pType}_api_key` as keyof typeof aiSettings] as string | null;
     const apiKey = decryptString(encKey) || '';
@@ -112,7 +132,8 @@ export async function getAiConfigForUser(user: IUser) {
         api_key: apiKey,
         base_url: baseUrl,
         model,
-        max_tokens: 8192,
+        max_tokens: resolveEffortMaxTokens(16384, resolvedEffort),
+        reasoning_effort: resolvedEffort,
         provider_type: pType,
         remaining_build_credits: 0, // 0 = unlimited / own key
       },
@@ -137,7 +158,8 @@ export async function getAiConfigForUser(user: IUser) {
   if (pType === 'gemini' && (!model || model === 'gemini-2.5-flash' || model === 'gemini-3.5-flash')) {
     model = 'gemini-3.1-flash-lite';
   }
-  const maxTokens = Number(provider.config?.max_tokens || 16384);
+  const baseMaxTokens = Number(provider.config?.max_tokens || 16384);
+  const maxTokens = resolveEffortMaxTokens(baseMaxTokens, resolvedEffort);
   const summTokens = Number(provider.config?.summarizer_max_tokens || 1500);
   const unlimited = user.role === 'admin' || plan?.monthly_build_credits === -1;
 
@@ -147,6 +169,7 @@ export async function getAiConfigForUser(user: IUser) {
       base_url: baseUrl,
       model,
       max_tokens: maxTokens,
+      reasoning_effort: resolvedEffort,
       provider_type: pType,
       remaining_build_credits: unlimited ? 0 : Math.max(1, user.build_credits ?? 0),
     },
@@ -279,14 +302,22 @@ export async function startBuilderSession(params: {
   goal: string;
   templateId?: string | null;
   templateUrl?: string | null;
+  effort?: ReasoningEffort;
+  appUrl?: string;
 }) {
-  const { project, user, builder, goal, templateId, templateUrl } = params;
-  const rawAppUrl = process.env.APP_URL || '';
+  const { project, user, builder, goal, templateId, templateUrl, effort } = params;
+  const rawAppUrl = params.appUrl || process.env.APP_URL || '';
   const appUrl = (
     (rawAppUrl && !rawAppUrl.includes('crevoai.vercel.app') ? rawAppUrl : '') ||
     'https://crevoai-web.vercel.app'
   ).replace(/\/+$/, '');
-  const aiConfig = await getAiConfigForUser(user);
+  const resolvedEffort: ReasoningEffort =
+    effort && ['low', 'medium', 'high'].includes(effort)
+      ? effort
+      : project.reasoning_effort && ['low', 'medium', 'high'].includes(project.reasoning_effort)
+      ? project.reasoning_effort
+      : 'medium';
+  const aiConfig = await getAiConfigForUser(user, resolvedEffort);
   if (!aiConfig) throw new Error('No active AI provider configured.');
 
   const pusher = await getPusherConfigForBuilder();
@@ -299,9 +330,17 @@ export async function startBuilderSession(params: {
     ? THEME_PRESETS.find((tp) => tp.id === project.theme_preset)
     : undefined;
 
+  const baseIterations = builder.max_iterations || 20;
+  const maxIterations =
+    resolvedEffort === 'low'
+      ? Math.min(baseIterations, 12)
+      : resolvedEffort === 'high'
+      ? Math.max(baseIterations, 28)
+      : baseIterations;
+
   const payload: Record<string, unknown> = {
     goal,
-    max_iterations: builder.max_iterations || 20,
+    max_iterations: maxIterations,
     history,
     is_compacted: isCompacted,
     workspace_id: project._id,

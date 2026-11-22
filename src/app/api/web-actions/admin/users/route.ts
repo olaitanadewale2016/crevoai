@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { getSessionContext, hashPassword, isDemoAdminUser } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
-import { User } from '@/models/User';
+import { getSetting } from '@/lib/settings';
+import { User, UserAiSettings } from '@/models/User';
+import { Plan } from '@/models/Billing';
 import { getNextSequence } from '@/models/Counter';
 
 export const dynamic = 'force-dynamic';
@@ -52,6 +54,13 @@ export async function POST(req: NextRequest) {
 
   const numericId = await getNextSequence('user_numeric_id');
   const hashedPassword = await hashPassword(password);
+  const defaultPlanId = await getSetting<string | null>('default_plan_id', null);
+  let defaultPlan = defaultPlanId ? await Plan.findById(defaultPlanId).lean() : null;
+  if (!defaultPlan) {
+    defaultPlan = await Plan.findOne({ is_active: true, price: 0 }).lean();
+  }
+  const initialCredits =
+    defaultPlan?.monthly_build_credits === -1 ? 0 : defaultPlan?.monthly_build_credits || 0;
 
   const user = await User.create({
     numeric_id: numericId,
@@ -60,8 +69,24 @@ export async function POST(req: NextRequest) {
     password: hashedPassword,
     role,
     status,
+    plan_id: defaultPlan?._id || null,
+    build_credits: initialCredits,
+    credits_reset_at: defaultPlan ? new Date() : null,
     email_verified_at: new Date(),
   });
+
+  await UserAiSettings.findOneAndUpdate(
+    { user_id: user._id },
+    {
+      $setOnInsert: {
+        user_id: user._id,
+        sounds_enabled: true,
+        sound_style: 'playful',
+        sound_volume: 100,
+      },
+    },
+    { upsert: true }
+  ).catch(() => {});
 
   if (req.headers.get('x-inertia')) {
     return NextResponse.redirect(new URL('/admin/users', req.url), 303);

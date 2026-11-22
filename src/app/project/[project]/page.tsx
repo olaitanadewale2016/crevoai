@@ -303,6 +303,7 @@ export default async function ProjectChatPage({
         published_at: project.published_at ? new Date(project.published_at).toISOString() : null,
         custom_instructions: project.custom_instructions ?? null,
         theme_preset: project.theme_preset ?? null,
+        reasoning_effort: project.reasoning_effort || 'medium',
         share_image: project.share_image ?? null,
         api_token: project.api_token ?? null,
         custom_domain: project.custom_domain ?? null,

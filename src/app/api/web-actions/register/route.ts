@@ -8,7 +8,7 @@ import {
   verifyRecaptchaToken,
 } from '@/lib/auth';
 import { getSetting } from '@/lib/settings';
-import { User } from '@/models/User';
+import { User, UserAiSettings } from '@/models/User';
 import { Plan } from '@/models/Billing';
 import { parseRequestBody } from '@/lib/http';
 import { sendUserEmailNotification, sendAdminEventEmail } from '@/lib/email';
@@ -81,6 +81,8 @@ export async function POST(req: NextRequest) {
   }
 
   const requireVerify = await getSetting<boolean>('require_email_verification', false);
+  const initialCredits =
+    defaultPlan?.monthly_build_credits === -1 ? 0 : defaultPlan?.monthly_build_credits || 0;
 
   const user = await User.create({
     name,
@@ -89,9 +91,24 @@ export async function POST(req: NextRequest) {
     role: 'user',
     status: 'active',
     plan_id: defaultPlan?._id || null,
-    build_credits: defaultPlan?.monthly_build_credits || 0,
+    build_credits: initialCredits,
+    credits_reset_at: defaultPlan ? new Date() : null,
     email_verified_at: requireVerify ? null : new Date(),
   });
+
+  // Mirror PHP UserObserver::created — provision default UserAiSettings
+  await UserAiSettings.findOneAndUpdate(
+    { user_id: user._id },
+    {
+      $setOnInsert: {
+        user_id: user._id,
+        sounds_enabled: true,
+        sound_style: 'playful',
+        sound_volume: 100,
+      },
+    },
+    { upsert: true }
+  ).catch(() => {});
 
   // Handle referral tracking cookie if present
   const referralCookie = req.cookies.get('referral_code')?.value;

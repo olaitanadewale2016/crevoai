@@ -6,6 +6,8 @@ import { User } from '@/models/User';
 import { Plan, Subscription, Transaction } from '@/models/Billing';
 import { getNextSequence } from '@/models/Counter';
 import { calculateNextRenewalDate } from '@/services/payment-gateways';
+import { refillUserBuildCredits } from '@/services/credits';
+import { broadcastUserCredits } from '@/services/notifications';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,11 +64,15 @@ export async function POST(req: NextRequest) {
   });
 
   if (status === 'active') {
-    user.plan_id = plan._id;
-    if (plan.monthly_build_credits) {
-      user.build_credits = Math.max(user.build_credits || 0, plan.monthly_build_credits);
+    await Subscription.updateMany(
+      { user_id: user._id, _id: { $ne: sub._id }, status: 'active' },
+      { $set: { status: 'cancelled', cancelled_at: now, ends_at: now } }
+    );
+    await refillUserBuildCredits(String(user._id), String(plan._id));
+    const updatedUser = await User.findById(user._id).lean();
+    if (updatedUser) {
+      await broadcastUserCredits(updatedUser).catch(() => {});
     }
-    await user.save();
   }
 
   const invoiceSeq = await getNextSequence('invoice_seq');

@@ -20,7 +20,7 @@ import { useUserChannel } from '@/hooks/useUserChannel';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { PageProps, User } from '@/types';
 import type { UserNotification } from '@/types/notifications';
-import { Home, Eye, Code, Loader2, Hammer, ExternalLink, Brain, Settings, Globe, PanelLeftClose, PanelLeftOpen, HelpCircle } from 'lucide-react';
+import { Home, Eye, Code, Loader2, Hammer, ExternalLink, Brain, Settings, Globe, PanelLeftClose, PanelLeftOpen, HelpCircle, MessageSquare } from 'lucide-react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import axios from 'axios';
@@ -64,6 +64,7 @@ interface Project {
     // Settings fields
     custom_instructions: string | null;
     theme_preset: string | null;
+    reasoning_effort?: 'low' | 'medium' | 'high';
     share_image: string | null;
     api_token?: string | null;
     custom_domain?: string | null;
@@ -246,11 +247,12 @@ export default function Chat({
     const [suggestions, setSuggestions] = useState<string[]>([]);
     const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
     const lastAssistantMessageCount = useRef<number>(0);
-    const [failedMessages, setFailedMessages] = useState<Array<{message: string; timestamp: number}>>([]);
+    const [failedMessages, setFailedMessages] = useState<Array<{ message: string; timestamp: number }>>([]);
     const [initialLoading, setInitialLoading] = useState(true);
     const [publishModalOpen, setPublishModalOpen] = useState(false);
     const [isChatCollapsed, setIsChatCollapsed] = useState(false);
     const [tourOpen, setTourOpen] = useState(false);
+    const [effort, setEffort] = useState<'low' | 'medium' | 'high'>(project.reasoning_effort || 'medium');
 
     // Auto-launch walkthrough tour for new users
     useEffect(() => {
@@ -262,7 +264,7 @@ export default function Chat({
                 }, 1200);
                 return () => clearTimeout(timer);
             }
-        } catch {}
+        } catch { }
     }, []);
 
     // File attachment state for @mentions and uploads
@@ -324,7 +326,7 @@ export default function Chat({
     const { playSound } = useChatSounds({ settings: soundSettings });
 
     // Build credits tracking with refresh capability
-    const { credits, isRefreshing: isRefreshingCredits, update: updateCredits } = useBuildCredits(buildCredits);
+    const { credits, isRefreshing: isRefreshingCredits, refresh: refreshCredits, update: updateCredits } = useBuildCredits(buildCredits);
 
     // Play sound when project is opened
     const hasPlayedOpenSound = useRef(false);
@@ -379,7 +381,27 @@ export default function Chat({
         }
         // Fetch AI suggestions immediately after build completes
         fetchSuggestions();
-    }, [playSound, t, fetchSuggestions]);
+        // Ensure credit deduction & status sync even if webhook is delayed
+        axios
+            .post(`/builder/projects/${project.id}/complete`, {
+                tokens_used: event.tokens_used,
+                iterations: event.iterations,
+                files_changed: event.files_changed,
+                message: event.message,
+                build_status: event.build_status,
+                effort,
+            })
+            .then((res) => {
+                if (res.data?.credits) {
+                    updateCredits(res.data.credits);
+                } else {
+                    refreshCredits();
+                }
+            })
+            .catch(() => {
+                refreshCredits();
+            });
+    }, [playSound, t, fetchSuggestions, project.id, effort, updateCredits, refreshCredits]);
 
     const handleError = useCallback((error: string) => {
         playSound('error');
@@ -541,9 +563,9 @@ export default function Chat({
             playSound('send');
             setThinkingStartTime(Date.now());
             setThinkingDuration(null);
-            sendMessage(project.initial_prompt);
+            sendMessage(project.initial_prompt, { effort });
         }
-    }, [project.initial_prompt, project.has_history, sendMessage, playSound]);
+    }, [project.initial_prompt, project.has_history, sendMessage, playSound, effort]);
 
     // Auto-rebuild preview for projects with history but no preview
     const autoRebuildTriggered = useRef(false);
@@ -627,6 +649,7 @@ export default function Chat({
             elementContext,
             fileIds: fileData?.fileIds,
             attachedFiles: fileData?.attachedFiles,
+            effort,
         });
     };
 
@@ -642,8 +665,8 @@ export default function Chat({
         playSound('send');
         setThinkingStartTime(Date.now());
         setThinkingDuration(null);
-        await sendMessage(msg);
-    }, [isLoading, project.id, playSound, sendMessage]);
+        await sendMessage(msg, { effort });
+    }, [isLoading, project.id, playSound, sendMessage, effort]);
 
     // Element selection handler for inspect mode
     const handleElementSelect = useCallback((element: ElementMention) => {
@@ -731,9 +754,8 @@ export default function Chat({
                 )}
 
                 {/* Start: Chat Column - Full width on mobile, fixed width on larger screens, collapsible */}
-                <div className={`transition-all duration-300 ease-in-out shrink-0 md:border-e flex flex-col ${
-                    isChatCollapsed ? 'w-0 overflow-hidden hidden md:hidden' : 'w-full md:w-[420px]'
-                }`}>
+                <div className={`transition-all duration-300 ease-in-out shrink-0 md:border-e flex flex-col ${isChatCollapsed ? 'w-0 overflow-hidden hidden md:hidden' : 'w-full md:w-[420px]'
+                    }`}>
                     {/* Chat Header */}
                     <div className="h-14 px-4 border-b flex items-center justify-between shrink-0 bg-background">
                         <div className="min-w-0 flex-1">
@@ -923,7 +945,7 @@ export default function Chat({
                     )}
 
                     {/* Input */}
-                    <div data-tour="chat-input" className="pt-2 px-4 pb-4 border-t bg-background">
+                    <div data-tour="chat-input" className="pt-2 px-4 pb-16 md:pb-4 border-t bg-background">
                         <div className="pb-1 flex items-center justify-between">
                             <BuildCreditsIndicator {...credits} isRefreshing={isRefreshingCredits} />
                             <div className="flex items-center gap-2">
@@ -950,6 +972,8 @@ export default function Chat({
                             onFileUploaded={handleFileUploaded}
                             onRemoveUploadedFile={handleRemoveUploadedFile}
                             onFilesDropped={handleFilesDropped}
+                            effort={effort}
+                            onEffortChange={setEffort}
                         />
                     </div>
                 </div>
@@ -961,45 +985,42 @@ export default function Chat({
                         <div className="flex items-center gap-3">
                             {/* View toggle */}
                             <div data-tour="preview-tabs" className="flex items-center border rounded-lg overflow-hidden">
-                            <button
-                                onClick={() => setViewMode('preview')}
-                                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${
-                                    viewMode === 'preview'
-                                        ? 'bg-primary text-primary-foreground'
-                                        : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
-                                }`}
-                            >
-                                <Eye className="h-4 w-4" />
-                                {t('Preview')}
-                            </button>
-                            <div className="w-px h-6 bg-border" />
-                            <button
-                                onClick={() => setViewMode('code')}
-                                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${
-                                    viewMode === 'code'
-                                        ? 'bg-primary text-primary-foreground'
-                                        : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
-                                }`}
-                            >
-                                <Code className="h-4 w-4" />
-                                {t('Code')}
-                            </button>
-                            <div className="w-px h-6 bg-border" />
-                            <button
-                                onClick={() => setViewMode('settings')}
-                                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${
-                                    viewMode === 'settings'
-                                        ? 'bg-primary text-primary-foreground'
-                                        : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
-                                }`}
-                            >
-                                <Settings className="h-4 w-4" />
-                                {t('Settings')}
-                            </button>
+                                <button
+                                    onClick={() => setViewMode('preview')}
+                                    className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${viewMode === 'preview'
+                                            ? 'bg-primary text-primary-foreground'
+                                            : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
+                                        }`}
+                                >
+                                    <Eye className="h-4 w-4" />
+                                    {t('Preview')}
+                                </button>
+                                <div className="w-px h-6 bg-border" />
+                                <button
+                                    onClick={() => setViewMode('code')}
+                                    className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${viewMode === 'code'
+                                            ? 'bg-primary text-primary-foreground'
+                                            : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
+                                        }`}
+                                >
+                                    <Code className="h-4 w-4" />
+                                    {t('Code')}
+                                </button>
+                                <div className="w-px h-6 bg-border" />
+                                <button
+                                    onClick={() => setViewMode('settings')}
+                                    className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${viewMode === 'settings'
+                                            ? 'bg-primary text-primary-foreground'
+                                            : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
+                                        }`}
+                                >
+                                    <Settings className="h-4 w-4" />
+                                    {t('Settings')}
+                                </button>
+                            </div>
                         </div>
-                    </div>
 
-                    <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2">
                             {/* Preview actions */}
                             {viewMode === 'preview' && (
                                 <>
@@ -1146,6 +1167,55 @@ export default function Chat({
                             />
                         )}
                     </div>
+                </div>
+
+                {/* Mobile Bottom View Toggle (Chat vs Preview vs Code) */}
+                <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-40 md:hidden flex items-center bg-card/95 backdrop-blur-md border border-border/80 shadow-lg rounded-full p-1 gap-1">
+                    <button
+                        type="button"
+                        onClick={() => setIsChatCollapsed(false)}
+                        className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
+                            !isChatCollapsed
+                                ? 'bg-primary text-primary-foreground shadow-sm'
+                                : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                    >
+                        <MessageSquare className="h-3.5 w-3.5" />
+                        <span>{t('Chat')}</span>
+                        {isLoading && (
+                            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse ms-0.5" />
+                        )}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setIsChatCollapsed(true);
+                            setViewMode('preview');
+                        }}
+                        className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
+                            isChatCollapsed && viewMode === 'preview'
+                                ? 'bg-primary text-primary-foreground shadow-sm'
+                                : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                    >
+                        <Eye className="h-3.5 w-3.5" />
+                        <span>{t('Preview')}</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setIsChatCollapsed(true);
+                            setViewMode('code');
+                        }}
+                        className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all ${
+                            isChatCollapsed && viewMode === 'code'
+                                ? 'bg-primary text-primary-foreground shadow-sm'
+                                : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                    >
+                        <Code className="h-3.5 w-3.5" />
+                        <span>{t('Code')}</span>
+                    </button>
                 </div>
             </div>
 

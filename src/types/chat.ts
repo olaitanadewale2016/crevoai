@@ -1,4 +1,4 @@
-﻿import { PageProps, User } from '@/types';
+import { PageProps, User } from '@/types';
 
 export interface AttachedFile {
     id: number | string;
