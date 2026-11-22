@@ -541,8 +541,15 @@ export async function triggerBuildAndDeployToR2(
 }
 
 export async function projectPreviewExists(project: IProject): Promise<boolean> {
-  if (!project.active_build_id) return false;
-  return r2Exists('private', `sites/${project._id}/${project.active_build_id}/index.html`);
+  if (project.active_build_id) return true;
+  if (
+    (Array.isArray(project.conversation_history) && project.conversation_history.length > 0) ||
+    project.build_status === 'completed' ||
+    Boolean(project.builder_id)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function escapeHtmlAttr(str: string): string {
@@ -645,7 +652,7 @@ export async function serveBuiltSiteFromR2(params: {
   mode: 'preview' | 'app' | 'published';
 }): Promise<Response> {
   const { project, mode } = params;
-  if (!project.active_build_id) {
+  if (!project.active_build_id && mode !== 'preview') {
     return new Response('Preview not built yet.', { status: 404 });
   }
 
