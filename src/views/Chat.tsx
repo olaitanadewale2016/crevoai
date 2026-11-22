@@ -260,9 +260,7 @@ export default function Chat({
     const [failedMessages, setFailedMessages] = useState<Array<{ message: string; timestamp: number }>>([]);
     const [initialLoading, setInitialLoading] = useState(true);
     const [publishModalOpen, setPublishModalOpen] = useState(false);
-    const [mobileView, setMobileView] = useState<'chat' | 'preview' | 'code' | 'settings'>(() =>
-        getInitialViewMode() === 'settings' ? 'settings' : 'chat'
-    );
+    const [mobileView, setMobileView] = useState<'chat' | 'preview' | 'code'>('chat');
     const [mobileFilesOpen, setMobileFilesOpen] = useState(false);
     const [isChatCollapsed, setIsChatCollapsed] = useState(false);
     const allowedEfforts: Array<'low' | 'medium' | 'high'> =
@@ -1063,13 +1061,10 @@ export default function Chat({
                                 <Code className="h-3.5 w-3.5 md:h-4 md:w-4" />
                                 <span>{t('Code')}</span>
                             </button>
-                            <div className="w-px h-6 bg-border" />
+                            <div className="hidden md:block w-px h-6 bg-border" />
                             <button
-                                onClick={() => {
-                                    setViewMode('settings');
-                                    if (mobileView !== 'chat') setMobileView('settings');
-                                }}
-                                className={`flex items-center gap-1.5 md:gap-2 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium transition-all ${
+                                onClick={() => setViewMode('settings')}
+                                className={`hidden md:flex items-center gap-1.5 md:gap-2 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium transition-all ${
                                     viewMode === 'settings'
                                         ? 'bg-primary text-primary-foreground'
                                         : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
@@ -1263,7 +1258,7 @@ export default function Chat({
                     </div>
                 </div>
 
-                {/* Mobile Bottom View Toggle (Chat vs Preview vs Code vs Settings) — hides when virtual keypad / input is focused */}
+                {/* Mobile Bottom View Toggle (Chat vs Preview vs Code) — hides when virtual keypad / input is focused */}
                 {!isInputFocused && (
                     <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-40 md:hidden flex items-center bg-card/95 backdrop-blur-md border border-border/80 shadow-lg rounded-full p-1 gap-0.5 max-w-[calc(100vw-1rem)] overflow-x-auto no-scrollbar">
                         <button
@@ -1310,21 +1305,6 @@ export default function Chat({
                         >
                             <Code className="h-3.5 w-3.5 shrink-0" />
                             <span>{t('Code')}</span>
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setMobileView('settings');
-                                setViewMode('settings');
-                            }}
-                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
-                                mobileView !== 'chat' && viewMode === 'settings'
-                                    ? 'bg-primary text-primary-foreground shadow-sm'
-                                    : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                        >
-                            <Settings className="h-3.5 w-3.5 shrink-0" />
-                            <span>{t('Settings')}</span>
                         </button>
                     </div>
                 )}
