@@ -130,8 +130,11 @@ export async function getAiConfigForUser(user: IUser) {
   const apiKey = creds?.api_key || '';
   const pType = provider.type;
   const baseUrl = provider.config?.base_url || AI_DEFAULT_BASE_URLS[pType];
-  const model = provider.config?.default_model || provider.available_models?.[0] || AI_DEFAULT_MODELS[pType]?.[0];
-  const maxTokens = Number(provider.config?.max_tokens || 8192);
+  let model = provider.config?.default_model || provider.available_models?.[0] || AI_DEFAULT_MODELS[pType]?.[0];
+  if (pType === 'gemini' && (!model || model === 'gemini-2.5-flash')) {
+    model = 'gemini-3.5-flash';
+  }
+  const maxTokens = Number(provider.config?.max_tokens || 16384);
   const summTokens = Number(provider.config?.summarizer_max_tokens || 1500);
   const unlimited = user.role === 'admin' || plan?.monthly_build_credits === -1;
 
@@ -190,13 +193,18 @@ export async function resolveBlockingBuild(userId: string): Promise<IProject | n
           return building;
         }
       } catch {
-        // Builder unreachable: check 10-min staleness
+        // Builder unreachable or timeout: treat as non-blocking if session check failed
+        await Project.updateOne(
+          { _id: building._id },
+          { $set: { build_status: 'failed', build_completed_at: new Date() } }
+        );
+        return null;
       }
     }
   }
 
   const startedAt = building.build_started_at ? new Date(building.build_started_at).getTime() : 0;
-  if (!startedAt || Date.now() - startedAt > 10 * 60 * 1000) {
+  if (!startedAt || Date.now() - startedAt > 2 * 60 * 1000) {
     await Project.updateOne(
       { _id: building._id },
       { $set: { build_status: 'failed', build_completed_at: new Date() } }

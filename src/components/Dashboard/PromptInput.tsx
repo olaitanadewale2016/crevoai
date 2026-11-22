@@ -173,8 +173,17 @@ export function PromptInput({
                                 value={selectedTemplateId ?? 'automatic'}
                                 onValueChange={(v) => setSelectedTemplateId(v === 'automatic' ? null : v)}
                             >
-                                <SelectTrigger className="w-[150px]">
-                                    <SelectValue placeholder={t('Template')} />
+                                <SelectTrigger className="w-[160px]">
+                                    <SelectValue placeholder={t('Template')}>
+                                        <div className="flex items-center gap-2 truncate">
+                                            <LayoutTemplate className="h-4 w-4 shrink-0" />
+                                            <span className="truncate">
+                                                {selectedTemplateId
+                                                    ? (userSelectableTemplates.find(t => String(t.id) === selectedTemplateId)?.name || t('Template'))
+                                                    : t('Automatic')}
+                                            </span>
+                                        </div>
+                                    </SelectValue>
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="automatic">
@@ -195,8 +204,17 @@ export function PromptInput({
                             </Select>
                             {/* Theme Preset Selector */}
                             <Select value={selectedThemePreset} onValueChange={setSelectedThemePreset}>
-                                <SelectTrigger className="w-[140px]">
-                                    <SelectValue />
+                                <SelectTrigger className="w-[150px]">
+                                    <SelectValue>
+                                        <div className="flex items-center gap-2 truncate">
+                                            <Palette className="h-4 w-4 shrink-0" />
+                                            <span className="truncate">
+                                                {selectedThemePreset === 'automatic'
+                                                    ? t('Automatic')
+                                                    : (THEME_PRESETS.find(p => p.id === selectedThemePreset)?.name || selectedThemePreset)}
+                                            </span>
+                                        </div>
+                                    </SelectValue>
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="automatic">

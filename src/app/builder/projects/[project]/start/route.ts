@@ -233,6 +233,7 @@ export async function POST(
     raceConflict = await withLock(`user:build-slot:${String(ctx.user._id)}`, 15, async () => {
       const stillBuilding = await Project.exists({
         user_id: ctx.user._id,
+        _id: { $ne: project._id },
         build_status: 'building',
         deleted_at: null,
       });

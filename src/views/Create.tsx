@@ -173,6 +173,12 @@ export default function Create({
             template_id: templateId,
             theme_preset: themePreset,
         }, {
+            onSuccess: (page) => {
+                const target = page.props?.redirect || (page.props?.projectId ? `/project/${page.props.projectId}` : null);
+                if (target && typeof window !== 'undefined') {
+                    window.location.href = target;
+                }
+            },
             onError: () => {
                 setIsSubmitting(false);
             },

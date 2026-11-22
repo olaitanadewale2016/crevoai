@@ -101,6 +101,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       redirect: `/project/${project._id}`,
+      hard_redirect: true,
       projectId: project._id,
     });
   }
