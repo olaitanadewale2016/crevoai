@@ -173,28 +173,38 @@ export default function Create({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const handlePromptSubmit = (
+    const handlePromptSubmit = async (
         prompt: string,
         templateId: string | null,
         themePreset: string | null
     ) => {
         setIsSubmitting(true);
-        // Create a new project with the prompt and redirect to it
-        router.post('/projects', {
-            prompt,
-            template_id: templateId,
-            theme_preset: themePreset,
-        }, {
-            onSuccess: (page) => {
-                const target = page.props?.redirect || (page.props?.projectId ? `/project/${page.props.projectId}` : null);
-                if (target && typeof window !== 'undefined') {
-                    window.location.href = target;
-                }
-            },
-            onError: () => {
-                setIsSubmitting(false);
-            },
-        });
+        try {
+            const res = await axios.post('/api/web-actions/projects', {
+                prompt,
+                template_id: templateId,
+                theme_preset: themePreset,
+            }, {
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+            });
+            const data = res.data;
+            const target = data.redirect || (data.projectId ? `/project/${data.projectId}` : null);
+            if (target && typeof window !== 'undefined') {
+                window.location.href = target;
+                return;
+            }
+        } catch (err: any) {
+            setIsSubmitting(false);
+            const msg =
+                err.response?.data?.errors?.prompt ||
+                err.response?.data?.error ||
+                err.message ||
+                t('Failed to create project. Please try again.');
+            toast.error(msg);
+        }
     };
 
     return (

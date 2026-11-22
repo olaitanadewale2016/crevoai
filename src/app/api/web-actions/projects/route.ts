@@ -34,9 +34,9 @@ export async function POST(req: NextRequest) {
   await connectDB();
   const user = ctx.user;
 
-  // Check project limit against plan
+  // Check project limit against plan (admins have unlimited projects)
   const plan = await getUserCurrentPlan(user);
-  if (plan && plan.max_projects !== null) {
+  if (user.role !== 'admin' && plan && plan.max_projects !== null && plan.max_projects !== -1) {
     const currentCount = await Project.countDocuments({ user_id: user._id, deleted_at: null });
     if (currentCount >= plan.max_projects) {
       return NextResponse.json(
@@ -63,19 +63,12 @@ export async function POST(req: NextRequest) {
     prompt?: string;
     template_id?: string;
     theme_preset?: string;
-    reasoning_effort?: 'low' | 'medium' | 'high';
-    effort?: 'low' | 'medium' | 'high';
   }>(req);
 
   const prompt = (body.prompt || '').trim();
   if (!prompt) {
     return NextResponse.json({ errors: { prompt: 'The prompt field is required.' } }, { status: 422 });
   }
-
-  const rawEffort = body.reasoning_effort || body.effort || 'medium';
-  const reasoningEffort: 'low' | 'medium' | 'high' = ['low', 'medium', 'high'].includes(String(rawEffort))
-    ? (String(rawEffort) as 'low' | 'medium' | 'high')
-    : 'medium';
 
   const name = prompt.length > 50 ? `${prompt.slice(0, 50)}...` : prompt;
   const projectId = generateUuidV7();
@@ -102,7 +95,6 @@ export async function POST(req: NextRequest) {
     initial_prompt: prompt,
     template_id: templateId,
     theme_preset: resolvedThemePreset,
-    reasoning_effort: reasoningEffort,
     last_viewed_at: new Date(),
     build_status: 'idle',
   });

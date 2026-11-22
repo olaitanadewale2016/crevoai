@@ -159,6 +159,15 @@ export default async function CreatePage() {
     };
   } else {
     canBuildResult = await canPerformBuild(user);
+    if (canBuildResult.allowed && user.role !== 'admin' && plan && plan.max_projects !== null && plan.max_projects !== -1) {
+      const currentCount = await Project.countDocuments({ user_id: user._id, deleted_at: null });
+      if (currentCount >= plan.max_projects) {
+        canBuildResult = {
+          allowed: false,
+          reason: `You have reached the maximum number of projects (${plan.max_projects}) allowed by your plan.`,
+        };
+      }
+    }
   }
 
   // Locale-aware static content for instant initial render (AI content loads async via /create/ai-content)
