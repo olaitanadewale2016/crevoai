@@ -98,7 +98,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     const [startError, setStartError] = useState<string | null>(null);
     const [progress, setProgress] = useState<BuildProgress>(() => ({
         ...initialProgress,
-        previewUrl: initialPreviewUrl || (initialHistory && initialHistory.length > 0 ? `/preview/${projectId}` : null),
+        previewUrl: initialPreviewUrl ?? null,
     }));
     const [isBuildingPreview, setIsBuildingPreview] = useState(false);
     const pendingMessageRef = useRef<string | null>(null);
@@ -522,9 +522,9 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         thinkingStartTimeRef.current = null;
         setProgress(prev => ({
             ...initialProgress,
-            previewUrl: prev.previewUrl || (projectId ? `/preview/${projectId}` : null),  // Preserve existing preview
+            previewUrl: prev.previewUrl,  // Preserve existing preview if any, otherwise null
         }));
-    }, [projectId]);
+    }, []);
 
     const sendMessage = useCallback(async (content: string, sendOptions?: SendMessageOptions) => {
         if (!content.trim()) return;
