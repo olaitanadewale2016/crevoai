@@ -219,33 +219,39 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // 2. Trigger Vite build and deploy preview to R2 automatically
+        // 2. Broadcast completed status and preview URL IMMEDIATELY (instant 0ms response)
         const shouldBuildPreview =
           data.files_changed ||
           data.build_status === 'completed' ||
           data.build_required;
+
+        if (shouldBuildPreview) {
+          project.build_status = 'completed';
+          await project.save();
+
+          await broadcastEvent(`session.${sessionId}`, 'status', {
+            status: 'completed',
+            preview_url: `/preview/${project._id}`,
+            message: 'Build completed successfully',
+          });
+          if (project.user_id) {
+            await broadcastToUser(String(project.user_id), 'project.status', {
+              project_id: project._id,
+              status: 'completed',
+              preview_url: `/preview/${project._id}`,
+            });
+          }
+        }
+
+        // 3. Defer R2 deployment to background so preview stream is instant
         if (shouldBuildPreview && project.builder_id) {
           Builder.findById(project.builder_id)
             .then(async (builderDoc) => {
               if (builderDoc) {
-                const buildRes = await triggerBuildAndDeployToR2(project, builderDoc);
-                if (buildRes.success) {
-                  await broadcastEvent(`session.${sessionId}`, 'status', {
-                    status: 'completed',
-                    preview_url: `/preview/${project._id}`,
-                    message: 'Build completed successfully',
-                  });
-                  if (project.user_id) {
-                    await broadcastToUser(String(project.user_id), 'project.status', {
-                      project_id: project._id,
-                      status: 'completed',
-                      preview_url: `/preview/${project._id}`,
-                    });
-                  }
-                }
+                await triggerBuildAndDeployToR2(project, builderDoc);
               }
             })
-            .catch((err) => console.error('Error auto-building preview:', err));
+            .catch((err) => console.error('Error background sync to R2:', err));
         }
 
         if (project.user_id) {

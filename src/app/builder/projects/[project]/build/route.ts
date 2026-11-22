@@ -47,10 +47,13 @@ export async function POST(
     return NextResponse.json({ error: 'No builder assigned to this project' }, { status: 404 });
   }
 
-  const res = await triggerBuildAndDeployToR2(project, builder);
-  if (!res.success) {
-    return NextResponse.json({ error: `Build failed: ${res.error}` }, { status: 500 });
-  }
+  // Instant response: preview streams directly from builder workspace, R2 sync is backgrounded
+  triggerBuildAndDeployToR2(project, builder).catch((err) => {
+    console.error('Background R2 sync error:', err);
+  });
 
-  return NextResponse.json(res);
+  return NextResponse.json({
+    success: true,
+    preview_url: `/preview/${project._id}`,
+  });
 }

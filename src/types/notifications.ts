@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Notification types matching backend UserNotification model constants.
  */
 export type NotificationType =

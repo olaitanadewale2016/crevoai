@@ -707,7 +707,60 @@ export async function serveBuiltSiteFromR2(params: {
   let buf: Buffer | null = cached?.buffer || null;
   let contentType = cached?.contentType || guessContentType(targetKey);
 
-  // 2. Fetch from R2 on cache miss
+  // 2. Direct Builder proxy for instant zero-latency preview (streams directly from Render workspace)
+  if (!buf && mode === 'preview') {
+    try {
+      const builder = project.builder_id
+        ? await Builder.findById(project.builder_id)
+        : await Builder.findOne({ status: 'active' });
+      if (builder) {
+        const streamRes = await builderFetch(
+          builder,
+          `/api/preview-asset/${project._id}/${relPath}`,
+          { timeoutMs: 8_000 }
+        );
+        if (streamRes.ok) {
+          const resContentType =
+            streamRes.headers.get('content-type') || guessContentType(relPath);
+          const isHtml =
+            relPath.endsWith('.html') ||
+            relPath.endsWith('.htm') ||
+            resContentType.includes('text/html');
+
+          if (isHtml) {
+            const rawHtml = await streamRes.text();
+            const finalHtml = await buildDynamicHtml(rawHtml, project, mode);
+            return new Response(finalHtml, {
+              status: 200,
+              headers: {
+                'Content-Type': 'text/html; charset=utf-8',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+              },
+            });
+          }
+
+          const arrayBuf = await streamRes.arrayBuffer();
+          const streamBuf = Buffer.from(arrayBuf);
+          cachePreviewAsset(targetKey, streamBuf, resContentType);
+
+          const isHashedAsset = relPath.startsWith('assets/');
+          return new Response(streamBuf, {
+            status: 200,
+            headers: {
+              'Content-Type': resContentType,
+              'Cache-Control': isHashedAsset
+                ? 'public, max-age=31536000, immutable'
+                : 'no-cache, no-store, must-revalidate',
+            },
+          });
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[Preview Stream] Direct builder stream fallback to R2 for ${relPath}:`, err?.message);
+    }
+  }
+
+  // 3. Fetch from R2 on cache miss / fallback
   if (!buf) {
     buf = await r2GetBuffer('private', targetKey);
     if (buf) {
