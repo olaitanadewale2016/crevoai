@@ -42,6 +42,7 @@ import {
     Paintbrush,
     Gift,
     Layout,
+    Image as ImageIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ApplicationLogo from '@/components/ApplicationLogo';
@@ -131,6 +132,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
         { titleKey: 'AI Builders', href: '/admin/ai-builders', icon: Bot },
         { titleKey: 'AI Providers', href: '/admin/ai-providers', icon: Cpu },
         { titleKey: 'AI Templates', href: '/admin/ai-templates', icon: LayoutTemplate },
+        { titleKey: 'Stock Images', href: '/admin/stock-images', icon: ImageIcon },
         { titleKey: 'Landing Page', href: '/admin/landing-builder', icon: Layout },
         { titleKey: 'Plugins', href: '/admin/plugins', icon: Puzzle },
         { titleKey: 'Languages', href: '/admin/languages', icon: Globe },

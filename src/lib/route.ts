@@ -238,6 +238,7 @@ const ROUTE_TEMPLATES: Record<string, string> = {
   'admin.ai-templates.update': '/admin/ai-templates/:template',
   'admin.ai-templates.destroy': '/admin/ai-templates/:template',
   'admin.ai-templates.metadata': '/admin/ai-templates/:template/metadata',
+  'admin.stock-images': '/admin/stock-images',
   'admin.landing-builder.index': '/admin/landing-builder',
   'admin.landing-builder.preview': '/admin/landing-builder/preview',
   'admin.landing-builder.reorder': '/admin/landing-builder/reorder',

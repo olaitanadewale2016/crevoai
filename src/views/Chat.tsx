@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Head, Link, usePage } from '@/lib/inertia-compat';
@@ -967,8 +967,9 @@ export default function Chat({
                                 {t('Settings')}
                             </button>
                         </div>
+                    </div>
 
-                        <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2">
                             {/* Preview actions */}
                             {viewMode === 'preview' && (
                                 <>

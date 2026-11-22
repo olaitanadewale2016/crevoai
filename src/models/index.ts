@@ -4,6 +4,7 @@ export * from './Project';
 export * from './Billing';
 export * from './BuilderAi';
 export * from './System';
+export * from './StockImage';
 
 import {
   Counter,
@@ -42,6 +43,7 @@ import {
   CronLog,
   SentryPendingReport,
 } from './System';
+import { StockImage } from './StockImage';
 
 export async function ensureAllIndexes(): Promise<void> {
   const models = [
@@ -79,6 +81,7 @@ export async function ensureAllIndexes(): Promise<void> {
     LandingItem,
     CronLog,
     SentryPendingReport,
+    StockImage,
   ];
   await Promise.all(models.map((m) => m.syncIndexes().catch(() => m.createIndexes())));
 }

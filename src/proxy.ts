@@ -22,6 +22,7 @@ const DUAL_METHOD_PAGE_PATHS = new Set([
   '/admin/ai-builders',
   '/admin/ai-providers',
   '/admin/ai-templates',
+  '/admin/stock-images',
   '/admin/languages',
   '/install/database',
   '/install/admin',
