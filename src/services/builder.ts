@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { unzipSync } from 'fflate';
+import { unzipSync, strFromU8 } from 'fflate';
 import { connectDB } from '@/lib/db';
 import { cacheAdd, cacheForget } from '@/lib/cache';
 import { decryptJson, decryptString, generateUuidV7 } from '@/lib/crypto';
@@ -17,7 +17,7 @@ import { getPusherConfigForBuilder } from '@/lib/broadcast';
 import { getProjectFirebaseConfig } from '@/lib/firebase-admin';
 import { getUserCurrentPlan } from '@/lib/auth';
 import { resolvePlanAiProvider, resolvePlanBuilder, isUserUsingOwnAiKey } from './credits';
-import { Project, IProject, IConversationEntry } from '@/models/Project';
+import { Project, Template, IProject, IConversationEntry } from '@/models/Project';
 import { UserAiSettings, IUser } from '@/models/User';
 import {
   Builder,
@@ -484,6 +484,140 @@ export function clearProjectPreviewCache(projectId: string) {
       PREVIEW_ASSET_CACHE.delete(key);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Fallback Workspace File Reader (from Project Template or Default Template ZIP)
+// Ensures Code View (FileTree & CodeEditor) always loads even if Go Builder
+// workspace hasn't been initialized yet or after an ephemeral builder restart.
+// ---------------------------------------------------------------------------
+let CACHED_DEFAULT_TEMPLATE_FILES: Record<string, Uint8Array> | null = null;
+
+async function loadTemplateZipFiles(project: IProject): Promise<Record<string, Uint8Array>> {
+  let zipBuffer: Buffer | null = null;
+
+  if (project.template_id) {
+    try {
+      const tpl = await Template.findById(project.template_id).lean();
+      if (tpl?.zip_path) {
+        zipBuffer = await r2GetBuffer('private', tpl.zip_path);
+      }
+    } catch {
+      // Fall back to default template below
+    }
+  }
+
+  if (!zipBuffer) {
+    if (CACHED_DEFAULT_TEMPLATE_FILES) {
+      return CACHED_DEFAULT_TEMPLATE_FILES;
+    }
+    try {
+      const bundledPath = path.join(process.cwd(), 'assets', 'templates', 'default-template.zip');
+      if (fs.existsSync(bundledPath)) {
+        zipBuffer = fs.readFileSync(bundledPath);
+      }
+    } catch {
+      // Ignore fs errors
+    }
+  }
+
+  if (!zipBuffer) return {};
+
+  try {
+    const unzipped = unzipSync(new Uint8Array(zipBuffer));
+    if (!project.template_id) {
+      CACHED_DEFAULT_TEMPLATE_FILES = unzipped;
+    }
+    return unzipped;
+  } catch {
+    return {};
+  }
+}
+
+export interface WorkspaceFileEntry {
+  path: string;
+  name: string;
+  size: number;
+  is_dir: boolean;
+  mod_time: string;
+}
+
+export async function getFallbackWorkspaceFiles(project: IProject): Promise<WorkspaceFileEntry[]> {
+  const unzipped = await loadTemplateZipFiles(project);
+  const entriesMap = new Map<string, WorkspaceFileEntry>();
+  const nowIso = new Date(project.updated_at || Date.now()).toISOString();
+
+  for (const [rawPath, data] of Object.entries(unzipped)) {
+    const norm = rawPath.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    if (!norm) continue;
+
+    const parts = norm.split('/');
+    if (
+      parts.some(
+        (p) =>
+          p.startsWith('.') ||
+          p === 'node_modules' ||
+          p === 'dist' ||
+          p === 'template.json'
+      )
+    ) {
+      continue;
+    }
+
+    const isExplicitDir = rawPath.endsWith('/');
+
+    for (let i = 0; i < parts.length - 1; i++) {
+      const dirPath = parts.slice(0, i + 1).join('/');
+      if (!entriesMap.has(dirPath)) {
+        entriesMap.set(dirPath, {
+          path: dirPath,
+          name: parts[i],
+          size: 0,
+          is_dir: true,
+          mod_time: nowIso,
+        });
+      }
+    }
+
+    if (isExplicitDir) {
+      if (!entriesMap.has(norm)) {
+        entriesMap.set(norm, {
+          path: norm,
+          name: parts[parts.length - 1],
+          size: 0,
+          is_dir: true,
+          mod_time: nowIso,
+        });
+      }
+    } else {
+      entriesMap.set(norm, {
+        path: norm,
+        name: parts[parts.length - 1],
+        size: data.byteLength,
+        is_dir: false,
+        mod_time: nowIso,
+      });
+    }
+  }
+
+  return Array.from(entriesMap.values());
+}
+
+export async function getFallbackWorkspaceFile(
+  project: IProject,
+  filePath: string
+): Promise<{ path: string; content: string; size: number } | null> {
+  const clean = filePath.replace(/\\/g, '/').replace(/^\/+/, '');
+  const unzipped = await loadTemplateZipFiles(project);
+  const data = unzipped[clean];
+  if (!data) return null;
+
+  const content = strFromU8(data);
+  return {
+    path: clean,
+    content,
+    size: data.byteLength,
+  };
 }
 
 /**

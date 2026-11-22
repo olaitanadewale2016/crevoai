@@ -10,9 +10,7 @@ import { usePreviewInspector } from '@/hooks/usePreviewInspector';
 import { usePreviewThemeSync } from '@/hooks/usePreviewThemeSync';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { Button } from '@/components/ui/button';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { MousePointerClick, Loader2, Palette, Undo2, Redo2, Bot, Cog, Wrench, History, Clock, Monitor, Tablet, Smartphone } from 'lucide-react';
-import axios from 'axios';
+import { MousePointerClick, Loader2, Palette, Undo2, Redo2, Bot, Cog, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import type { InspectorElement, ElementMention, PendingEdit } from '@/types/inspector';
 import { formatStyleEditMessage } from '@/lib/style-save';
@@ -111,69 +109,6 @@ export function InspectPreview({
     const previousMode = useRef<PreviewMode>(mode);
     const [isSaving, setIsSaving] = useState(false);
     const [iframeReady, setIframeReady] = useState(false);
-    const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop');
-
-    const handleSetDeviceMode = useCallback((newMode: DeviceMode) => {
-        setDeviceMode(newMode);
-        const breakpoint = newMode === 'mobile' ? 'sm' : newMode === 'tablet' ? 'md' : 'lg';
-        iframeRef.current?.contentWindow?.postMessage({
-            type: 'inspector-set-breakpoint',
-            breakpoint,
-        }, '*');
-    }, []);
-
-    // Revision history state
-    interface RevisionItem {
-        id: number;
-        label: string;
-        file_count: number;
-        timestamp: string;
-    }
-    const [revisionsOpen, setRevisionsOpen] = useState(false);
-    const [revisions, setRevisions] = useState<RevisionItem[]>([]);
-    const [currentRevisionIndex, setCurrentRevisionIndex] = useState<number>(-1);
-    const [isLoadingRevisions, setIsLoadingRevisions] = useState(false);
-    const [isRestoringRevision, setIsRestoringRevision] = useState(false);
-
-    const fetchRevisions = useCallback(async () => {
-        if (!projectId) return;
-        setIsLoadingRevisions(true);
-        try {
-            const res = await axios.get(`/builder/projects/${projectId}/revisions`);
-            if (res.data) {
-                const list = Array.isArray(res.data.revisions) ? res.data.revisions : [];
-                setRevisions(list);
-                setCurrentRevisionIndex(typeof res.data.current === 'number' ? res.data.current : list.length - 1);
-            }
-        } catch {
-            setRevisions([]);
-        } finally {
-            setIsLoadingRevisions(false);
-        }
-    }, [projectId]);
-
-    const handleRestoreRevision = async (targetIndex: number) => {
-        if (!projectId || targetIndex === currentRevisionIndex || isRestoringRevision || isUndoRedoDisabled) return;
-        setIsRestoringRevision(true);
-        try {
-            const steps = Math.abs(currentRevisionIndex - targetIndex);
-            const isBack = targetIndex < currentRevisionIndex;
-            for (let i = 0; i < steps; i++) {
-                if (isBack) {
-                    await axios.post(`/builder/projects/${projectId}/undo`);
-                } else {
-                    await axios.post(`/builder/projects/${projectId}/redo`);
-                }
-            }
-            toast.success(t('Restored checkpoint'));
-            await fetchRevisions();
-            if (onUndo) onUndo();
-        } catch {
-            toast.error(t('Failed to restore checkpoint'));
-        } finally {
-            setIsRestoringRevision(false);
-        }
-    };
 
     // Use the preview inspector hook - only enabled in inspect mode
     const {
@@ -412,7 +347,6 @@ export function InspectPreview({
                     <div className="flex items-center gap-1.5">
                         {/* Mode toggles */}
                         <Button
-                            data-tour="inspect-toggle"
                             variant={mode === 'inspect' ? 'default' : 'outline'}
                             size="sm"
                             onClick={() => onModeChange?.(mode === 'inspect' ? 'preview' : 'inspect')}
@@ -422,7 +356,6 @@ export function InspectPreview({
                             {t('Inspect')}
                         </Button>
                         <Button
-                            data-tour="design-toggle"
                             variant={mode === 'design' ? 'default' : 'outline'}
                             size="sm"
                             onClick={() => onModeChange?.(mode === 'design' ? 'preview' : 'design')}
@@ -433,64 +366,21 @@ export function InspectPreview({
                         </Button>
                     </div>
 
-                    {/* Responsive Device Viewport Switcher (Desktop, Tablet, Mobile) */}
-                    <div data-tour="device-switcher" className="flex items-center bg-muted/70 p-0.5 rounded-lg border border-border/50">
-                        <Button
-                            variant={deviceMode === 'desktop' ? 'secondary' : 'ghost'}
-                            size="icon"
-                            className={`h-7 w-7 rounded-md transition-all ${
-                                deviceMode === 'desktop'
-                                    ? 'bg-background shadow-xs text-foreground font-semibold'
-                                    : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                            onClick={() => handleSetDeviceMode('desktop')}
-                            title={t('Desktop View (100%)')}
-                        >
-                            <Monitor className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                            variant={deviceMode === 'tablet' ? 'secondary' : 'ghost'}
-                            size="icon"
-                            className={`h-7 w-7 rounded-md transition-all ${
-                                deviceMode === 'tablet'
-                                    ? 'bg-background shadow-xs text-foreground font-semibold'
-                                    : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                            onClick={() => handleSetDeviceMode('tablet')}
-                            title={t('Tablet View (768px)')}
-                        >
-                            <Tablet className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                            variant={deviceMode === 'mobile' ? 'secondary' : 'ghost'}
-                            size="icon"
-                            className={`h-7 w-7 rounded-md transition-all ${
-                                deviceMode === 'mobile'
-                                    ? 'bg-background shadow-xs text-foreground font-semibold'
-                                    : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                            onClick={() => handleSetDeviceMode('mobile')}
-                            title={t('Mobile View (390px)')}
-                        >
-                            <Smartphone className="h-3.5 w-3.5" />
-                        </Button>
-                    </div>
-
                     {/* Right side: hints + Undo/Redo */}
                     <div className="flex items-center gap-2">
                         {mode === 'inspect' && !isReady && !isBuilding && (
                             <span className="text-xs text-muted-foreground flex items-center gap-1.5">
                                 <Loader2 className="h-3 w-3 animate-spin" />
-                                {t('Initializing...')}
+                                <span className="hidden sm:inline">{t('Initializing...')}</span>
                             </span>
                         )}
                         {mode === 'inspect' && isReady && !isBuilding && (
-                            <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                            <span className="hidden sm:inline-flex text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
                                 {t('Click any element to see options')}
                             </span>
                         )}
 
-                        {mode === 'inspect' && <div className="w-px h-5 bg-border mx-1" />}
+                        {mode === 'inspect' && <div className="hidden sm:block w-px h-5 bg-border mx-1" />}
 
                         <Button
                             variant="outline"
@@ -498,7 +388,7 @@ export function InspectPreview({
                             onClick={onUndo}
                             disabled={isUndoing || isUndoRedoDisabled}
                             className="h-7 w-7"
-                            title={`${t('Undo')} (${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+Z)`}
+                            title={`${t('Undo')} (${typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+Z)`}
                         >
                             {isUndoing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
                         </Button>
@@ -508,98 +398,10 @@ export function InspectPreview({
                             onClick={onRedo}
                             disabled={isRedoing || isUndoRedoDisabled}
                             className="h-7 w-7"
-                            title={`${t('Redo')} (${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+Shift+Z)`}
+                            title={`${t('Redo')} (${typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+Shift+Z)`}
                         >
                             {isRedoing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Redo2 className="h-3.5 w-3.5" />}
                         </Button>
-
-                        {/* Revision History Panel */}
-                        <Popover open={revisionsOpen} onOpenChange={(open) => {
-                            setRevisionsOpen(open);
-                            if (open) fetchRevisions();
-                        }}>
-                            <PopoverTrigger asChild>
-                                <Button
-                                    data-tour="history-button"
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-7 w-7 relative"
-                                    title={t('Revision History')}
-                                    disabled={isUndoRedoDisabled}
-                                >
-                                    <History className="h-3.5 w-3.5" />
-                                </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-80 p-0 shadow-lg border-border" align="end">
-                                <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-border bg-muted/30">
-                                    <div className="flex items-center gap-1.5 font-medium text-xs">
-                                        <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-                                        <span>{t('Revision History')}</span>
-                                    </div>
-                                    {revisions.length > 0 && (
-                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
-                                            {revisions.length} {t('versions')}
-                                        </span>
-                                    )}
-                                </div>
-                                <div className="max-h-72 overflow-y-auto p-2 divide-y divide-border/40">
-                                    {isLoadingRevisions ? (
-                                        <div className="flex items-center justify-center py-6 text-xs text-muted-foreground gap-2">
-                                            <Loader2 className="h-4 w-4 animate-spin" />
-                                            <span>{t('Loading history...')}</span>
-                                        </div>
-                                    ) : revisions.length === 0 ? (
-                                        <div className="py-6 px-3 text-center text-xs text-muted-foreground">
-                                            <History className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                                            <p>{t('No past revisions recorded yet.')}</p>
-                                            <p className="text-[11px] mt-1 text-muted-foreground/70">
-                                                {t('Checkpoints are captured on AI builds and style edits.')}
-                                            </p>
-                                        </div>
-                                    ) : (
-                                        revisions.map((rev, idx) => {
-                                            const isCurrent = idx === currentRevisionIndex;
-                                            return (
-                                                <div
-                                                    key={rev.id ?? idx}
-                                                    className={`flex items-start justify-between gap-2 py-2 px-2 rounded-md transition-colors ${
-                                                        isCurrent ? 'bg-primary/10 border border-primary/20' : 'hover:bg-muted/50'
-                                                    }`}
-                                                >
-                                                    <div className="flex items-start gap-2 min-w-0">
-                                                        <span className={`mt-1 h-2 w-2 rounded-full shrink-0 ${isCurrent ? 'bg-primary' : 'bg-muted-foreground/40'}`} />
-                                                        <div className="min-w-0">
-                                                            <p className="text-xs font-medium truncate text-foreground">
-                                                                {rev.label || `${t('Checkpoint')} #${idx + 1}`}
-                                                            </p>
-                                                            <p className="text-[10px] text-muted-foreground">
-                                                                {rev.timestamp ? new Date(rev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}
-                                                                {rev.file_count ? ` · ${rev.file_count} files` : ''}
-                                                            </p>
-                                                        </div>
-                                                    </div>
-                                                    {isCurrent ? (
-                                                        <span className="inline-flex items-center text-[10px] font-semibold text-primary shrink-0 px-1.5 py-0.5 rounded bg-primary/15">
-                                                            {t('Current')}
-                                                        </span>
-                                                    ) : (
-                                                        <Button
-                                                            size="sm"
-                                                            variant="ghost"
-                                                            disabled={isRestoringRevision || isUndoRedoDisabled}
-                                                            onClick={() => handleRestoreRevision(idx)}
-                                                            className="h-6 px-2 text-[11px] shrink-0 hover:bg-primary hover:text-primary-foreground"
-                                                        >
-                                                            {t('Restore')}
-                                                        </Button>
-                                                    )}
-                                                </div>
-                                            );
-                                        })
-                                    )}
-                                </div>
-                            </PopoverContent>
-                        </Popover>
                     </div>
                 </div>
 
@@ -607,7 +409,7 @@ export function InspectPreview({
                 <div className="flex-1 min-h-0 flex relative z-10">
                     {/* Theme designer panel - only in design mode */}
                     {mode === 'design' && themeDesignerSlot && (
-                        <div className="w-80 shrink-0 border-e bg-background h-full overflow-hidden relative z-10">
+                        <div className="w-full sm:w-80 shrink-0 border-e bg-background h-full overflow-hidden relative z-10">
                             {React.isValidElement(themeDesignerSlot)
                                 ? React.cloneElement(themeDesignerSlot as React.ReactElement<{ onThemeSelect?: (presetId: string) => void }>, {
                                     onThemeSelect: wrappedOnThemeSelect,
@@ -616,45 +418,23 @@ export function InspectPreview({
                         </div>
                     )}
 
-                    {/* iframe container with responsive device framing (single persistent iframe) */}
-                    <div className="flex-1 min-h-0 relative flex items-center justify-center p-0 sm:p-2 overflow-hidden bg-muted/15">
-                        <div
-                            className={`transition-all duration-300 relative h-full flex flex-col items-center justify-center ${
-                                deviceMode === 'desktop'
-                                    ? 'w-full'
-                                    : deviceMode === 'tablet'
-                                    ? 'w-[768px] max-w-[96%] max-h-[1024px] rounded-[24px] border-[8px] border-zinc-800 dark:border-zinc-700 shadow-2xl overflow-hidden bg-background my-auto'
-                                    : 'w-[390px] max-w-[96%] max-h-[844px] rounded-[40px] border-[10px] border-zinc-900 dark:border-zinc-800 shadow-2xl overflow-hidden bg-background my-auto'
-                            }`}
-                        >
-                            {deviceMode === 'mobile' && (
-                                <div className="absolute top-2 left-1/2 -translate-x-1/2 w-28 h-4 bg-zinc-900 dark:bg-zinc-800 rounded-full z-30 pointer-events-none flex items-center justify-center gap-2">
-                                    <div className="w-2.5 h-2.5 rounded-full bg-zinc-800 dark:bg-zinc-700" />
-                                    <div className="w-2 h-2 rounded-full bg-blue-950/70" />
-                                </div>
-                            )}
-                            <iframe
-                                ref={iframeRef}
-                                key={refreshTrigger}
-                                src={`${previewUrl}?t=${refreshTrigger}`}
-                                className={`w-full h-full border-0 ${
-                                    deviceMode === 'desktop'
-                                        ? 'absolute inset-0'
-                                        : deviceMode === 'mobile'
-                                        ? 'pt-3'
-                                        : ''
-                                }`}
-                                title="Preview"
-                                sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
-                                onLoad={() => {
-                                    setIframeReady(true);
-                                    iframeRef.current?.contentWindow?.postMessage({
-                                        type: 'inspector-ping',
-                                        mode: mode === 'inspect' ? 'inspect' : 'preview',
-                                    }, '*');
-                                }}
-                            />
-                        </div>
+                    {/* iframe container */}
+                    <div className="flex-1 min-h-0 relative">
+                        <iframe
+                            ref={iframeRef}
+                            key={refreshTrigger}
+                            src={`${previewUrl}?t=${refreshTrigger}`}
+                            className="absolute inset-0 w-full h-full border-0"
+                            title="Preview"
+                            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+                            onLoad={() => {
+                                setIframeReady(true);
+                                iframeRef.current?.contentWindow?.postMessage({
+                                    type: 'inspector-ping',
+                                    mode: mode === 'inspect' ? 'inspect' : 'preview',
+                                }, '*');
+                            }}
+                        />
 
                         {/* Confetti canvas */}
                         <canvas

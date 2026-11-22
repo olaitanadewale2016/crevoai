@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef } from 'react';
-import { ImagePlus, Loader2 } from 'lucide-react';
+import { Paperclip, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { useChatFileUpload } from '@/hooks/useChatFileUpload';
@@ -114,7 +114,7 @@ export function ChatUploadButton({
                 {isUploading ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
-                    <ImagePlus className="h-3.5 w-3.5" />
+                    <Paperclip className="h-3.5 w-3.5" />
                 )}
             </Button>
         </>

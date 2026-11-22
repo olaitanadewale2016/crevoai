@@ -38,7 +38,6 @@ import { InspectPreview } from '@/components/Preview/InspectPreview';
 import { ChatInputWithMentions } from '@/components/Chat/ChatInputWithMentions';
 import { BuildCreditsIndicator } from '@/components/Chat/BuildCreditsIndicator';
 import { ThemeDesigner } from '@/components/Design/ThemeDesigner';
-import { AppTutorial } from '@/components/Tutorial/AppTutorial';
 import { useBuildCredits, BuildCreditsInfo } from '@/hooks/useBuildCredits';
 import type { ElementMention, PendingEdit } from '@/types/inspector';
 import type { AttachedFile } from '@/types/chat';
@@ -259,24 +258,11 @@ export default function Chat({
     const [failedMessages, setFailedMessages] = useState<Array<{ message: string; timestamp: number }>>([]);
     const [initialLoading, setInitialLoading] = useState(true);
     const [publishModalOpen, setPublishModalOpen] = useState(false);
-    const [isChatCollapsed, setIsChatCollapsed] = useState(false);
-    const [tourOpen, setTourOpen] = useState(false);
+    const [mobileView, setMobileView] = useState<'chat' | 'preview' | 'code'>('chat');
+    const [mobileFilesOpen, setMobileFilesOpen] = useState(false);
     const [effort, setEffort] = useState<'low' | 'medium' | 'high'>(project.reasoning_effort || 'medium');
     const [isInputFocused, setIsInputFocused] = useState(false);
     const [outOfCreditsModalOpen, setOutOfCreditsModalOpen] = useState(false);
-
-    // Auto-launch walkthrough tour for new users
-    useEffect(() => {
-        try {
-            const hasSeen = localStorage.getItem('crevo_has_seen_builder_tutorial');
-            if (!hasSeen) {
-                const timer = setTimeout(() => {
-                    setTourOpen(true);
-                }, 1200);
-                return () => clearTimeout(timer);
-            }
-        } catch { }
-    }, []);
 
     // File attachment state for @mentions and uploads
     const [localProjectFiles, setLocalProjectFiles] = useState<AttachedFile[]>(initialProjectFiles ?? []);
@@ -385,6 +371,7 @@ export default function Chat({
 
     const handleComplete = useCallback((event: CompleteEvent) => {
         playSound('complete');
+        setFileRefreshTrigger(tf => tf + 1);
         if (event.files_changed) {
             toast.success(t('Build complete! Files have been updated.'));
         } else {
@@ -433,6 +420,7 @@ export default function Chat({
 
     const handleBuildComplete = useCallback((_previewUrl: string) => {
         setPreviewRefreshTrigger(Date.now());
+        setFileRefreshTrigger(tf => tf + 1);
         playSound('build');
         fetchSuggestions();
     }, [playSound, fetchSuggestions]);
@@ -759,24 +747,8 @@ export default function Chat({
             <Toaster />
 
             <div className="h-[100dvh] flex bg-background text-foreground overflow-hidden">
-                {/* Collapsed Chat strip - displays only the icon on the chat section */}
-                {isChatCollapsed && (
-                    <div className="h-full border-e bg-card/60 backdrop-blur flex flex-col items-center py-2.5 px-1.5 shrink-0 z-20">
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setIsChatCollapsed(false)}
-                            className="h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-muted"
-                            title={t('Show Chat')}
-                        >
-                            <PanelLeftOpen className="h-4 w-4" />
-                        </Button>
-                    </div>
-                )}
-
-                {/* Start: Chat Column - Full width on mobile, fixed width on larger screens, collapsible */}
-                <div className={`transition-all duration-300 ease-in-out shrink-0 md:border-e flex flex-col ${isChatCollapsed ? 'w-0 overflow-hidden hidden md:hidden' : 'w-full md:w-[420px]'
-                    }`}>
+                {/* Start: Chat Column - Full width on mobile (when mobileView === 'chat'), fixed width on larger screens */}
+                <div className={`${mobileView === 'chat' ? 'flex' : 'hidden md:flex'} w-full md:w-[420px] shrink-0 md:border-e flex-col`}>
                     {/* Chat Header */}
                     <div className="h-14 px-4 border-b flex items-center justify-between shrink-0 bg-background">
                         <div className="min-w-0 flex-1">
@@ -823,37 +795,10 @@ export default function Chat({
                                 onMarkAllAsRead={markAllAsRead}
                                 isLoading={isLoadingNotifications}
                             />
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => setTourOpen(true)}
-                                className="text-muted-foreground hover:text-foreground"
-                                title={t('Quick Tour & Tutorial')}
-                            >
-                                <HelpCircle className="h-4 w-4" />
-                            </Button>
                             <Button variant="ghost" size="icon" asChild>
                                 <Link href="/create">
                                     <Home className="h-4 w-4" />
                                 </Link>
-                            </Button>
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                className="md:hidden text-muted-foreground hover:text-foreground"
-                                onClick={() => setIsChatCollapsed(true)}
-                                title={t('View Preview')}
-                            >
-                                <Eye className="h-4 w-4" />
-                            </Button>
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                className="hidden md:flex text-muted-foreground hover:text-foreground"
-                                onClick={() => setIsChatCollapsed(true)}
-                                title={t('Full Preview (Hide Chat)')}
-                            >
-                                <PanelLeftClose className="h-4 w-4" />
                             </Button>
                         </div>
                     </div>
@@ -1033,49 +978,56 @@ export default function Chat({
                     </div>
                 </div>
 
-                {/* Right: Preview/Code Column - Hidden on mobile unless chat is collapsed, takes full width on desktop */}
-                <div className={`${isChatCollapsed ? 'flex' : 'hidden md:flex'} flex-1 flex-col overflow-hidden`}>
+                {/* Right: Preview/Code Column - Hidden on mobile when mobileView === 'chat', always visible on desktop */}
+                <div className={`${mobileView !== 'chat' ? 'flex' : 'hidden md:flex'} flex-1 flex-col overflow-hidden pb-14 md:pb-0`}>
                     {/* Preview Header */}
-                    <div className="h-14 px-4 border-b flex items-center justify-between shrink-0 bg-background">
-                        <div className="flex items-center gap-3">
-                            {/* View toggle */}
-                            <div data-tour="preview-tabs" className="flex items-center border rounded-lg overflow-hidden">
-                                <button
-                                    onClick={() => setViewMode('preview')}
-                                    className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${viewMode === 'preview'
+                    <div className="h-14 px-3 md:px-4 border-b flex items-center justify-between gap-2 shrink-0 bg-background">
+                        {/* View toggle */}
+                        <div className="flex items-center border rounded-lg overflow-hidden shrink-0">
+                            <button
+                                onClick={() => {
+                                    setViewMode('preview');
+                                    if (mobileView !== 'chat') setMobileView('preview');
+                                }}
+                                className={`flex items-center gap-1.5 md:gap-2 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium transition-all ${
+                                    viewMode === 'preview'
                                         ? 'bg-primary text-primary-foreground'
                                         : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
-                                        }`}
-                                >
-                                    <Eye className="h-4 w-4" />
-                                    {t('Preview')}
-                                </button>
-                                <div className="w-px h-6 bg-border" />
-                                <button
-                                    onClick={() => setViewMode('code')}
-                                    className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${viewMode === 'code'
+                                }`}
+                            >
+                                <Eye className="h-3.5 w-3.5 md:h-4 md:w-4" />
+                                <span>{t('Preview')}</span>
+                            </button>
+                            <div className="w-px h-6 bg-border" />
+                            <button
+                                onClick={() => {
+                                    setViewMode('code');
+                                    if (mobileView !== 'chat') setMobileView('code');
+                                }}
+                                className={`flex items-center gap-1.5 md:gap-2 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium transition-all ${
+                                    viewMode === 'code'
                                         ? 'bg-primary text-primary-foreground'
                                         : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
-                                        }`}
-                                >
-                                    <Code className="h-4 w-4" />
-                                    {t('Code')}
-                                </button>
-                                <div className="w-px h-6 bg-border" />
-                                <button
-                                    onClick={() => setViewMode('settings')}
-                                    className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${viewMode === 'settings'
+                                }`}
+                            >
+                                <Code className="h-3.5 w-3.5 md:h-4 md:w-4" />
+                                <span>{t('Code')}</span>
+                            </button>
+                            <div className="w-px h-6 bg-border" />
+                            <button
+                                onClick={() => setViewMode('settings')}
+                                className={`flex items-center gap-1.5 md:gap-2 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium transition-all ${
+                                    viewMode === 'settings'
                                         ? 'bg-primary text-primary-foreground'
                                         : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
-                                        }`}
-                                >
-                                    <Settings className="h-4 w-4" />
-                                    {t('Settings')}
-                                </button>
-                            </div>
+                                }`}
+                            >
+                                <Settings className="h-3.5 w-3.5 md:h-4 md:w-4" />
+                                <span>{t('Settings')}</span>
+                            </button>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 md:gap-2 shrink-0">
                             {/* Preview actions */}
                             {viewMode === 'preview' && (
                                 <>
@@ -1088,14 +1040,15 @@ export default function Chat({
                                             setPreviewRefreshTrigger(Date.now());
                                         }}
                                         disabled={isBuildingPreview}
-                                        className="h-8"
+                                        className="h-8 px-2.5 md:px-3"
+                                        title={t('Rebuild')}
                                     >
                                         {isBuildingPreview ? (
-                                            <Loader2 className="h-4 w-4 me-1.5 animate-spin" />
+                                            <Loader2 className="h-4 w-4 md:me-1.5 animate-spin" />
                                         ) : (
-                                            <Hammer className="h-4 w-4 me-1.5" />
+                                            <Hammer className="h-4 w-4 md:me-1.5" />
                                         )}
-                                        {t('Rebuild')}
+                                        <span className="hidden md:inline">{t('Rebuild')}</span>
                                     </Button>
                                     {progress.previewUrl && (
                                         <>
@@ -1116,19 +1069,23 @@ export default function Chat({
                                                         '_blank'
                                                     );
                                                 }}
-                                                className="h-8"
+                                                className="h-8 px-2.5 md:px-3"
+                                                title={t('Open')}
                                             >
-                                                <ExternalLink className="h-4 w-4 me-1.5" />
-                                                {t('Open')}
+                                                <ExternalLink className="h-4 w-4 md:me-1.5" />
+                                                <span className="hidden md:inline">{t('Open')}</span>
                                             </Button>
                                             <Button
                                                 variant="outline"
                                                 size="sm"
                                                 onClick={() => setPublishModalOpen(true)}
-                                                className="h-8"
+                                                className="h-8 px-2.5 md:px-3"
+                                                title={project.subdomain ? t('Published') : t('Publish')}
                                             >
-                                                <Globe className="h-4 w-4 me-1.5" />
-                                                {project.subdomain ? t('Published') : t('Publish')}
+                                                <Globe className="h-4 w-4 md:me-1.5" />
+                                                <span className="hidden sm:inline">
+                                                    {project.subdomain ? t('Published') : t('Publish')}
+                                                </span>
                                             </Button>
                                         </>
                                     )}
@@ -1138,7 +1095,7 @@ export default function Chat({
                     </div>
 
                     {/* Content */}
-                    <div className="flex-1 overflow-hidden">
+                    <div className="flex-1 min-h-0 overflow-hidden">
                         {viewMode === 'settings' ? (
                             <ProjectSettingsPanel
                                 project={project}
@@ -1155,22 +1112,38 @@ export default function Chat({
                                 customDomainsGloballyEnabled={customDomainsGloballyEnabled}
                             />
                         ) : viewMode === 'code' ? (
-                            <div className="flex h-full">
-                                {/* File Tree */}
-                                <div className="w-56 shrink-0 border-e">
+                            <div className="flex h-full relative overflow-hidden">
+                                {/* Desktop File Tree (always visible on md+) & Mobile File Tree Drawer */}
+                                <div
+                                    className={`${
+                                        mobileFilesOpen ? 'block absolute inset-y-0 start-0 z-30 w-64 shadow-xl bg-background' : 'hidden'
+                                    } md:block md:relative md:w-56 md:shadow-none shrink-0 border-e h-full`}
+                                >
                                     <FileTree
                                         projectId={project.id}
-                                        onFileSelect={setSelectedFile}
+                                        onFileSelect={(path) => {
+                                            setSelectedFile(path);
+                                            setMobileFilesOpen(false);
+                                        }}
                                         selectedFile={selectedFile}
                                         refreshTrigger={fileRefreshTrigger}
                                     />
                                 </div>
+                                {/* Mobile backdrop when FileTree drawer is open */}
+                                {mobileFilesOpen && (
+                                    <div
+                                        className="fixed inset-0 z-20 bg-black/30 md:hidden"
+                                        onClick={() => setMobileFilesOpen(false)}
+                                    />
+                                )}
                                 {/* Code Editor */}
-                                <div className="flex-1 overflow-hidden">
+                                <div className="flex-1 min-w-0 h-full overflow-hidden">
                                     <CodeEditor
                                         projectId={project.id}
                                         selectedFile={selectedFile}
+                                        refreshTrigger={fileRefreshTrigger}
                                         onSave={() => setFileRefreshTrigger(tf => tf + 1)}
+                                        onToggleMobileFiles={() => setMobileFilesOpen(open => !open)}
                                     />
                                 </div>
                             </div>
@@ -1242,9 +1215,9 @@ export default function Chat({
                     <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-40 md:hidden flex items-center bg-card/95 backdrop-blur-md border border-border/80 shadow-lg rounded-full p-1 gap-1">
                         <button
                             type="button"
-                            onClick={() => setIsChatCollapsed(false)}
+                            onClick={() => setMobileView('chat')}
                             className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
-                                !isChatCollapsed
+                                mobileView === 'chat'
                                     ? 'bg-primary text-primary-foreground shadow-sm'
                                     : 'text-muted-foreground hover:text-foreground'
                             }`}
@@ -1258,11 +1231,11 @@ export default function Chat({
                         <button
                             type="button"
                             onClick={() => {
-                                setIsChatCollapsed(true);
+                                setMobileView('preview');
                                 setViewMode('preview');
                             }}
                             className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
-                                isChatCollapsed && viewMode === 'preview'
+                                mobileView !== 'chat' && viewMode === 'preview'
                                     ? 'bg-primary text-primary-foreground shadow-sm'
                                     : 'text-muted-foreground hover:text-foreground'
                             }`}
@@ -1273,11 +1246,11 @@ export default function Chat({
                         <button
                             type="button"
                             onClick={() => {
-                                setIsChatCollapsed(true);
+                                setMobileView('code');
                                 setViewMode('code');
                             }}
                             className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all ${
-                                isChatCollapsed && viewMode === 'code'
+                                mobileView !== 'chat' && viewMode === 'code'
                                     ? 'bg-primary text-primary-foreground shadow-sm'
                                     : 'text-muted-foreground hover:text-foreground'
                             }`}
@@ -1343,12 +1316,6 @@ export default function Chat({
                 onPublished={(url) => {
                     toast.success(t('Published to :url', { url }));
                 }}
-            />
-
-            {/* Interactive Onboarding & Navigation Tour */}
-            <AppTutorial
-                isOpen={tourOpen}
-                onClose={() => setTourOpen(false)}
             />
         </>
     );

@@ -161,22 +161,22 @@ export function PromptInput({
                             </div>
                         )}
                     </div>
-                    <div className="flex items-center justify-between gap-2 px-4 py-3 bg-muted/50 border-t border-border">
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-muted/50 border-t border-border">
                         {/* Hide keyboard hint on mobile */}
-                        <div className="hidden sm:flex items-center gap-2 text-sm text-muted-foreground">
+                        <div className="hidden md:flex items-center gap-2 text-sm text-muted-foreground">
                             <span>{t('Press')}</span>
                             <kbd className="px-2 py-0.5 bg-card rounded border text-xs">
                                 ⌘ Enter
                             </kbd>
                             <span>{t('to start')}</span>
                         </div>
-                        <div className="flex items-center gap-2 sm:gap-3 ms-auto">
-                            {/* Template Selector */}
+                        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 ms-auto w-full sm:w-auto justify-end">
+                            {/* Template Selector - always shows "Automatic" */}
                             <Select
                                 value={selectedTemplateId ?? 'automatic'}
                                 onValueChange={(v) => setSelectedTemplateId(v === 'automatic' ? null : v)}
                             >
-                                <SelectTrigger className="w-[160px]">
+                                <SelectTrigger className="w-[120px] sm:w-[140px]">
                                     <SelectValue placeholder={t('Template')}>
                                         <div className="flex items-center gap-2 truncate">
                                             <LayoutTemplate className="h-4 w-4 shrink-0" />
@@ -207,7 +207,7 @@ export function PromptInput({
                             </Select>
                             {/* Theme Preset Selector */}
                             <Select value={selectedThemePreset} onValueChange={setSelectedThemePreset}>
-                                <SelectTrigger className="w-[150px]">
+                                <SelectTrigger className="w-[120px] sm:w-[140px]">
                                     <SelectValue>
                                         <div className="flex items-center gap-2 truncate">
                                             <Palette className="h-4 w-4 shrink-0" />
@@ -246,7 +246,7 @@ export function PromptInput({
                             </Select>
                             {/* Effort Level Selector */}
                             <Select value={selectedEffort} onValueChange={(v) => setSelectedEffort(v as EffortLevel)}>
-                                <SelectTrigger className="w-[125px]">
+                                <SelectTrigger className="w-[100px] sm:w-[115px]">
                                     <SelectValue>
                                         <div className="flex items-center gap-1.5 truncate">
                                             <Zap className="h-4 w-4 shrink-0 text-amber-500" />
@@ -259,7 +259,6 @@ export function PromptInput({
                                         <div className="flex items-center gap-2">
                                             <Zap className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
                                             <span>{t('Low')}</span>
-                                            <span className="text-[10px] text-muted-foreground ms-1">({t('Fast')})</span>
                                         </div>
                                     </SelectItem>
                                     <SelectItem value="medium">
@@ -272,7 +271,6 @@ export function PromptInput({
                                         <div className="flex items-center gap-2">
                                             <Zap className="h-3.5 w-3.5 text-purple-500 shrink-0" />
                                             <span>{t('High')}</span>
-                                            <span className="text-[10px] text-muted-foreground ms-1">({t('Deep')})</span>
                                         </div>
                                     </SelectItem>
                                 </SelectContent>
@@ -280,7 +278,7 @@ export function PromptInput({
                             <Button
                                 type="submit"
                                 disabled={!prompt.trim() || disabled || isLoading}
-                                className="shrink-0 min-w-[80px]"
+                                className="shrink-0"
                             >
                                 {isLoading ? (
                                     <div className="flex items-center gap-2">

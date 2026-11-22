@@ -4,7 +4,7 @@ import { requireVerified, canViewProject, canUpdateProject } from '@/lib/auth';
 import { parseRequestBody, validationError } from '@/lib/http';
 import { Project } from '@/models/Project';
 import { Builder } from '@/models/BuilderAi';
-import { builderFetch } from '@/services/builder';
+import { builderFetch, getFallbackWorkspaceFile } from '@/services/builder';
 
 export const runtime = 'nodejs';
 
@@ -31,25 +31,32 @@ export async function GET(
     return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
-  const builder = project.builder_id ? await Builder.findById(project.builder_id).lean() : null;
-  if (!builder) {
-    return NextResponse.json({ error: 'No builder assigned to this project' }, { status: 404 });
+  const builder =
+    (project.builder_id ? await Builder.findById(project.builder_id).lean() : null) ||
+    (await Builder.findOne({ status: 'active' }).lean());
+
+  if (builder) {
+    try {
+      const res = await builderFetch(
+        builder,
+        `/api/file-workspace/${project._id}?path=${encodeURIComponent(filePath)}`,
+        { timeoutMs: 10_000 }
+      );
+      if (res.ok) {
+        const file = await res.json();
+        return NextResponse.json(file);
+      }
+    } catch {
+      // Fall through to template fallback below
+    }
   }
 
-  try {
-    const res = await builderFetch(
-      builder,
-      `/api/file-workspace/${project._id}?path=${encodeURIComponent(filePath)}`,
-      { timeoutMs: 10_000 }
-    );
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-    const file = await res.json();
-    return NextResponse.json(file);
-  } catch {
-    return NextResponse.json({ error: 'Failed to get file' }, { status: 500 });
+  const fallbackFile = await getFallbackWorkspaceFile(project, filePath);
+  if (fallbackFile) {
+    return NextResponse.json(fallbackFile);
   }
+
+  return NextResponse.json({ error: 'Failed to get file' }, { status: 404 });
 }
 
 export async function PUT(

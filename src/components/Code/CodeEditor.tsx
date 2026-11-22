@@ -5,7 +5,7 @@ import Editor, { BeforeMount } from '@monaco-editor/react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Loader2, Lock, Save } from 'lucide-react';
+import { Loader2, Lock, Save, FolderTree } from 'lucide-react';
 import axios from 'axios';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useTranslation } from '@/contexts/LanguageContext';
@@ -31,10 +31,18 @@ const PROTECTED_FILES = [
 interface CodeEditorProps {
     projectId: string;
     selectedFile: string | null;
+    refreshTrigger?: number;
     onSave?: () => void;
+    onToggleMobileFiles?: () => void;
 }
 
-export function CodeEditor({ projectId, selectedFile, onSave }: CodeEditorProps) {
+export function CodeEditor({
+    projectId,
+    selectedFile,
+    refreshTrigger = 0,
+    onSave,
+    onToggleMobileFiles,
+}: CodeEditorProps) {
     const { t } = useTranslation();
     const [content, setContent] = useState('');
     const [originalContent, setOriginalContent] = useState('');
@@ -70,7 +78,7 @@ export function CodeEditor({ projectId, selectedFile, onSave }: CodeEditorProps)
             setContent('');
             setOriginalContent('');
         }
-    }, [selectedFile, fetchFile]);
+    }, [selectedFile, fetchFile, refreshTrigger]);
 
     const handleSave = async () => {
         if (!selectedFile || content === originalContent) return;
@@ -183,17 +191,29 @@ export function CodeEditor({ projectId, selectedFile, onSave }: CodeEditorProps)
     const editorTheme = resolvedTheme === 'dark' ? 'vs-dark' : 'light';
 
     return (
-        <div className="h-full flex flex-col bg-background">
+        <div className="h-full flex flex-col bg-background min-w-0">
             {/* Header */}
-            <div className="h-10 px-3 border-b flex items-center justify-between">
+            <div className="h-10 px-3 border-b flex items-center justify-between gap-2 shrink-0">
                 <div className="flex items-center gap-2 min-w-0">
+                    {onToggleMobileFiles && (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={onToggleMobileFiles}
+                            className="md:hidden h-7 px-2 text-xs gap-1 shrink-0"
+                        >
+                            <FolderTree className="h-3.5 w-3.5" />
+                            <span>{t('Files')}</span>
+                        </Button>
+                    )}
                     <span className="text-sm font-medium truncate">
                         {selectedFile || t('No file selected')}
                     </span>
                     {isReadOnly && (
                         <Badge variant="secondary" className="gap-1 text-xs shrink-0">
                             <Lock className="h-3 w-3" />
-                            {t('Read-only')}
+                            <span className="hidden sm:inline">{t('Read-only')}</span>
                         </Badge>
                     )}
                     {!isReadOnly && hasChanges && (
@@ -201,15 +221,15 @@ export function CodeEditor({ projectId, selectedFile, onSave }: CodeEditorProps)
                     )}
                 </div>
 
-                <div className="flex items-center gap-2">
-                    {error && <span className="text-xs text-destructive">{error}</span>}
+                <div className="flex items-center gap-2 shrink-0">
+                    {error && <span className="text-xs text-destructive truncate max-w-[140px] sm:max-w-none">{error}</span>}
                     {!isReadOnly && (
                         <Button
                             variant="secondary"
                             size="sm"
                             onClick={handleSave}
                             disabled={!hasChanges || saving}
-                            className="gap-1"
+                            className="gap-1 h-7 px-2.5 text-xs"
                         >
                             {saving ? (
                                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -223,7 +243,7 @@ export function CodeEditor({ projectId, selectedFile, onSave }: CodeEditorProps)
             </div>
 
             {/* Editor */}
-            <div className="flex-1">
+            <div className="flex-1 min-h-0 relative overflow-hidden">
                 {!selectedFile ? (
                     <div className="h-full flex items-center justify-center text-muted-foreground">
                         {t('Select a file to edit')}

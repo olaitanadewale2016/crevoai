@@ -35,14 +35,18 @@ export function FileTree({ projectId, onFileSelect, selectedFile, refreshTrigger
     const [files, setFiles] = useState<FileEntry[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [expanded, setExpanded] = useState<Set<string>>(new Set(['.', 'src']));
+    const [expanded, setExpanded] = useState<Set<string>>(new Set(['.', 'src', 'src/pages', 'src/components']));
 
     const fetchFiles = useCallback(async () => {
         setLoading(true);
         setError(null);
         try {
             const res = await axios.get(`/builder/projects/${projectId}/files`);
-            setFiles(res.data.files || []);
+            const fetchedFiles: FileEntry[] = (res.data.files || []).map((f: FileEntry) => ({
+                ...f,
+                path: f.path.replace(/\\/g, '/'),
+            }));
+            setFiles(fetchedFiles);
         } catch (err) {
             console.error('Failed to fetch files:', err);
             setError(t('Failed to load files'));
@@ -54,6 +58,34 @@ export function FileTree({ projectId, onFileSelect, selectedFile, refreshTrigger
     useEffect(() => {
         fetchFiles();
     }, [fetchFiles, refreshTrigger]);
+
+    // Auto-select default entry file when files load and no file is currently selected
+    useEffect(() => {
+        if (files.length === 0) return;
+        const nonDirFiles = files.filter((f) => !f.is_dir);
+        if (nonDirFiles.length === 0) return;
+
+        const hasCurrentSelection =
+            selectedFile && nonDirFiles.some((f) => f.path === selectedFile);
+        if (hasCurrentSelection) return;
+
+        const preferredPaths = [
+            'src/pages/Home.tsx',
+            'src/App.tsx',
+            'src/routes.tsx',
+            'src/custom.css',
+            'index.html',
+        ];
+        let defaultTarget = nonDirFiles.find((f) => preferredPaths.includes(f.path));
+        if (!defaultTarget) {
+            defaultTarget =
+                nonDirFiles.find((f) => f.path.startsWith('src/') && f.path.endsWith('.tsx')) ||
+                nonDirFiles[0];
+        }
+        if (defaultTarget) {
+            onFileSelect(defaultTarget.path);
+        }
+    }, [files, selectedFile, onFileSelect]);
 
     const toggleDir = (path: string) => {
         setExpanded(prev => {
