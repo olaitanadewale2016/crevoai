@@ -144,3 +144,44 @@ export async function withLock<T>(
 export function clearMemoryCache(): void {
   memoryCache.clear();
 }
+
+export function clearMemoryCacheByPrefix(prefix: string): void {
+  for (const k of Array.from(memoryCache.keys())) {
+    if (k.startsWith(prefix)) {
+      memoryCache.delete(k);
+    }
+  }
+}
+
+export async function getCacheEntryDirect<T = unknown>(key: string): Promise<T | null> {
+  try {
+    await connectDB();
+    const entry = await CacheEntry.findOne({
+      _id: key,
+      expires_at: { $gt: new Date() },
+    })
+      .select('value')
+      .lean();
+    return entry ? (entry.value as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setCacheEntryDirect(
+  key: string,
+  value: unknown,
+  ttlSeconds = 365 * 86400
+): Promise<void> {
+  const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+  try {
+    await connectDB();
+    await CacheEntry.updateOne(
+      { _id: key },
+      { $set: { value, expires_at: expiresAt } },
+      { upsert: true }
+    );
+  } catch {
+    // non-fatal
+  }
+}

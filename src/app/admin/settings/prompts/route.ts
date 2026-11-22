@@ -5,6 +5,10 @@ import { setSettingsMany } from '@/lib/settings';
 
 export const dynamic = 'force-dynamic';
 
+export async function POST(req: NextRequest) {
+  return PUT(req);
+}
+
 export async function PUT(req: NextRequest) {
   const ctx = await getSessionContext(req);
   if (!ctx || ctx.user.role !== 'admin') {

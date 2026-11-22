@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState, useMemo, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useMemo, useCallback, ReactNode } from 'react';
 
 type Theme = 'light' | 'dark' | 'system';
 type ResolvedTheme = 'light' | 'dark';
@@ -16,18 +16,19 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 const STORAGE_KEY = 'app-theme';
 
+function isValidTheme(val: unknown): val is Theme {
+    return val === 'light' || val === 'dark' || val === 'system';
+}
+
 function getSystemTheme(): ResolvedTheme {
     if (typeof window === 'undefined') return 'light';
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
-function getStoredTheme(): Theme {
-    if (typeof window === 'undefined') return 'system';
+function getStoredTheme(): Theme | null {
+    if (typeof window === 'undefined') return null;
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === 'light' || stored === 'dark' || stored === 'system') {
-        return stored;
-    }
-    return 'system';
+    return isValidTheme(stored) ? stored : null;
 }
 
 function applyTheme(resolvedTheme: ResolvedTheme) {
@@ -41,30 +42,71 @@ function applyTheme(resolvedTheme: ResolvedTheme) {
 
 interface ThemeProviderProps {
     children: ReactNode;
+    defaultTheme?: Theme;
 }
 
-export function ThemeProvider({ children }: ThemeProviderProps) {
+export function ThemeProvider({ children, defaultTheme = 'system' }: ThemeProviderProps) {
+    const initialDefault = isValidTheme(defaultTheme) ? defaultTheme : 'system';
     const [mounted, setMounted] = useState(false);
-    const [theme, setThemeState] = useState<Theme>('system');
+    const [adminDefaultTheme, setAdminDefaultTheme] = useState<Theme>(initialDefault);
+    const [theme, setThemeState] = useState<Theme>(initialDefault);
     const [systemTheme, setSystemTheme] = useState<ResolvedTheme>('light');
 
-    // On client mount, sync with localStorage and system preference
+    // Keep adminDefaultTheme aligned with SSR prop updates
+    useEffect(() => {
+        if (!isValidTheme(defaultTheme)) return;
+        setAdminDefaultTheme(defaultTheme);
+        if (!getStoredTheme()) {
+            setThemeState(defaultTheme);
+        }
+    }, [defaultTheme]);
+
+    // On client mount, sync with personal localStorage override or admin defaultTheme
     useEffect(() => {
         setMounted(true);
         const stored = getStoredTheme();
-        setThemeState(stored);
+        setThemeState(stored ?? adminDefaultTheme);
         setSystemTheme(getSystemTheme());
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Listen for appSettingsUpdated and explicit admin default theme changes
+    useEffect(() => {
+        const handleSettingsUpdated = (e: Event) => {
+            const detail = (e as CustomEvent<{ default_theme?: unknown }>).detail;
+            if (isValidTheme(detail?.default_theme)) {
+                setAdminDefaultTheme(detail.default_theme);
+                if (!getStoredTheme()) {
+                    setThemeState(detail.default_theme);
+                }
+            }
+        };
+
+        const handleAdminDefaultChanged = (e: Event) => {
+            const nextTheme = (e as CustomEvent<unknown>).detail;
+            if (isValidTheme(nextTheme)) {
+                try {
+                    localStorage.removeItem(STORAGE_KEY);
+                } catch {}
+                setAdminDefaultTheme(nextTheme);
+                setThemeState(nextTheme);
+            }
+        };
+
+        window.addEventListener('appSettingsUpdated', handleSettingsUpdated);
+        window.addEventListener('appDefaultThemeChanged', handleAdminDefaultChanged);
+        return () => {
+            window.removeEventListener('appSettingsUpdated', handleSettingsUpdated);
+            window.removeEventListener('appDefaultThemeChanged', handleAdminDefaultChanged);
+        };
     }, []);
 
     // Derive resolved theme from theme choice and system preference
-    // Before mount, maintain server-deterministic default ('light') to prevent hydration mismatch
-    const resolvedTheme = useMemo<ResolvedTheme>(
-        () => {
-            if (!mounted) return 'light';
-            return theme === 'system' ? systemTheme : theme;
-        },
-        [mounted, theme, systemTheme]
-    );
+    const resolvedTheme = useMemo<ResolvedTheme>(() => {
+        if (!mounted) {
+            return initialDefault === 'dark' ? 'dark' : 'light';
+        }
+        return theme === 'system' ? systemTheme : theme;
+    }, [mounted, theme, systemTheme, initialDefault]);
 
     // Apply theme to DOM when resolved theme changes (after mount)
     useEffect(() => {
@@ -85,12 +127,14 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
         return () => mediaQuery.removeEventListener('change', handleChange);
     }, [mounted]);
 
-    const setTheme = (newTheme: Theme) => {
+    const setTheme = useCallback((newTheme: Theme) => {
         setThemeState(newTheme);
         if (typeof window !== 'undefined') {
-            localStorage.setItem(STORAGE_KEY, newTheme);
+            try {
+                localStorage.setItem(STORAGE_KEY, newTheme);
+            } catch {}
         }
-    };
+    }, []);
 
     return (
         <ThemeContext.Provider value={{ theme, resolvedTheme, setTheme, mounted }}>

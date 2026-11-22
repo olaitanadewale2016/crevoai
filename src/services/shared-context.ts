@@ -2,7 +2,7 @@ import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { connectDB } from '@/lib/db';
 import { getSessionContext, isDemoMode, LOCALE_COOKIE_NAME, serializeUser, getUserCurrentPlan } from '@/lib/auth';
-import { getSharedAppSettings, getBroadcastConfig } from '@/lib/settings';
+import { getSharedAppSettings, getBroadcastConfig, ensureFreshSettingsCache } from '@/lib/settings';
 import { loadTranslationsForLocale, resolveLocale } from '@/lib/i18n';
 import { Project } from '@/models/Project';
 import { Plan } from '@/models/Billing';
@@ -46,6 +46,7 @@ export function invalidateSharedContextCache(): void {
 }
 
 async function getFastStaticContext() {
+  await ensureFreshSettingsCache();
   if (cachedStaticContext && Date.now() < cachedStaticContext.expiresAt) {
     return cachedStaticContext;
   }

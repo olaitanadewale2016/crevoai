@@ -5,6 +5,12 @@ import { setSettingsMany } from '@/lib/settings';
 
 export const dynamic = 'force-dynamic';
 
+const toBool = (v: unknown) => v === true || v === 'true' || v === '1' || v === 1;
+
+export async function POST(req: NextRequest) {
+  return PUT(req);
+}
+
 export async function PUT(req: NextRequest) {
   const ctx = await getSessionContext(req);
   if (!ctx || ctx.user.role !== 'admin') {
@@ -22,7 +28,7 @@ export async function PUT(req: NextRequest) {
 
   const cleanSettings: Record<string, any> = {};
 
-  if (body.referral_enabled !== undefined) cleanSettings.referral_enabled = Boolean(body.referral_enabled);
+  if (body.referral_enabled !== undefined) cleanSettings.referral_enabled = toBool(body.referral_enabled);
   if (body.referral_commission_percent !== undefined) cleanSettings.referral_commission_percent = Number(body.referral_commission_percent);
   if (body.referral_signup_bonus !== undefined) cleanSettings.referral_signup_bonus = Number(body.referral_signup_bonus);
   if (body.referral_referee_signup_bonus !== undefined) cleanSettings.referral_referee_signup_bonus = Number(body.referral_referee_signup_bonus);

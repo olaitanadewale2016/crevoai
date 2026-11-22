@@ -5,12 +5,18 @@ import { setSettingsMany } from '@/lib/settings';
 
 export const dynamic = 'force-dynamic';
 
+const toBool = (v: unknown) => v === true || v === 'true' || v === '1' || v === 1;
+
 function normalizeDomain(domain: string): string {
   return domain
     .replace(/^https?:\/\//i, '')
     .replace(/\/.*$/, '')
     .trim()
     .toLowerCase();
+}
+
+export async function POST(req: NextRequest) {
+  return PUT(req);
 }
 
 export async function PUT(req: NextRequest) {
@@ -30,8 +36,8 @@ export async function PUT(req: NextRequest) {
 
   const cleanSettings: Record<string, any> = {};
 
-  if (body.domain_enable_subdomains !== undefined) cleanSettings.domain_enable_subdomains = Boolean(body.domain_enable_subdomains);
-  if (body.domain_enable_custom_domains !== undefined) cleanSettings.domain_enable_custom_domains = Boolean(body.domain_enable_custom_domains);
+  if (body.domain_enable_subdomains !== undefined) cleanSettings.domain_enable_subdomains = toBool(body.domain_enable_subdomains);
+  if (body.domain_enable_custom_domains !== undefined) cleanSettings.domain_enable_custom_domains = toBool(body.domain_enable_custom_domains);
   if (body.domain_base_domain !== undefined) cleanSettings.domain_base_domain = normalizeDomain(String(body.domain_base_domain || ''));
   if (body.domain_server_ip !== undefined) cleanSettings.domain_server_ip = String(body.domain_server_ip || '').trim();
 

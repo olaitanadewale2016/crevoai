@@ -308,6 +308,13 @@ export default function GeneralSettingsTab({ settings, languages }: Props) {
             preserveScroll: true,
             onSuccess: () => {
                 originalTheme.current = data.color_theme;
+                document.documentElement.setAttribute('data-theme', data.color_theme);
+                window.dispatchEvent(new CustomEvent('colorThemePreview', { detail: null }));
+                if (data.default_theme !== settings.default_theme) {
+                    window.dispatchEvent(
+                        new CustomEvent('appDefaultThemeChanged', { detail: data.default_theme })
+                    );
+                }
                 toast.success(t('General settings updated'));
             },
             onError: () => toast.error(t('Failed to update settings')),

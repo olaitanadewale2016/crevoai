@@ -5,6 +5,12 @@ import { setSettingsMany } from '@/lib/settings';
 
 export const dynamic = 'force-dynamic';
 
+const toBool = (v: unknown) => v === true || v === 'true' || v === '1' || v === 1;
+
+export async function POST(req: NextRequest) {
+  return PUT(req);
+}
+
 export async function PUT(req: NextRequest) {
   const ctx = await getSessionContext(req);
   if (!ctx || ctx.user.role !== 'admin') {
@@ -35,9 +41,9 @@ export async function PUT(req: NextRequest) {
   if (body.account_deletion_grace_days !== undefined) cleanSettings.account_deletion_grace_days = Number(body.account_deletion_grace_days);
   if (body.data_export_rate_limit_hours !== undefined) cleanSettings.data_export_rate_limit_hours = Number(body.data_export_rate_limit_hours);
 
-  if (body.cookie_consent_enabled !== undefined) cleanSettings.cookie_consent_enabled = Boolean(body.cookie_consent_enabled);
-  if (body.data_export_enabled !== undefined) cleanSettings.data_export_enabled = Boolean(body.data_export_enabled);
-  if (body.account_deletion_enabled !== undefined) cleanSettings.account_deletion_enabled = Boolean(body.account_deletion_enabled);
+  if (body.cookie_consent_enabled !== undefined) cleanSettings.cookie_consent_enabled = toBool(body.cookie_consent_enabled);
+  if (body.data_export_enabled !== undefined) cleanSettings.data_export_enabled = toBool(body.data_export_enabled);
+  if (body.account_deletion_enabled !== undefined) cleanSettings.account_deletion_enabled = toBool(body.account_deletion_enabled);
 
   await setSettingsMany(cleanSettings, 'gdpr');
 

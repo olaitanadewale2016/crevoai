@@ -15,8 +15,15 @@ export function AppProviders({
   initialProps: SharedAppProps;
   children: ReactNode;
 }) {
+  const defaultTheme =
+    initialProps.appSettings?.default_theme === 'light' ||
+    initialProps.appSettings?.default_theme === 'dark' ||
+    initialProps.appSettings?.default_theme === 'system'
+      ? initialProps.appSettings.default_theme
+      : 'system';
+
   return (
-    <ThemeProvider>
+    <ThemeProvider defaultTheme={defaultTheme}>
       <Suspense fallback={null}>
         <AppPageProvider initialProps={initialProps}>
           <LanguageProvider>

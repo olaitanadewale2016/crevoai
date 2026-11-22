@@ -423,7 +423,10 @@ export function AppPageProvider({
 
   const refreshShared = useCallback(async () => {
     try {
-      const res = await fetch('/api/app-context', { credentials: 'same-origin' });
+      const res = await fetch(`/api/app-context?t=${Date.now()}`, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
       if (res.ok) {
         const fresh = await res.json();
         setSharedProps((prev) => ({
@@ -456,6 +459,7 @@ export function AppPageProvider({
     if (settings.site_name) {
       (window as any).__APP_NAME__ = settings.site_name;
     }
+    window.dispatchEvent(new CustomEvent('appSettingsUpdated', { detail: settings }));
   }, [sharedProps.appSettings]);
 
   // Real-time Pusher listener for immediate setting updates across all client sessions

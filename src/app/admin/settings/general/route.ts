@@ -5,6 +5,12 @@ import { setSettingsMany } from '@/lib/settings';
 
 export const dynamic = 'force-dynamic';
 
+const toBool = (v: unknown) => v === true || v === 'true' || v === '1' || v === 1;
+
+export async function POST(req: NextRequest) {
+  return PUT(req);
+}
+
 export async function PUT(req: NextRequest) {
   const ctx = await getSessionContext(req);
   if (!ctx || ctx.user.role !== 'admin') {
@@ -30,9 +36,9 @@ export async function PUT(req: NextRequest) {
   if (body.default_locale) cleanSettings.default_locale = body.default_locale;
   if (body.timezone) cleanSettings.timezone = body.timezone;
   if (body.date_format) cleanSettings.date_format = body.date_format;
-  if (body.landing_page_enabled !== undefined) cleanSettings.landing_page_enabled = Boolean(body.landing_page_enabled);
+  if (body.landing_page_enabled !== undefined) cleanSettings.landing_page_enabled = toBool(body.landing_page_enabled);
   if (body.default_currency) cleanSettings.default_currency = String(body.default_currency).toUpperCase();
-  if (body.sentry_enabled !== undefined) cleanSettings.sentry_enabled = Boolean(body.sentry_enabled);
+  if (body.sentry_enabled !== undefined) cleanSettings.sentry_enabled = toBool(body.sentry_enabled);
   if (body.purchase_code && String(body.purchase_code).trim()) {
     cleanSettings.purchase_code = String(body.purchase_code).trim();
   }
@@ -42,5 +48,9 @@ export async function PUT(req: NextRequest) {
   if (req.headers.get('x-inertia')) {
     return NextResponse.redirect(new URL('/admin/settings', req.url), 303);
   }
-  return NextResponse.json({ success: true, message: 'General settings updated successfully.' });
+  return NextResponse.json({
+    success: true,
+    message: 'General settings updated successfully.',
+    settings: cleanSettings,
+  });
 }

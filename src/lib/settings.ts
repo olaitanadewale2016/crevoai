@@ -1,12 +1,54 @@
 import { connectDB } from './db';
 import { SystemSetting, SettingType } from '@/models/System';
 import { encryptJson, decryptJson } from './crypto';
-import { cacheGet, cacheSet, cacheForget, cacheForgetPrefix } from './cache';
+import {
+  cacheGet,
+  cacheSet,
+  cacheForgetPrefix,
+  clearMemoryCacheByPrefix,
+  getCacheEntryDirect,
+  setCacheEntryDirect,
+} from './cache';
 import { getCurrencySymbol } from './currency';
 import { isKindeConfigured } from './kinde';
 
 const CACHE_TTL = 3600;
 const MISSING_SENTINEL = '__SYSTEM_SETTING_NOT_FOUND__';
+const SETTINGS_VERSION_KEY = 'settings:version';
+
+let localSettingsVersion = 0;
+let inflightVersionCheck: Promise<void> | null = null;
+
+/**
+ * Checks a lightweight version token stored in MongoDB so settings edits made on any
+ * serverless instance immediately invalidate in-process RAM caches on all other instances.
+ */
+export async function ensureFreshSettingsCache(): Promise<void> {
+  if (inflightVersionCheck) {
+    return inflightVersionCheck;
+  }
+  inflightVersionCheck = (async () => {
+    try {
+      const dbVersion = await getCacheEntryDirect<number>(SETTINGS_VERSION_KEY);
+      if (typeof dbVersion === 'number' && dbVersion > 0 && dbVersion !== localSettingsVersion) {
+        clearMemoryCacheByPrefix('setting.');
+        clearMemoryCacheByPrefix('settings.group.');
+        clearMemoryCacheByPrefix('landing_page:config:');
+        clearMemoryCacheByPrefix('internal_ai:');
+        try {
+          const { invalidateSharedContextCache } = await import('@/services/shared-context');
+          invalidateSharedContextCache();
+        } catch {}
+        localSettingsVersion = dbVersion;
+      }
+    } catch {
+      // non-fatal
+    } finally {
+      inflightVersionCheck = null;
+    }
+  })();
+  return inflightVersionCheck;
+}
 
 function parseValue(raw: string | null | undefined, type: SettingType): unknown {
   if (raw === null || raw === undefined) return null;
@@ -49,6 +91,7 @@ function serializeValue(value: unknown, type: SettingType): string | null {
 }
 
 export async function getSetting<T = any>(key: string, defaultValue?: T): Promise<T> {
+  await ensureFreshSettingsCache();
   const cacheKey = `setting.${key}`;
   const cached = await cacheGet<unknown>(cacheKey);
   if (cached === MISSING_SENTINEL) {
@@ -78,6 +121,9 @@ export async function invalidateAllSettingsCaches(group?: string): Promise<void>
     await clearSettingsCache();
     await cacheForgetPrefix('landing_page:config:');
     await cacheForgetPrefix('internal_ai:');
+    const nextVersion = Date.now();
+    await setCacheEntryDirect(SETTINGS_VERSION_KEY, nextVersion, 365 * 86400);
+    localSettingsVersion = nextVersion;
     try {
       const { invalidateSharedContextCache } = await import('@/services/shared-context');
       invalidateSharedContextCache();
@@ -114,8 +160,6 @@ export async function setSetting(
     { upsert: true }
   );
 
-  const parsed = parseValue(serialized, finalType);
-  await cacheSet(`setting.${key}`, parsed === null ? MISSING_SENTINEL : parsed, CACHE_TTL);
   await invalidateAllSettingsCaches(finalGroup);
 }
 
@@ -138,14 +182,13 @@ export async function setSettingsMany(
       { $set: { value: serialized, type: finalType, group } },
       { upsert: true }
     );
-    const parsed = parseValue(serialized, finalType);
-    await cacheSet(`setting.${key}`, parsed === null ? MISSING_SENTINEL : parsed, CACHE_TTL);
   }
 
   await invalidateAllSettingsCaches(group);
 }
 
 export async function getSettingGroup(group: string): Promise<Record<string, any>> {
+  await ensureFreshSettingsCache();
   const cacheKey = `settings.group.${group}`;
   const cached = await cacheGet<Record<string, any>>(cacheKey);
   if (cached) return cached;
@@ -227,6 +270,7 @@ export async function getBroadcastConfig(): Promise<
 }
 
 export async function getSharedAppSettings() {
+  await ensureFreshSettingsCache();
   const [general, auth, gdpr, integrations] = await Promise.all([
     getSettingGroup('general'),
     getSettingGroup('auth'),
