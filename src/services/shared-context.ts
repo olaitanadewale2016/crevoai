@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { connectDB } from '@/lib/db';
 import { getSessionContext, isDemoMode, LOCALE_COOKIE_NAME, serializeUser, getUserCurrentPlan } from '@/lib/auth';
@@ -31,7 +32,7 @@ export async function getUserCreditsSnapshot(user: IUser) {
   };
 }
 
-export async function getSharedAppProps(): Promise<SharedAppProps> {
+export const getSharedAppProps = cache(async function getSharedAppProps(): Promise<SharedAppProps> {
   const cookieStore = await cookies();
   const cookieLocale = cookieStore.get(LOCALE_COOKIE_NAME)?.value || null;
   const sessionCtx = await getSessionContext();
@@ -115,4 +116,4 @@ export async function getSharedAppProps(): Promise<SharedAppProps> {
     unreadNotificationCount,
     impersonating: sessionCtx?.impersonatingFrom ? true : null,
   };
-}
+});

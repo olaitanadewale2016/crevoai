@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { unzipSync } from 'fflate';
 import { connectDB } from '@/lib/db';
 import { cacheAdd, cacheForget } from '@/lib/cache';
@@ -649,6 +651,25 @@ export async function serveBuiltSiteFromR2(params: {
   }
   if (!relPath || relPath.endsWith('/')) {
     relPath = `${relPath}index.html`;
+  }
+
+  // Special handling: serve local stock image library assets if requested via preview relative URL
+  if (relPath.startsWith('storage/image-library/') || relPath.startsWith('storage/')) {
+    try {
+      const localFilePath = path.join(process.cwd(), 'public', relPath);
+      if (fs.existsSync(localFilePath)) {
+        const fileBuf = await fs.promises.readFile(localFilePath);
+        return new Response(fileBuf, {
+          status: 200,
+          headers: {
+            'Content-Type': guessContentType(localFilePath),
+            'Cache-Control': 'public, max-age=31536000, immutable',
+          },
+        });
+      }
+    } catch {
+      // Fall through to R2
+    }
   }
 
   const prefix = `sites/${project._id}/${project.active_build_id}`;

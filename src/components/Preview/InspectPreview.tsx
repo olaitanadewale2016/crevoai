@@ -412,6 +412,7 @@ export function InspectPreview({
                     <div className="flex items-center gap-1.5">
                         {/* Mode toggles */}
                         <Button
+                            data-tour="inspect-toggle"
                             variant={mode === 'inspect' ? 'default' : 'outline'}
                             size="sm"
                             onClick={() => onModeChange?.(mode === 'inspect' ? 'preview' : 'inspect')}
@@ -421,6 +422,7 @@ export function InspectPreview({
                             {t('Inspect')}
                         </Button>
                         <Button
+                            data-tour="design-toggle"
                             variant={mode === 'design' ? 'default' : 'outline'}
                             size="sm"
                             onClick={() => onModeChange?.(mode === 'design' ? 'preview' : 'design')}
@@ -432,7 +434,7 @@ export function InspectPreview({
                     </div>
 
                     {/* Responsive Device Viewport Switcher (Desktop, Tablet, Mobile) */}
-                    <div className="flex items-center bg-muted/70 p-0.5 rounded-lg border border-border/50">
+                    <div data-tour="device-switcher" className="flex items-center bg-muted/70 p-0.5 rounded-lg border border-border/50">
                         <Button
                             variant={deviceMode === 'desktop' ? 'secondary' : 'ghost'}
                             size="icon"
@@ -518,6 +520,7 @@ export function InspectPreview({
                         }}>
                             <PopoverTrigger asChild>
                                 <Button
+                                    data-tour="history-button"
                                     variant="outline"
                                     size="icon"
                                     className="h-7 w-7 relative"

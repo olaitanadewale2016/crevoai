@@ -20,7 +20,7 @@ import { useUserChannel } from '@/hooks/useUserChannel';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { PageProps, User } from '@/types';
 import type { UserNotification } from '@/types/notifications';
-import { Home, Eye, Code, Loader2, Hammer, ExternalLink, Brain, Settings, Globe, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Home, Eye, Code, Loader2, Hammer, ExternalLink, Brain, Settings, Globe, PanelLeftClose, PanelLeftOpen, HelpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import axios from 'axios';
@@ -30,6 +30,7 @@ import { InspectPreview } from '@/components/Preview/InspectPreview';
 import { ChatInputWithMentions } from '@/components/Chat/ChatInputWithMentions';
 import { BuildCreditsIndicator } from '@/components/Chat/BuildCreditsIndicator';
 import { ThemeDesigner } from '@/components/Design/ThemeDesigner';
+import { AppTutorial } from '@/components/Tutorial/AppTutorial';
 import { useBuildCredits, BuildCreditsInfo } from '@/hooks/useBuildCredits';
 import type { ElementMention, PendingEdit } from '@/types/inspector';
 import type { AttachedFile } from '@/types/chat';
@@ -249,6 +250,20 @@ export default function Chat({
     const [initialLoading, setInitialLoading] = useState(true);
     const [publishModalOpen, setPublishModalOpen] = useState(false);
     const [isChatCollapsed, setIsChatCollapsed] = useState(false);
+    const [tourOpen, setTourOpen] = useState(false);
+
+    // Auto-launch walkthrough tour for new users
+    useEffect(() => {
+        try {
+            const hasSeen = localStorage.getItem('crevo_has_seen_builder_tutorial');
+            if (!hasSeen) {
+                const timer = setTimeout(() => {
+                    setTourOpen(true);
+                }, 1200);
+                return () => clearTimeout(timer);
+            }
+        } catch {}
+    }, []);
 
     // File attachment state for @mentions and uploads
     const [localProjectFiles, setLocalProjectFiles] = useState<AttachedFile[]>(initialProjectFiles ?? []);
@@ -747,6 +762,15 @@ export default function Chat({
                                 onMarkAllAsRead={markAllAsRead}
                                 isLoading={isLoadingNotifications}
                             />
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setTourOpen(true)}
+                                className="text-muted-foreground hover:text-foreground"
+                                title={t('Quick Tour & Tutorial')}
+                            >
+                                <HelpCircle className="h-4 w-4" />
+                            </Button>
                             <Button variant="ghost" size="icon" asChild>
                                 <Link href="/create">
                                     <Home className="h-4 w-4" />
@@ -882,7 +906,7 @@ export default function Chat({
                     )}
 
                     {/* Input */}
-                    <div className="pt-2 px-4 pb-4 border-t bg-background">
+                    <div data-tour="chat-input" className="pt-2 px-4 pb-4 border-t bg-background">
                         <div className="pb-1 flex items-center justify-between">
                             <BuildCreditsIndicator {...credits} isRefreshing={isRefreshingCredits} />
                             <div className="flex items-center gap-2">
@@ -940,7 +964,7 @@ export default function Chat({
                             </Button>
 
                             {/* View toggle */}
-                            <div className="flex items-center border rounded-lg overflow-hidden">
+                            <div data-tour="preview-tabs" className="flex items-center border rounded-lg overflow-hidden">
                             <button
                                 onClick={() => setViewMode('preview')}
                                 className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${
@@ -1142,6 +1166,12 @@ export default function Chat({
                 onPublished={(url) => {
                     toast.success(t('Published to :url', { url }));
                 }}
+            />
+
+            {/* Interactive Onboarding & Navigation Tour */}
+            <AppTutorial
+                isOpen={tourOpen}
+                onClose={() => setTourOpen(false)}
             />
         </>
     );

@@ -21,7 +21,7 @@ export async function cacheGet<T = unknown>(key: string): Promise<T | null> {
     if (!entry) return null;
     memoryCache.set(key, {
       value: entry.value,
-      expiresAt: Math.min(entry.expires_at.getTime(), Date.now() + 15_000),
+      expiresAt: Math.min(entry.expires_at.getTime(), Date.now() + 300_000),
     });
     return entry.value as T;
   } catch {
@@ -33,7 +33,7 @@ export async function cacheSet(key: string, value: unknown, ttlSeconds = 3600): 
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
   memoryCache.set(key, {
     value,
-    expiresAt: Math.min(expiresAt.getTime(), Date.now() + 15_000),
+    expiresAt: Math.min(expiresAt.getTime(), Date.now() + 300_000),
   });
   try {
     await connectDB();
