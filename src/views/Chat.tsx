@@ -71,7 +71,6 @@ interface Project {
     // Settings fields
     custom_instructions: string | null;
     theme_preset: string | null;
-    reasoning_effort?: 'low' | 'medium' | 'high';
     share_image: string | null;
     api_token?: string | null;
     custom_domain?: string | null;
@@ -110,7 +109,6 @@ interface StorageSettings {
     unlimited: boolean;
     maxFileSizeMb?: number;
     maxImagesPerPrompt?: number;
-    allowedEfforts?: Array<'low' | 'medium' | 'high'>;
     allowedTypes?: string[] | null;
 }
 
@@ -263,15 +261,6 @@ export default function Chat({
     const [mobileView, setMobileView] = useState<'chat' | 'preview' | 'code'>('chat');
     const [mobileFilesOpen, setMobileFilesOpen] = useState(false);
     const [isChatCollapsed, setIsChatCollapsed] = useState(false);
-    const allowedEfforts: Array<'low' | 'medium' | 'high'> =
-        storage?.allowedEfforts && storage.allowedEfforts.length > 0
-            ? storage.allowedEfforts
-            : ['low', 'medium', 'high'];
-    const initialEffort: 'low' | 'medium' | 'high' =
-        project.reasoning_effort && allowedEfforts.includes(project.reasoning_effort)
-            ? project.reasoning_effort
-            : 'medium';
-    const [effort, setEffort] = useState<'low' | 'medium' | 'high'>(initialEffort);
     const [isInputFocused, setIsInputFocused] = useState(false);
     const [outOfCreditsModalOpen, setOutOfCreditsModalOpen] = useState(false);
 
@@ -399,7 +388,6 @@ export default function Chat({
                 files_changed: event.files_changed,
                 message: event.message,
                 build_status: event.build_status,
-                effort,
             })
             .then((res) => {
                 if (res.data?.credits) {
@@ -411,7 +399,7 @@ export default function Chat({
             .catch(() => {
                 refreshCredits();
             });
-    }, [playSound, t, fetchSuggestions, project.id, effort, updateCredits, refreshCredits]);
+    }, [playSound, t, fetchSuggestions, project.id, updateCredits, refreshCredits]);
 
     const handleError = useCallback((error: string) => {
         playSound('error');
@@ -628,9 +616,9 @@ export default function Chat({
             playSound('send');
             setThinkingStartTime(Date.now());
             setThinkingDuration(null);
-            sendMessage(project.initial_prompt, { effort });
+            sendMessage(project.initial_prompt);
         }
-    }, [project.initial_prompt, project.has_history, sendMessage, playSound, effort]);
+    }, [project.initial_prompt, project.has_history, sendMessage, playSound]);
 
     // Auto-rebuild preview for projects with history but no preview
     const autoRebuildTriggered = useRef(false);
@@ -720,7 +708,6 @@ export default function Chat({
             elementContext,
             fileIds: fileData?.fileIds,
             attachedFiles: fileData?.attachedFiles,
-            effort,
         });
     };
 
@@ -744,8 +731,8 @@ export default function Chat({
         playSound('send');
         setThinkingStartTime(Date.now());
         setThinkingDuration(null);
-        await sendMessage(msg, { effort });
-    }, [isLoading, isOutOfCredits, project.id, playSound, sendMessage, effort, t]);
+        await sendMessage(msg);
+    }, [isLoading, isOutOfCredits, project.id, playSound, sendMessage, t]);
 
     // Element selection handler for inspect mode
     const handleElementSelect = useCallback((element: ElementMention) => {
@@ -1065,9 +1052,6 @@ export default function Chat({
                             onFileUploaded={handleFileUploaded}
                             onRemoveUploadedFile={handleRemoveUploadedFile}
                             onFilesDropped={handleFilesDropped}
-                            effort={effort}
-                            allowedEfforts={allowedEfforts}
-                            onEffortChange={setEffort}
                             onFocusChange={setIsInputFocused}
                         />
                     </div>

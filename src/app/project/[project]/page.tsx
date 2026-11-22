@@ -240,14 +240,6 @@ export default async function ProjectChatPage({
     isAdmin || plan?.monthly_build_credits === -1
       ? 10
       : plan?.max_images_per_prompt || ((plan?.price ?? 0) > 0 ? 6 : 2);
-  const allowedEfforts: Array<'low' | 'medium' | 'high'> =
-    isAdmin ||
-    plan?.monthly_build_credits === -1 ||
-    buildCredits?.usingOwnKey ||
-    (plan?.price ?? 0) > 0 ||
-    (user.build_credits ?? 0) >= 100_000
-      ? ['low', 'medium', 'high']
-      : ['low', 'medium'];
   const storageSettings = {
     enabled: fileStorageEnabled,
     usedBytes: Number(project.storage_used_bytes ?? 0),
@@ -260,7 +252,6 @@ export default async function ProjectChatPage({
           ? 100
           : 10,
     maxImagesPerPrompt,
-    allowedEfforts,
     allowedTypes: [
       'image/png',
       'image/jpeg',

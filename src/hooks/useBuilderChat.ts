@@ -73,8 +73,6 @@ export interface SendMessageOptions {
     fileIds?: (number | string)[];
     /** Attached file metadata for display in message bubble */
     attachedFiles?: AttachedFile[];
-    /** Reasoning effort level for AI build */
-    effort?: 'low' | 'medium' | 'high';
 }
 
 const initialProgress: BuildProgress = {
@@ -167,7 +165,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
         // Check if this is a terminal status that should clear thinking state
         const isTerminalStatus = ['cancelled', 'completed', 'failed'].includes(data.status);
-        const resolvedPreviewUrl = (data as any).preview_url || (data.status === 'completed' ? `/preview/${projectId}` : undefined);
+        const resolvedPreviewUrl = (data as any).preview_url;
 
         if (resolvedPreviewUrl) {
             buildTriggeredRef.current = true;
@@ -305,7 +303,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         if (completedSessionRef.current) return;
         completedSessionRef.current = true;
 
-        const targetPreviewUrl = `/preview/${projectId}`;
+        const hasFiles = data.files_changed ?? true;
 
         // Update progress state — pure, no side effects
         setProgress(prev => ({
@@ -313,13 +311,11 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             status: 'completed',
             iterations: data.iterations,
             tokensUsed: data.tokens_used,
-            previewUrl: prev.previewUrl || targetPreviewUrl,
-            hasFileChanges: false, // Prevent redundant autoBuild call since backend webhook/proxy handles deployment
+            hasFileChanges: hasFiles,
             thinkingContent: null,
             thinkingStartTime: null,
         }));
         thinkingStartTimeRef.current = null;
-        buildTriggeredRef.current = true;
 
         // Add final message if not already added by handleMessage.
         // data.message === lastAIContent from Go builder === same content sent via message event.
@@ -334,8 +330,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         }
 
         onComplete?.(data);
-        onBuildComplete?.(targetPreviewUrl);
-    }, [history, onComplete, projectId, onBuildComplete]);
+    }, [history, onComplete]);
 
     const handleSummarizationComplete = useCallback((data: SummarizationCompleteEvent) => {
         // Show completion activity message with results
@@ -563,7 +558,6 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                 template_url: sendOptions?.templateUrl,
                 history: history.getHistoryForApi(),
                 file_ids: sendOptions?.fileIds ?? [],
-                effort: sendOptions?.effort,
             });
 
             const { session_id } = response.data;

@@ -133,8 +133,7 @@ export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) 
         api_key: apiKey,
         base_url: baseUrl,
         model,
-        max_tokens: resolveEffortMaxTokens(16384, resolvedEffort),
-        reasoning_effort: resolvedEffort,
+        max_tokens: 16384,
         provider_type: pType,
         remaining_build_credits: 0, // 0 = unlimited / own key
       },
@@ -157,10 +156,9 @@ export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) 
   const baseUrl = provider.config?.base_url || AI_DEFAULT_BASE_URLS[pType];
   let model = provider.config?.default_model || provider.available_models?.[0] || AI_DEFAULT_MODELS[pType]?.[0];
   if (pType === 'gemini' && !model) {
-    model = 'gemini-3.5-flash';
+    model = 'gemini-2.5-flash';
   }
   const baseMaxTokens = Number(provider.config?.max_tokens || 16384);
-  const maxTokens = resolveEffortMaxTokens(baseMaxTokens, resolvedEffort);
   const summTokens = Number(provider.config?.summarizer_max_tokens || 1500);
   const unlimited = user.role === 'admin' || plan?.monthly_build_credits === -1;
 
@@ -169,8 +167,7 @@ export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) 
       api_key: apiKey,
       base_url: baseUrl,
       model,
-      max_tokens: maxTokens,
-      reasoning_effort: resolvedEffort,
+      max_tokens: baseMaxTokens,
       provider_type: pType,
       remaining_build_credits: unlimited ? 0 : Math.max(1, user.build_credits ?? 0),
     },
@@ -306,19 +303,13 @@ export async function startBuilderSession(params: {
   effort?: ReasoningEffort;
   appUrl?: string;
 }) {
-  const { project, user, builder, goal, templateId, templateUrl, effort } = params;
+  const { project, user, builder, goal, templateId, templateUrl } = params;
   const rawAppUrl = params.appUrl || process.env.APP_URL || '';
   const appUrl = (
     (rawAppUrl && !rawAppUrl.includes('crevoai.vercel.app') ? rawAppUrl : '') ||
     'https://crevoai-web.vercel.app'
   ).replace(/\/+$/, '');
-  const resolvedEffort: ReasoningEffort =
-    effort && ['low', 'medium', 'high'].includes(effort)
-      ? effort
-      : project.reasoning_effort && ['low', 'medium', 'high'].includes(project.reasoning_effort)
-      ? project.reasoning_effort
-      : 'medium';
-  const aiConfig = await getAiConfigForUser(user, resolvedEffort);
+  const aiConfig = await getAiConfigForUser(user);
   if (!aiConfig) throw new Error('No active AI provider configured.');
 
   const pusher = await getPusherConfigForBuilder();
@@ -338,13 +329,7 @@ export async function startBuilderSession(params: {
     ? THEME_PRESETS.find((tp) => tp.id === project.theme_preset)
     : undefined;
 
-  const baseIterations = builder.max_iterations || 20;
-  const maxIterations =
-    resolvedEffort === 'low'
-      ? Math.min(baseIterations, 12)
-      : resolvedEffort === 'high'
-      ? Math.max(baseIterations, 28)
-      : baseIterations;
+  const maxIterations = builder.max_iterations || 20;
 
   const isFirstPrompt =
     (project.conversation_history || []).length === 0 &&

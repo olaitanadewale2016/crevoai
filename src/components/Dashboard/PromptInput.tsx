@@ -10,11 +10,9 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
-import { ArrowRight, ArrowLeft, LayoutTemplate, Palette, Zap } from 'lucide-react';
+import { ArrowRight, ArrowLeft, LayoutTemplate, Palette } from 'lucide-react';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { THEME_PRESETS } from '@/lib/theme-presets';
-
-export type EffortLevel = 'low' | 'medium' | 'high';
 
 interface Template {
     id: string | number;
@@ -25,7 +23,7 @@ interface Template {
 }
 
 interface PromptInputProps {
-    onSubmit: (prompt: string, templateId: string | null, themePreset: string | null, effort?: EffortLevel) => void;
+    onSubmit: (prompt: string, templateId: string | null, themePreset: string | null) => void;
     disabled?: boolean;
     isLoading?: boolean;
     suggestions?: string[];
@@ -109,7 +107,6 @@ export function PromptInput({
     const [isFocused, setIsFocused] = useState(false);
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
     const [selectedThemePreset, setSelectedThemePreset] = useState<string>('automatic');
-    const [selectedEffort, setSelectedEffort] = useState<EffortLevel>('medium');
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
     const animatedPlaceholder = useTypingAnimation(typingPrompts);
@@ -121,7 +118,7 @@ export function PromptInput({
         e.preventDefault();
         if (prompt.trim() && !disabled && !isLoading) {
             const themeToSubmit = selectedThemePreset === 'automatic' ? null : selectedThemePreset;
-            onSubmit(prompt.trim(), selectedTemplateId, themeToSubmit, selectedEffort);
+            onSubmit(prompt.trim(), selectedTemplateId, themeToSubmit);
         }
     };
 
@@ -242,37 +239,6 @@ export function PromptInput({
                                             </div>
                                         </SelectItem>
                                     ))}
-                                </SelectContent>
-                            </Select>
-                            {/* Effort Level Selector */}
-                            <Select value={selectedEffort} onValueChange={(v) => setSelectedEffort(v as EffortLevel)}>
-                                <SelectTrigger className="w-[100px] sm:w-[115px]">
-                                    <SelectValue>
-                                        <div className="flex items-center gap-1.5 truncate">
-                                            <Zap className="h-4 w-4 shrink-0 text-amber-500" />
-                                            <span className="truncate capitalize">{t(selectedEffort)}</span>
-                                        </div>
-                                    </SelectValue>
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="low">
-                                        <div className="flex items-center gap-2">
-                                            <Zap className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                                            <span>{t('Low')}</span>
-                                        </div>
-                                    </SelectItem>
-                                    <SelectItem value="medium">
-                                        <div className="flex items-center gap-2">
-                                            <Zap className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                                            <span>{t('Medium')}</span>
-                                        </div>
-                                    </SelectItem>
-                                    <SelectItem value="high">
-                                        <div className="flex items-center gap-2">
-                                            <Zap className="h-3.5 w-3.5 text-purple-500 shrink-0" />
-                                            <span>{t('High')}</span>
-                                        </div>
-                                    </SelectItem>
                                 </SelectContent>
                             </Select>
                             <Button

@@ -176,8 +176,7 @@ export default function Create({
     const handlePromptSubmit = (
         prompt: string,
         templateId: string | null,
-        themePreset: string | null,
-        effort?: 'low' | 'medium' | 'high'
+        themePreset: string | null
     ) => {
         setIsSubmitting(true);
         // Create a new project with the prompt and redirect to it
@@ -185,7 +184,6 @@ export default function Create({
             prompt,
             template_id: templateId,
             theme_preset: themePreset,
-            reasoning_effort: effort || 'medium',
         }, {
             onSuccess: (page) => {
                 const target = page.props?.redirect || (page.props?.projectId ? `/project/${page.props.projectId}` : null);
