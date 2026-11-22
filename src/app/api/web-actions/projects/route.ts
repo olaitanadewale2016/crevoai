@@ -7,6 +7,7 @@ import {
 } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { generateUuidV7 } from '@/lib/crypto';
+import { inferThemePresetFromPrompt } from '@/lib/theme-presets';
 import { Project, Template } from '@/models/Project';
 import { canPerformBuild } from '@/services/credits';
 
@@ -89,13 +90,18 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  const resolvedThemePreset =
+    body.theme_preset && body.theme_preset !== 'automatic'
+      ? body.theme_preset
+      : inferThemePresetFromPrompt(prompt);
+
   const project = await Project.create({
     _id: projectId,
     user_id: user._id,
     name,
     initial_prompt: prompt,
     template_id: templateId,
-    theme_preset: body.theme_preset || 'default',
+    theme_preset: resolvedThemePreset,
     reasoning_effort: reasoningEffort,
     last_viewed_at: new Date(),
     build_status: 'idle',

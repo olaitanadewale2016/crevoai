@@ -51,6 +51,7 @@ export interface IProject {
   firebase_config: string | null; // AES-256-GCM encrypted JSON
   uses_system_firebase: boolean;
   firebase_admin_service_account: string | null; // AES-256-GCM encrypted JSON
+  supabase_config?: string | null; // AES-256-GCM encrypted JSON { url, anonKey }
   storage_used_bytes: number;
   last_viewed_at: Date | null;
   builder_id: mongoose.Types.ObjectId | null;
@@ -106,6 +107,7 @@ const ProjectSchema = new Schema<IProject>(
     firebase_config: { type: String, default: null },
     uses_system_firebase: { type: Boolean, default: true },
     firebase_admin_service_account: { type: String, default: null },
+    supabase_config: { type: String, default: null },
     storage_used_bytes: { type: Number, default: 0 },
     last_viewed_at: { type: Date, default: null },
     builder_id: { type: Schema.Types.ObjectId, ref: 'Builder', default: null },

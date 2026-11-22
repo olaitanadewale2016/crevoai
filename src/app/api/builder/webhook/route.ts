@@ -7,7 +7,7 @@ import { Project } from '@/models/Project';
 import { Builder } from '@/models/BuilderAi';
 import { notifyBuildComplete, notifyBuildFailed } from '@/services/notifications';
 import { trackBuildCreditUsage } from '@/services/credits';
-import { triggerBuildAndDeployToR2 } from '@/services/builder';
+import { triggerBuildAndDeployToR2, clearProjectPreviewCache } from '@/services/builder';
 
 export const dynamic = 'force-dynamic';
 
@@ -249,6 +249,7 @@ export async function POST(req: NextRequest) {
           data.build_required;
 
         if (shouldBuildPreview) {
+          clearProjectPreviewCache(String(project._id));
           project.build_status = 'completed';
           await project.save();
 

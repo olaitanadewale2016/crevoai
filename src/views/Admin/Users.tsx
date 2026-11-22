@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { route } from '@/lib/route';
 import { useState } from 'react';
@@ -50,17 +50,26 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
-import { Plus, Trash2, Pencil, UserCircle, Eye } from 'lucide-react';
+import { Plus, Trash2, Pencil, UserCircle, Eye, Coins, Calendar, CreditCard } from 'lucide-react';
 import { User, PageProps } from '@/types';
 import { AdminUser, PaginationData } from '@/types/admin';
 import { toast } from 'sonner';
 import { useTranslation } from '@/contexts/LanguageContext';
+
+interface AdminPlanOption {
+    id: string;
+    name: string;
+    price: number;
+    billing_period: string;
+    monthly_build_credits: number;
+}
 
 interface UsersProps {
     user: User;
     users: {
         data: AdminUser[];
     };
+    plans?: AdminPlanOption[];
     pagination: PaginationData;
 }
 
@@ -68,13 +77,16 @@ interface UsersProps {
 const skeletonColumns: TableColumnConfig[] = [
     { type: 'avatar-text', width: 'w-48' },   // User (name + email)
     { type: 'badge', width: 'w-16' },         // Role
+    { type: 'badge', width: 'w-24' },         // Plan
+    { type: 'text', width: 'w-24' },          // Credits
+    { type: 'text', width: 'w-24' },          // Expires
     { type: 'status', width: 'w-32' },        // Status (switch + badge)
     { type: 'text', width: 'w-16' },          // Projects
     { type: 'text', width: 'w-24' },          // Joined
     { type: 'actions', width: 'w-12' },       // Actions
 ];
 
-export default function Users({ user, users, pagination: _pagination }: UsersProps) {
+export default function Users({ user, users, plans = [], pagination: _pagination }: UsersProps) {
     const { t } = useTranslation();
     const { formatDate } = useAppDate();
     const { isDemo } = usePage<PageProps>().props;
@@ -92,6 +104,9 @@ export default function Users({ user, users, pagination: _pagination }: UsersPro
         password: '',
         role: 'user' as 'admin' | 'user',
         status: 'active' as 'active' | 'inactive',
+        plan_id: 'none',
+        plan_expires_at: '',
+        build_credits: '0',
     });
 
     const resetForm = () => {
@@ -101,6 +116,9 @@ export default function Users({ user, users, pagination: _pagination }: UsersPro
             password: '',
             role: 'user',
             status: 'active',
+            plan_id: 'none',
+            plan_expires_at: '',
+            build_credits: '0',
         });
         setFormErrors({});
     };
@@ -146,11 +164,14 @@ export default function Users({ user, users, pagination: _pagination }: UsersPro
             return;
         }
 
-        const updateData: Record<string, string> = {
+        const updateData: Record<string, any> = {
             name: formData.name,
             email: formData.email,
             role: formData.role,
             status: formData.status,
+            plan_id: formData.plan_id === 'none' ? null : formData.plan_id,
+            plan_expires_at: formData.plan_expires_at || null,
+            build_credits: Number(formData.build_credits || 0),
         };
 
         if (formData.password) {
@@ -207,12 +228,18 @@ export default function Users({ user, users, pagination: _pagination }: UsersPro
 
     const openEditDialog = (adminUser: AdminUser) => {
         setSelectedUser(adminUser);
+        const formattedExpiry = adminUser.plan_expires_at
+            ? new Date(adminUser.plan_expires_at).toISOString().slice(0, 10)
+            : '';
         setFormData({
             name: adminUser.name,
             email: adminUser.email,
             password: '',
             role: adminUser.role,
             status: adminUser.status,
+            plan_id: adminUser.plan_id || 'none',
+            plan_expires_at: formattedExpiry,
+            build_credits: String(adminUser.build_credits ?? 0),
         });
         setIsEditDialogOpen(true);
     };
@@ -247,6 +274,52 @@ export default function Users({ user, users, pagination: _pagination }: UsersPro
                     <Badge variant={role === 'admin' ? 'default' : 'secondary'}>
                         {role === 'admin' ? t('Admin') : t('User')}
                     </Badge>
+                );
+            },
+        },
+        {
+            accessorKey: 'plan_name',
+            header: ({ column }) => (
+                <DataTableColumnHeader column={column} title={t('Plan')} />
+            ),
+            cell: ({ row }) => {
+                const planName = row.original.plan_name;
+                return (
+                    <Badge variant={planName ? 'outline' : 'secondary'}>
+                        {planName || t('Free / Default')}
+                    </Badge>
+                );
+            },
+        },
+        {
+            accessorKey: 'build_credits',
+            header: ({ column }) => (
+                <DataTableColumnHeader column={column} title={t('Credits')} />
+            ),
+            cell: ({ row }) => {
+                const adminUser = row.original;
+                if (adminUser.role === 'admin') {
+                    return <Badge variant="secondary">{t('Unlimited')}</Badge>;
+                }
+                const creditsVal = Number(adminUser.build_credits ?? 0);
+                return (
+                    <span className="font-mono text-xs font-medium">
+                        {creditsVal.toLocaleString()}
+                    </span>
+                );
+            },
+        },
+        {
+            accessorKey: 'plan_expires_at',
+            header: ({ column }) => (
+                <DataTableColumnHeader column={column} title={t('Expires')} />
+            ),
+            cell: ({ row }) => {
+                const exp = row.original.plan_expires_at;
+                return exp ? (
+                    <span className="text-xs text-muted-foreground">{formatDate(exp)}</span>
+                ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
                 );
             },
         },
@@ -538,6 +611,184 @@ export default function Users({ user, users, pagination: _pagination }: UsersPro
                                         <SelectItem value="inactive">{t('Inactive')}</SelectItem>
                                     </SelectContent>
                                 </Select>
+                            </div>
+                        </div>
+
+                        {/* Plan, Expiration & Build Credits Management */}
+                        <div className="border-t pt-4 space-y-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="edit-plan" className="flex items-center gap-1.5">
+                                        <CreditCard className="h-3.5 w-3.5 text-muted-foreground" />
+                                        {t('Subscription Plan')}
+                                    </Label>
+                                    <Select
+                                        value={formData.plan_id}
+                                        onValueChange={(value: string) => {
+                                            const matched = plans.find((p) => p.id === value);
+                                            const nextCredits =
+                                                matched && matched.monthly_build_credits >= 0
+                                                    ? String(matched.monthly_build_credits)
+                                                    : formData.build_credits;
+                                            let nextExpiry = formData.plan_expires_at;
+                                            if (matched && !nextExpiry) {
+                                                const d = new Date();
+                                                d.setDate(
+                                                    d.getDate() + (matched.billing_period === 'yearly' ? 365 : 30)
+                                                );
+                                                nextExpiry = d.toISOString().slice(0, 10);
+                                            }
+                                            setFormData({
+                                                ...formData,
+                                                plan_id: value,
+                                                build_credits: nextCredits,
+                                                plan_expires_at: value === 'none' ? '' : nextExpiry,
+                                            });
+                                        }}
+                                    >
+                                        <SelectTrigger id="edit-plan">
+                                            <SelectValue placeholder={t('Select plan')} />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="none">{t('Free / Default Plan')}</SelectItem>
+                                            {plans.map((p) => (
+                                                <SelectItem key={p.id} value={p.id}>
+                                                    {p.name} (${p.price}/{p.billing_period})
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label htmlFor="edit-expiry" className="flex items-center gap-1.5">
+                                        <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+                                        {t('Plan Expiration Date')}
+                                    </Label>
+                                    <Input
+                                        id="edit-expiry"
+                                        type="date"
+                                        value={formData.plan_expires_at}
+                                        onChange={(e) =>
+                                            setFormData({ ...formData, plan_expires_at: e.target.value })
+                                        }
+                                    />
+                                    <div className="flex flex-wrap gap-1 pt-0.5">
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-6 px-2 text-[11px]"
+                                            onClick={() => {
+                                                const d = new Date();
+                                                d.setDate(d.getDate() + 30);
+                                                setFormData({
+                                                    ...formData,
+                                                    plan_expires_at: d.toISOString().slice(0, 10),
+                                                });
+                                            }}
+                                        >
+                                            +30d
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-6 px-2 text-[11px]"
+                                            onClick={() => {
+                                                const d = new Date();
+                                                d.setFullYear(d.getFullYear() + 1);
+                                                setFormData({
+                                                    ...formData,
+                                                    plan_expires_at: d.toISOString().slice(0, 10),
+                                                });
+                                            }}
+                                        >
+                                            +1yr
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-6 px-2 text-[11px]"
+                                            onClick={() =>
+                                                setFormData({ ...formData, plan_expires_at: '' })
+                                            }
+                                        >
+                                            {t('Clear')}
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-credits" className="flex items-center gap-1.5">
+                                    <Coins className="h-3.5 w-3.5 text-muted-foreground" />
+                                    {t('Build Credits Balance (Tokens)')}
+                                </Label>
+                                <Input
+                                    id="edit-credits"
+                                    type="number"
+                                    min={0}
+                                    step={10000}
+                                    value={formData.build_credits}
+                                    onChange={(e) =>
+                                        setFormData({ ...formData, build_credits: e.target.value })
+                                    }
+                                    className="font-mono"
+                                />
+                                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                                    <span className="text-xs text-muted-foreground me-1">
+                                        {t('Quick Adjust:')}
+                                    </span>
+                                    {[
+                                        { label: '+50K', delta: 50_000 },
+                                        { label: '+100K', delta: 100_000 },
+                                        { label: '+500K', delta: 500_000 },
+                                        { label: '+1M', delta: 1_000_000 },
+                                        { label: '+5M', delta: 5_000_000 },
+                                    ].map((btn) => (
+                                        <Button
+                                            key={btn.label}
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-6 px-2 text-[11px]"
+                                            onClick={() =>
+                                                setFormData({
+                                                    ...formData,
+                                                    build_credits: String(
+                                                        Math.max(
+                                                            0,
+                                                            Number(formData.build_credits || 0) + btn.delta
+                                                        )
+                                                    ),
+                                                })
+                                            }
+                                        >
+                                            {btn.label}
+                                        </Button>
+                                    ))}
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-6 px-2 text-[11px]"
+                                        onClick={() => {
+                                            const matched = plans.find((p) => p.id === formData.plan_id);
+                                            setFormData({
+                                                ...formData,
+                                                build_credits: String(
+                                                    matched && matched.monthly_build_credits >= 0
+                                                        ? matched.monthly_build_credits
+                                                        : 0
+                                                ),
+                                            });
+                                        }}
+                                    >
+                                        {t('Reset to Plan')}
+                                    </Button>
+                                </div>
                             </div>
                         </div>
                     </div>

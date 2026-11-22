@@ -32,19 +32,54 @@ export async function getUserCreditsSnapshot(user: IUser) {
   };
 }
 
+// Short-TTL in-memory cache for static app settings & translations to make page navigation instant
+let cachedStaticContext: {
+  appSettings: Record<string, any>;
+  broadcastConfig: any;
+  maxPlanPrice: number;
+  expiresAt: number;
+} | null = null;
+const TRANSLATION_MEM_CACHE = new Map<string, Record<string, string>>();
+
+async function getFastStaticContext() {
+  if (cachedStaticContext && Date.now() < cachedStaticContext.expiresAt) {
+    return cachedStaticContext;
+  }
+  await connectDB();
+  const [appSettings, broadcastConfig, maxPlanDoc] = await Promise.all([
+    getSharedAppSettings(),
+    getBroadcastConfig(),
+    Plan.findOne({ is_active: true }).sort({ price: -1 }).select('price').lean().catch(() => null),
+  ]);
+  cachedStaticContext = {
+    appSettings,
+    broadcastConfig,
+    maxPlanPrice: Number(maxPlanDoc?.price ?? 0),
+    expiresAt: Date.now() + 30_000, // 30s TTL
+  };
+  return cachedStaticContext;
+}
+
+function getFastTranslations(locale: string): Record<string, string> {
+  const existing = TRANSLATION_MEM_CACHE.get(locale);
+  if (existing) return existing;
+  const loaded = loadTranslationsForLocale(locale);
+  TRANSLATION_MEM_CACHE.set(locale, loaded);
+  return loaded;
+}
+
 export const getSharedAppProps = cache(async function getSharedAppProps(): Promise<SharedAppProps> {
   const cookieStore = await cookies();
   const cookieLocale = cookieStore.get(LOCALE_COOKIE_NAME)?.value || null;
-  const sessionCtx = await getSessionContext();
-  const user = sessionCtx?.user ?? null;
-
-  const [appSettings, localeData, broadcastConfig] = await Promise.all([
-    getSharedAppSettings(),
-    resolveLocale(user?.locale, cookieLocale),
-    getBroadcastConfig(),
+  const [sessionCtx, staticCtx] = await Promise.all([
+    getSessionContext(),
+    getFastStaticContext(),
   ]);
+  const user = sessionCtx?.user ?? null;
+  const { appSettings, broadcastConfig, maxPlanPrice } = staticCtx;
 
-  const translations = loadTranslationsForLocale(localeData.current);
+  const localeData = await resolveLocale(user?.locale, cookieLocale);
+  const translations = getFastTranslations(localeData.current);
 
   let recentProjects: any[] | null = null;
   let hasUpgradablePlans = false;
@@ -53,14 +88,13 @@ export const getSharedAppProps = cache(async function getSharedAppProps(): Promi
 
   if (user) {
     try {
-      await connectDB();
-      const [recents, currentPlan, maxPlanDoc, credits, unreadCount] = await Promise.all([
+      const [recents, currentPlan, credits, unreadCount] = await Promise.all([
         Project.find({ user_id: user._id, deleted_at: null })
           .sort({ last_viewed_at: -1, updated_at: -1 })
           .limit(5)
+          .select('name description thumbnail is_public is_starred published_at build_status last_viewed_at updated_at subdomain custom_domain')
           .lean(),
         getUserCurrentPlan(user),
-        Plan.findOne({ is_active: true }).sort({ price: -1 }).select('price').lean(),
         getUserCreditsSnapshot(user),
         UserNotification.countDocuments({
           user_id: user._id,
@@ -84,8 +118,7 @@ export const getSharedAppProps = cache(async function getSharedAppProps(): Promi
       }));
 
       const currentPrice = Number(currentPlan?.price ?? 0);
-      const maxPrice = Number(maxPlanDoc?.price ?? 0);
-      hasUpgradablePlans = maxPrice > currentPrice;
+      hasUpgradablePlans = maxPlanPrice > currentPrice;
       userCredits = credits;
       unreadNotificationCount = unreadCount;
     } catch {

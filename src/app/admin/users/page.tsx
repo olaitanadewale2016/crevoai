@@ -3,7 +3,7 @@ import Users from '@/Pages/Admin/Users';
 import { connectDB } from '@/lib/db';
 import { getSessionContext, serializeUser, isDemoAdminUser } from '@/lib/auth';
 import { getSharedAppProps } from '@/services/shared-context';
-import { User, Project } from '@/models';
+import { User, Project, Plan, Subscription } from '@/models';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,7 +40,7 @@ export default async function AdminUsersPage({
     ];
   }
 
-  const [total, userDocs, sharedProps] = await Promise.all([
+  const [total, userDocs, sharedProps, planDocs] = await Promise.all([
     User.countDocuments(query),
     User.find(query)
       .sort({ created_at: -1 })
@@ -48,19 +48,41 @@ export default async function AdminUsersPage({
       .limit(perPage)
       .lean(),
     getSharedAppProps(),
+    Plan.find().sort({ sort_order: 1, price: 1 }).lean(),
   ]);
 
   const userIds = userDocs.map((u) => u._id);
-  const projectCounts = await Project.aggregate([
-    { $match: { user_id: { $in: userIds }, deleted_at: null } },
-    { $group: { _id: '$user_id', count: { $sum: 1 } } },
+  const [projectCounts, activeSubs] = await Promise.all([
+    Project.aggregate([
+      { $match: { user_id: { $in: userIds }, deleted_at: null } },
+      { $group: { _id: '$user_id', count: { $sum: 1 } } },
+    ]),
+    Subscription.find({ user_id: { $in: userIds }, status: 'active' })
+      .sort({ created_at: -1 })
+      .lean(),
   ]);
   const countMap = new Map(projectCounts.map((c) => [String(c._id), c.count]));
+  const planMap = new Map(planDocs.map((p) => [String(p._id), p]));
+  const subMap = new Map<string, any>();
+  for (const s of activeSubs) {
+    const uid = String(s.user_id);
+    if (!subMap.has(uid)) {
+      subMap.set(uid, s);
+    }
+  }
 
   const isDemo = process.env.APP_DEMO === 'true';
 
   const serializedUsers = userDocs.map((u) => {
     const email = isDemo && u.role !== 'admin' ? maskEmail(u.email) : u.email;
+    const activeSub = subMap.get(String(u._id));
+    const effectivePlanId = u.plan_id
+      ? String(u.plan_id)
+      : activeSub?.plan_id
+      ? String(activeSub.plan_id)
+      : null;
+    const planDoc = effectivePlanId ? planMap.get(effectivePlanId) : null;
+    const expiresDate = activeSub?.renewal_at || activeSub?.ends_at || null;
     return {
       id: String(u._id) as any,
       name: u.name,
@@ -68,9 +90,21 @@ export default async function AdminUsersPage({
       role: u.role as 'admin' | 'user',
       status: (u.status || 'active') as 'active' | 'inactive',
       projects_count: countMap.get(String(u._id)) || 0,
+      plan_id: effectivePlanId,
+      plan_name: planDoc?.name || null,
+      build_credits: Number(u.build_credits ?? 0),
+      plan_expires_at: expiresDate ? new Date(expiresDate).toISOString() : null,
       created_at: u.created_at ? new Date(u.created_at).toISOString() : new Date().toISOString(),
     };
   });
+
+  const serializedPlans = planDocs.map((p) => ({
+    id: String(p._id),
+    name: p.name,
+    price: Number(p.price ?? 0),
+    billing_period: p.billing_period,
+    monthly_build_credits: Number(p.monthly_build_credits ?? 0),
+  }));
 
   const lastPage = Math.max(1, Math.ceil(total / perPage));
 
@@ -79,6 +113,7 @@ export default async function AdminUsersPage({
       {...(sharedProps as any)}
       user={serializeUser(ctx.user) as any}
       users={{ data: serializedUsers as any }}
+      plans={serializedPlans}
       pagination={{
         current_page: page,
         last_page: lastPage,

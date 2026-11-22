@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, RefObject } from 'react';
 import { useTranslation } from '@/contexts/LanguageContext';
+import { getInspectorScript } from '@/lib/inspector-script';
 import type {
     InspectorElement,
     PendingEdit,
@@ -202,26 +203,47 @@ export function usePreviewInspector({
             return;
         }
 
-        // Check if iframe already contains the inspector script
-        try {
-            if (iframeRef.current?.contentDocument?.getElementById('preview-inspector')) {
+        // Check if iframe already contains the inspector script; if not, inject it directly on same-origin
+        const ensureInspectorInIframe = () => {
+            try {
+                const doc = iframeRef.current?.contentDocument;
+                if (!doc || !doc.body) return false;
+                let scriptEl = doc.getElementById('preview-inspector');
+                if (!scriptEl) {
+                    scriptEl = doc.createElement('script');
+                    scriptEl.id = 'preview-inspector';
+                    scriptEl.textContent = getInspectorScript();
+                    doc.body.appendChild(scriptEl);
+                }
                 inspectorReadyRef.current = true;
                 setIsReady(true);
+                sendToIframe({ type: 'inspector-set-mode', mode: targetMode });
+                return true;
+            } catch {
+                // cross-origin or not loaded yet
+                return false;
             }
-        } catch {
-            // cross-origin
-        }
+        };
 
-        // Retry ping up to 5 times every 300ms if not marked ready yet
+        ensureInspectorInIframe();
+
+        // Retry ping & direct injection up to 10 times every 250ms if not marked ready yet
         let count = 0;
         const interval = setInterval(() => {
-            if (inspectorReadyRef.current || count >= 5) {
+            if (inspectorReadyRef.current) {
+                sendToIframe({ type: 'inspector-set-mode', mode: 'inspect' });
+                clearInterval(interval);
+                return;
+            }
+            if (count >= 10) {
                 clearInterval(interval);
                 return;
             }
             count++;
-            sendToIframe({ type: 'inspector-ping', mode: 'inspect' } as any);
-        }, 300);
+            if (!ensureInspectorInIframe()) {
+                sendToIframe({ type: 'inspector-ping', mode: 'inspect' } as any);
+            }
+        }, 250);
 
         return () => clearInterval(interval);
     }, [enabled, sendToIframe, iframeRef]);

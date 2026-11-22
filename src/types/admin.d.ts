@@ -20,7 +20,11 @@ export interface AdminUser {
     status: 'active' | 'inactive';
     projects_count: number;
     created_at: string;
-    // Extended fields for subscription management
+    // Extended fields for subscription & credit management
+    plan_id?: string | null;
+    plan_name?: string | null;
+    build_credits?: number;
+    plan_expires_at?: string | null;
     active_subscription?: Subscription | null;
     plan?: Plan | null;
 }

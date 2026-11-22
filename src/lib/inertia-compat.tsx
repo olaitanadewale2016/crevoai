@@ -614,6 +614,7 @@ export function Link({
   return (
     <NextLink
       href={href as LinkProps['href']}
+      prefetch={rest.prefetch ?? true}
       replace={replace}
       scroll={!preserveScroll}
       onClick={onClick}

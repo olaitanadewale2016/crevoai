@@ -324,6 +324,13 @@ export async function startBuilderSession(params: {
   const plan = await getUserCurrentPlan(user);
   const prompts = await getSettingGroup('prompts');
   const firebaseCfg = await getProjectFirebaseConfig(project);
+  const supabaseCfg = project.supabase_config
+    ? decryptJson<{ url?: string; anonKey?: string }>(project.supabase_config)
+    : null;
+  const supabaseEnabled =
+    Boolean(plan?.enable_firebase || plan?.enable_supabase) &&
+    Boolean(supabaseCfg?.url && supabaseCfg?.anonKey);
+  const supabaseTablePrefix = `proj_${String(project._id).replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}_`;
   const { history, isCompacted } = buildOptimizedHistoryForBuilder(project);
 
   const themeObj = project.theme_preset
@@ -338,8 +345,12 @@ export async function startBuilderSession(params: {
       ? Math.max(baseIterations, 28)
       : baseIterations;
 
+  const enrichedGoal = supabaseEnabled
+    ? `${goal}\n\n[Supabase Database Active]\nSupabase is pre-configured and injected at runtime via \`window.__APP_CONFIG__.supabase\` (\`{ url: "${supabaseCfg?.url}", anonKey: "...", tablePrefix: "${supabaseTablePrefix}" }\`). You can use \`@supabase/supabase-js\` or \`fetch("\${window.__APP_CONFIG__.supabase.url}/rest/v1/...", { headers: { apikey: window.__APP_CONFIG__.supabase.anonKey, Authorization: "Bearer " + window.__APP_CONFIG__.supabase.anonKey } })\` for database persistence and auth.`
+    : goal;
+
   const payload: Record<string, unknown> = {
-    goal,
+    goal: enrichedGoal,
     max_iterations: maxIterations,
     history,
     is_compacted: isCompacted,
@@ -362,6 +373,11 @@ export async function startBuilderSession(params: {
       firebase: {
         enabled: Boolean(plan?.enable_firebase) && Boolean(firebaseCfg),
         collection_prefix: `projects/${project._id}`,
+      },
+      supabase: {
+        enabled: supabaseEnabled,
+        url: supabaseEnabled ? supabaseCfg?.url : null,
+        table_prefix: supabaseTablePrefix,
       },
       storage: {
         enabled: Boolean(plan?.enable_file_storage),
@@ -458,6 +474,16 @@ function getCachedPreviewAsset(key: string): { buffer: Buffer; contentType: stri
     return null;
   }
   return item;
+}
+
+export function clearProjectPreviewCache(projectId: string) {
+  const prefix = `sites/${projectId}/`;
+  const livePrefix = `live/${projectId}/`;
+  for (const key of PREVIEW_ASSET_CACHE.keys()) {
+    if (key.startsWith(prefix) || key.startsWith(livePrefix)) {
+      PREVIEW_ASSET_CACHE.delete(key);
+    }
+  }
 }
 
 /**
@@ -613,19 +639,19 @@ export async function buildDynamicHtml(
     mode === 'preview' ? `/preview/${project._id}/` : mode === 'app' ? `/app/${project._id}/` : '/';
 
   let html = rawHtml;
-  // Normalize or inject <base href="...">
+  // Normalize or inject <base href="..."> (use function replacer so '$' is never interpreted)
   if (/<base\s+href=["'][^"']*["']\s*\/?>/i.test(html)) {
-    html = html.replace(/<base\s+href=["'][^"']*["']\s*\/?>/i, `<base href="${baseHref}">`);
+    html = html.replace(/<base\s+href=["'][^"']*["']\s*\/?>/i, () => `<base href="${baseHref}">`);
   } else if (/<head[^>]*>/i.test(html)) {
-    html = html.replace(/<head([^>]*)>/i, `<head$1>\n    <base href="${baseHref}">`);
+    html = html.replace(/<head([^>]*)>/i, (match) => `${match}\n    <base href="${baseHref}">`);
   }
 
   // Title
   const title = escapeHtmlAttr(project.published_title || project.name || 'Crevo Project');
   if (/<title>[\s\S]*?<\/title>/i.test(html)) {
-    html = html.replace(/<title>[\s\S]*?<\/title>/i, `<title>${title}</title>`);
+    html = html.replace(/<title>[\s\S]*?<\/title>/i, () => `<title>${title}</title>`);
   } else if (/<\/head>/i.test(html)) {
-    html = html.replace(/<\/head>/i, `    <title>${title}</title>\n</head>`);
+    html = html.replace(/<\/head>/i, () => `    <title>${title}</title>\n</head>`);
   }
 
   // SEO / OpenGraph / Twitter meta tags + window.__APP_CONFIG__
@@ -640,6 +666,16 @@ export async function buildDynamicHtml(
     firebasePrefix: `projects/${project._id}`,
   };
   if (firebaseCfg) appConfig.firebase = firebaseCfg;
+  if (project.supabase_config) {
+    const supa = decryptJson<{ url?: string; anonKey?: string }>(project.supabase_config);
+    if (supa?.url && supa?.anonKey) {
+      appConfig.supabase = {
+        url: supa.url,
+        anonKey: supa.anonKey,
+        tablePrefix: `proj_${String(project._id).replace(/[^a-zA-Z0-9]/g, '_').slice(0, 16)}_`,
+      };
+    }
+  }
 
   const metaParts: string[] = [];
   if (desc) {
@@ -668,15 +704,16 @@ export async function buildDynamicHtml(
   }
 
   if (/<\/head>/i.test(html)) {
-    html = html.replace(/<\/head>/i, `    ${metaParts.join('\n    ')}\n</head>`);
+    html = html.replace(/<\/head>/i, () => `    ${metaParts.join('\n    ')}\n</head>`);
   }
 
   // On-the-fly visual element inspector injection ONLY in authenticated /preview mode
+  // CRITICAL: Use function replacer () => ... so '$&' in getInspectorScript() is NOT replaced with '</body>'!
   if (mode === 'preview') {
     const inspectorJs = getInspectorScript();
     const scriptTag = `<script id="preview-inspector">${inspectorJs}</script>`;
     if (/<\/body>/i.test(html)) {
-      html = html.replace(/<\/body>/i, `${scriptTag}\n</body>`);
+      html = html.replace(/<\/body>/i, () => `${scriptTag}\n</body>`);
     } else {
       html += scriptTag;
     }
@@ -691,19 +728,24 @@ export async function serveBuiltSiteFromR2(params: {
   mode: 'preview' | 'app' | 'published';
 }): Promise<Response> {
   const { project, mode } = params;
-  if (!project.active_build_id && mode !== 'preview') {
-    return new Response('Preview not built yet.', { status: 404 });
-  }
 
   let relPath = (params.pathSegments || []).join('/').replace(/^\/+/, '');
   // Guard traversal
   if (relPath.includes('..') || relPath.includes('\0')) {
     return new Response('Forbidden', { status: 403 });
   }
-  // Published mode strips accidental preview/{id}/ prefix
-  if (mode === 'published' && relPath.startsWith(`preview/${project._id}/`)) {
+  // Strip accidental preview/{id}/ or app/{id}/ prefix
+  if (relPath.startsWith(`preview/${project._id}/`)) {
     relPath = relPath.slice(`preview/${project._id}/`.length);
+  } else if (relPath.startsWith(`app/${project._id}/`)) {
+    relPath = relPath.slice(`app/${project._id}/`.length);
   }
+
+  // Handle relative API or project file paths caused by <base href="/preview/{id}/"> or <base href="/app/{id}/">
+  if (relPath.startsWith('api/images/stock') || relPath.startsWith(`project/${project._id}/files/`)) {
+    return Response.redirect(`/${relPath}`, 307);
+  }
+
   if (!relPath || relPath.endsWith('/')) {
     relPath = `${relPath}index.html`;
   }
@@ -760,8 +802,8 @@ export async function serveBuiltSiteFromR2(params: {
   let buf: Buffer | null = cached?.buffer || null;
   let contentType = cached?.contentType || guessContentType(targetKey);
 
-  // 2. Direct Builder proxy for instant zero-latency preview (streams directly from Render workspace)
-  if (!buf && mode === 'preview') {
+  // 2. Direct Builder proxy for instant zero-latency preview & app tab (streams directly from Render workspace)
+  if (!buf) {
     try {
       const builder = project.builder_id
         ? await Builder.findById(project.builder_id)
@@ -793,8 +835,19 @@ export async function serveBuiltSiteFromR2(params: {
           }
 
           const arrayBuf = await streamRes.arrayBuffer();
-          const streamBuf = Buffer.from(arrayBuf);
-          cachePreviewAsset(targetKey, streamBuf, resContentType);
+          let streamBuf = Buffer.from(arrayBuf);
+          if (relPath.endsWith('.js') || relPath.endsWith('.mjs')) {
+            const text = streamBuf.toString('utf8');
+            if (text.includes('||"/preview"') || text.includes("||'/preview'")) {
+              streamBuf = Buffer.from(
+                text.replaceAll('||"/preview"', '||"/"').replaceAll("||'/preview'", "||'/'"),
+                'utf8'
+              );
+            }
+          }
+          if (project.active_build_id) {
+            cachePreviewAsset(targetKey, streamBuf, resContentType);
+          }
 
           const isHashedAsset = relPath.startsWith('assets/');
           return new Response(streamBuf, {

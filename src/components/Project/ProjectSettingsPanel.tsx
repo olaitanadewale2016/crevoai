@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { getAssetUrl } from '@/lib/assets';
 import { useState, useEffect, useCallback, FormEvent, useMemo } from 'react';
@@ -199,6 +199,92 @@ export function ProjectSettingsPanel({
     // Share image state
     const [isUploadingImage, setIsUploadingImage] = useState(false);
     const [isDeletingImage, setIsDeletingImage] = useState(false);
+
+    // Supabase Database state
+    const [supabaseUrl, setSupabaseUrl] = useState('');
+    const [supabaseAnonKey, setSupabaseAnonKey] = useState('');
+    const [supabaseConfigured, setSupabaseConfigured] = useState(false);
+    const [supabaseTablePrefix, setSupabaseTablePrefix] = useState(
+        `proj_${project.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}_`
+    );
+    const [isSavingSupabase, setIsSavingSupabase] = useState(false);
+    const [isTestingSupabase, setIsTestingSupabase] = useState(false);
+    const [showSupabaseKey, setShowSupabaseKey] = useState(false);
+
+    useEffect(() => {
+        if (!firebase?.enabled) return;
+        axios
+            .get(`/project/${project.id}/supabase/config`)
+            .then((res) => {
+                if (res.data?.config) {
+                    setSupabaseUrl(res.data.config.url || '');
+                    setSupabaseAnonKey(res.data.config.anonKey || '');
+                    setSupabaseConfigured(Boolean(res.data.configured));
+                }
+                if (res.data?.table_prefix) {
+                    setSupabaseTablePrefix(res.data.table_prefix);
+                }
+            })
+            .catch(() => {});
+    }, [project.id, firebase?.enabled]);
+
+    const handleTestSupabase = async () => {
+        if (!supabaseUrl.trim() || !supabaseAnonKey.trim()) {
+            toast.error(t('Please enter both Supabase Project URL and Anon Key'));
+            return;
+        }
+        setIsTestingSupabase(true);
+        try {
+            const res = await axios.post(`/project/${project.id}/supabase/test`, {
+                url: supabaseUrl.trim(),
+                anonKey: supabaseAnonKey.trim(),
+            });
+            if (res.data?.success) {
+                toast.success(t('Supabase connection verified!'));
+            } else {
+                toast.error(res.data?.error || t('Supabase connection failed'));
+            }
+        } catch (err: any) {
+            toast.error(err?.response?.data?.error || t('Supabase connection failed'));
+        } finally {
+            setIsTestingSupabase(false);
+        }
+    };
+
+    const handleSaveSupabase = async () => {
+        if (!supabaseUrl.trim() || !supabaseAnonKey.trim()) {
+            toast.error(t('Please enter both Supabase Project URL and Anon Key'));
+            return;
+        }
+        setIsSavingSupabase(true);
+        try {
+            await axios.put(`/project/${project.id}/supabase/config`, {
+                url: supabaseUrl.trim(),
+                anonKey: supabaseAnonKey.trim(),
+            });
+            setSupabaseConfigured(true);
+            toast.success(t('Supabase configuration saved'));
+        } catch (err: any) {
+            toast.error(err?.response?.data?.error || t('Failed to save Supabase configuration'));
+        } finally {
+            setIsSavingSupabase(false);
+        }
+    };
+
+    const handleClearSupabase = async () => {
+        setIsSavingSupabase(true);
+        try {
+            await axios.delete(`/project/${project.id}/supabase/config`);
+            setSupabaseUrl('');
+            setSupabaseAnonKey('');
+            setSupabaseConfigured(false);
+            toast.success(t('Supabase configuration removed'));
+        } catch {
+            toast.error(t('Failed to remove Supabase configuration'));
+        } finally {
+            setIsSavingSupabase(false);
+        }
+    };
 
     const isPublished = project.subdomain !== null;
     const canPublish = canUseSubdomains && (isPublished || canCreateMoreSubdomains);
@@ -934,6 +1020,114 @@ export function ProjectSettingsPanel({
                                 </CardContent>
                             </Card>
                         )}
+
+                        {/* Supabase Database Configuration Card */}
+                        <Card>
+                            <CardHeader>
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <CardTitle className="flex items-center gap-2">
+                                            <Database className="h-5 w-5 text-emerald-500" />
+                                            {t('Supabase Database (PostgreSQL & Auth)')}
+                                        </CardTitle>
+                                        <CardDescription className="mt-1">
+                                            {t('Connect your Supabase project to enable PostgreSQL tables, Row-Level Security, and Supabase Auth in your generated website.')}
+                                        </CardDescription>
+                                    </div>
+                                    {firebase?.enabled && (
+                                        <Badge variant={supabaseConfigured ? 'default' : 'secondary'}>
+                                            {supabaseConfigured ? t('Connected') : t('Optional')}
+                                        </Badge>
+                                    )}
+                                </div>
+                            </CardHeader>
+                            <CardContent>
+                                {firebase?.enabled ? (
+                                    <div className="space-y-4">
+                                        <div className="space-y-2">
+                                            <Label htmlFor="supabase-url">{t('Supabase Project URL')}</Label>
+                                            <Input
+                                                id="supabase-url"
+                                                placeholder="https://your-project-id.supabase.co"
+                                                value={supabaseUrl}
+                                                onChange={(e) => setSupabaseUrl(e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label htmlFor="supabase-anon-key">{t('Anon / Public API Key')}</Label>
+                                            <div className="flex items-center gap-2">
+                                                <Input
+                                                    id="supabase-anon-key"
+                                                    type={showSupabaseKey ? 'text' : 'password'}
+                                                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                                                    value={supabaseAnonKey}
+                                                    onChange={(e) => setSupabaseAnonKey(e.target.value)}
+                                                    className="font-mono text-xs"
+                                                />
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="icon"
+                                                    onClick={() => setShowSupabaseKey(!showSupabaseKey)}
+                                                >
+                                                    {showSupabaseKey ? (
+                                                        <EyeOff className="h-4 w-4" />
+                                                    ) : (
+                                                        <Eye className="h-4 w-4" />
+                                                    )}
+                                                </Button>
+                                            </div>
+                                            <p className="text-xs text-muted-foreground">
+                                                {t('Injected at runtime into your app as window.__APP_CONFIG__.supabase (table prefix: :prefix)', {
+                                                    prefix: supabaseTablePrefix,
+                                                })}
+                                            </p>
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                                            <Button
+                                                type="button"
+                                                onClick={handleSaveSupabase}
+                                                disabled={isSavingSupabase || !supabaseUrl.trim() || !supabaseAnonKey.trim()}
+                                            >
+                                                {isSavingSupabase && <Loader2 className="h-4 w-4 me-2 animate-spin" />}
+                                                {t('Save Supabase Config')}
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onClick={handleTestSupabase}
+                                                disabled={isTestingSupabase || !supabaseUrl.trim() || !supabaseAnonKey.trim()}
+                                            >
+                                                {isTestingSupabase && <Loader2 className="h-4 w-4 me-2 animate-spin" />}
+                                                {t('Test Connection')}
+                                            </Button>
+                                            {supabaseConfigured && (
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    className="text-destructive hover:text-destructive"
+                                                    onClick={handleClearSupabase}
+                                                    disabled={isSavingSupabase}
+                                                >
+                                                    <Trash2 className="h-4 w-4 me-1.5" />
+                                                    {t('Disconnect')}
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center py-8 border-2 border-dashed rounded-lg bg-muted/20">
+                                        <Database className="h-10 w-10 text-muted-foreground/30 mb-3" />
+                                        <p className="text-sm text-muted-foreground">
+                                            {t('Supabase database integration requires a plan with Database access enabled.')}
+                                        </p>
+                                        <Button variant="outline" size="sm" className="mt-4" asChild>
+                                            <Link href="/billing/plans">{t('Upgrade Plan')}</Link>
+                                        </Button>
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
                     </div>
                 );
 

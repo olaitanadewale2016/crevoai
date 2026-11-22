@@ -31,9 +31,11 @@ export interface IPlan {
   max_custom_domains_per_user: number | null;
   enable_firebase: boolean;
   allow_user_firebase_config: boolean;
+  enable_supabase?: boolean;
   enable_file_storage: boolean;
   max_storage_mb: number | null;
   max_file_size_mb: number;
+  max_images_per_prompt?: number;
   allowed_file_types: string[] | null;
   created_at: Date;
   updated_at: Date;
@@ -67,9 +69,11 @@ const PlanSchema = new Schema<IPlan>(
     max_custom_domains_per_user: { type: Number, default: null },
     enable_firebase: { type: Boolean, default: false },
     allow_user_firebase_config: { type: Boolean, default: false },
+    enable_supabase: { type: Boolean, default: false },
     enable_file_storage: { type: Boolean, default: false },
     max_storage_mb: { type: Number, default: null },
     max_file_size_mb: { type: Number, default: 10 },
+    max_images_per_prompt: { type: Number, default: 4 },
     allowed_file_types: { type: [String], default: null },
   },
   {

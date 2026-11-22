@@ -230,6 +230,10 @@ export default async function ProjectChatPage({
 
   // Storage settings & project files for @mention autocomplete
   const fileStorageEnabled = Boolean(plan?.enable_file_storage);
+  const maxImagesPerPrompt =
+    user.role === 'admin' || plan?.monthly_build_credits === -1
+      ? 10
+      : plan?.max_images_per_prompt || ((plan?.price ?? 0) > 0 ? 6 : 2);
   const storageSettings = fileStorageEnabled
     ? {
         enabled: true,
@@ -240,13 +244,24 @@ export default async function ProjectChatPage({
             : (plan?.max_storage_mb ?? 0),
         unlimited: plan?.max_storage_mb === null || plan?.max_storage_mb === -1,
         maxFileSizeMb: Number(plan?.max_file_size_mb ?? 10),
-        allowedTypes: plan?.allowed_file_types ?? null,
+        maxImagesPerPrompt,
+        allowedTypes: [
+          'image/png',
+          'image/jpeg',
+          'image/jpg',
+          'image/gif',
+          'image/webp',
+          'image/svg+xml',
+        ],
       }
     : undefined;
 
   const projectFiles = fileStorageEnabled
     ? (
-        await ProjectFile.find({ project_id: project._id })
+        await ProjectFile.find({
+          project_id: project._id,
+          mime_type: { $regex: '^image/', $options: 'i' },
+        })
           .sort({ created_at: -1 })
           .limit(100)
           .lean()
@@ -256,7 +271,7 @@ export default async function ProjectChatPage({
         mime_type: f.mime_type,
         size: Number(f.size),
         human_size: formatHumanFileSize(Number(f.size)),
-        is_image: (f.mime_type || '').startsWith('image/'),
+        is_image: true,
         url: `/project/${project._id}/files/${String(f._id)}`,
       }))
     : [];

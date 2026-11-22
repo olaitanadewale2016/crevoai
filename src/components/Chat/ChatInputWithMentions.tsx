@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { LexicalComposer } from '@lexical/react/LexicalComposer';
@@ -61,6 +61,8 @@ interface ChatInputWithMentionsProps {
     maxFileSizeMb?: number;
     /** Allowed file types from plan */
     allowedTypes?: string[] | null;
+    /** Max images allowed per prompt based on plan */
+    maxImagesPerPrompt?: number;
     /** Project files for @mention autocomplete */
     projectFiles?: AttachedFile[];
     /** Files uploaded via paperclip button (managed by parent) */
@@ -75,6 +77,8 @@ interface ChatInputWithMentionsProps {
     effort?: 'low' | 'medium' | 'high';
     /** Called when reasoning effort level changes */
     onEffortChange?: (effort: 'low' | 'medium' | 'high') => void;
+    /** Called when input focus changes (for mobile virtual keypad layout) */
+    onFocusChange?: (focused: boolean) => void;
 }
 
 // Theme for Lexical editor
@@ -194,6 +198,7 @@ export function ChatInputWithMentions({
     projectId,
     maxFileSizeMb,
     allowedTypes,
+    maxImagesPerPrompt = 4,
     projectFiles,
     uploadedFiles,
     onFileUploaded,
@@ -201,6 +206,7 @@ export function ChatInputWithMentions({
     onFilesDropped,
     effort = 'medium',
     onEffortChange,
+    onFocusChange,
 }: ChatInputWithMentionsProps) {
     const { t } = useTranslation();
     const editorRef = useRef<LexicalEditor | null>(null);
@@ -238,11 +244,23 @@ export function ChatInputWithMentions({
         if (!storageEnabled || !onFilesDropped || disabled) return;
         e.preventDefault();
         e.stopPropagation();
-        const files = Array.from(e.dataTransfer.files);
-        if (files.length > 0) {
-            onFilesDropped(files);
+        const allFiles = Array.from(e.dataTransfer.files);
+        const imageFiles = allFiles.filter(f => f.type.startsWith('image/'));
+        if (imageFiles.length < allFiles.length) {
+            toast.error(t('Only image files can be attached in chat.'));
         }
-    }, [storageEnabled, onFilesDropped, disabled]);
+        const currentCount = uploadedFiles?.length ?? 0;
+        const remainingSlots = Math.max(0, maxImagesPerPrompt - currentCount);
+        if (imageFiles.length > remainingSlots) {
+            toast.error(
+                t('Your plan allows up to :max images per prompt.', { max: maxImagesPerPrompt })
+            );
+        }
+        const allowedImageFiles = imageFiles.slice(0, remainingSlots);
+        if (allowedImageFiles.length > 0) {
+            onFilesDropped(allowedImageFiles);
+        }
+    }, [storageEnabled, onFilesDropped, disabled, uploadedFiles, maxImagesPerPrompt, t]);
 
     const handleDragOver = useCallback((e: React.DragEvent) => {
         if (!storageEnabled || disabled) return;
@@ -334,7 +352,15 @@ export function ChatInputWithMentions({
     }, []);
 
     return (
-        <form onSubmit={handleSubmit}>
+        <form
+            onSubmit={handleSubmit}
+            onFocusCapture={() => onFocusChange?.(true)}
+            onBlurCapture={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                    onFocusChange?.(false);
+                }
+            }}
+        >
             <div
                 className="relative bg-card rounded-xl border border-border/50 shadow-sm overflow-hidden transition-all focus-within:border-primary/50 focus-within:shadow-md"
                 onDrop={handleDrop}
@@ -410,8 +436,8 @@ export function ChatInputWithMentions({
                                         effort === 'low'
                                             ? 'text-emerald-500'
                                             : effort === 'high'
-                                            ? 'text-purple-500'
-                                            : 'text-amber-500'
+                                                ? 'text-purple-500'
+                                                : 'text-amber-500'
                                     )}
                                 />
                                 {(['low', 'medium', 'high'] as const).map((lvl) => (
@@ -443,8 +469,8 @@ export function ChatInputWithMentions({
                             onClick={toggleVoiceInput}
                             disabled={disabled || isLoading}
                             className={`h-8 w-8 p-0 transition-colors ${isListening
-                                    ? 'text-red-500 bg-red-500/15 animate-pulse hover:bg-red-500/20'
-                                    : 'text-muted-foreground hover:text-foreground'
+                                ? 'text-red-500 bg-red-500/15 animate-pulse hover:bg-red-500/20'
+                                : 'text-muted-foreground hover:text-foreground'
                                 }`}
                             title={isListening ? t('Listening... (Click to stop)') : t('Voice input')}
                         >
@@ -460,6 +486,8 @@ export function ChatInputWithMentions({
                                 projectId={projectId}
                                 maxFileSizeMb={maxFileSizeMb}
                                 allowedTypes={allowedTypes ?? null}
+                                maxImages={maxImagesPerPrompt}
+                                currentImageCount={uploadedFiles?.length ?? 0}
                                 disabled={disabled || isLoading}
                                 onFileUploaded={onFileUploaded}
                             />

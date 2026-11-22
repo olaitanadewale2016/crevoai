@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Theme presets with complete CSS variable sets.
  * Each preset contains ALL variables for :root (light) and .dark modes.
  *
@@ -12,6 +12,76 @@ export interface ThemePreset {
     previewColors: string[]; // Colors with hsl() wrapper for display
     light: Record<string, string>; // CSS variables for :root
     dark: Record<string, string>; // CSS variables for .dark
+}
+
+/**
+ * Automatically selects the most appropriate theme preset based on the user's prompt
+ * when the user leaves the theme selector on "Automatic".
+ */
+export function inferThemePresetFromPrompt(prompt: string): string {
+    const p = (prompt || '').toLowerCase();
+    const rules: Array<{ id: string; keywords: string[] }> = [
+        {
+            id: 'mocha',
+            keywords: ['coffee', 'cafe', 'bakery', 'bread', 'pastry', 'chocolate', 'wood', 'furniture', 'craft', 'leather', 'vintage', 'book', 'library', 'roastery'],
+        },
+        {
+            id: 'coral',
+            keywords: ['restaurant', 'food', 'pizza', 'burger', 'kitchen', 'recipe', 'cooking', 'dining', 'bistro', 'catering', 'delivery', 'taco', 'sushi', 'grill'],
+        },
+        {
+            id: 'feminine',
+            keywords: ['beauty', 'salon', 'cosmetic', 'makeup', 'skincare', 'wedding', 'bridal', 'floral', 'florist', 'boutique', 'fashion', 'jewelry', 'nail', 'hair'],
+        },
+        {
+            id: 'fragrant',
+            keywords: ['perfume', 'fragrance', 'spa', 'candle', 'aromatherapy', 'yoga', 'meditation', 'mindfulness', 'wellness', 'massage', 'luxury'],
+        },
+        {
+            id: 'forest',
+            keywords: ['nature', 'eco', 'green', 'garden', 'plant', 'agriculture', 'farm', 'organic', 'sustainability', 'outdoor', 'camping', 'landscaping', 'pet', 'vet', 'animal'],
+        },
+        {
+            id: 'arctic',
+            keywords: ['medical', 'clinic', 'dental', 'dentist', 'hospital', 'health', 'doctor', 'pharmacy', 'healthcare', 'clean', 'cleaning', 'plumbing', 'hvac'],
+        },
+        {
+            id: 'summer',
+            keywords: ['travel', 'vacation', 'hotel', 'resort', 'beach', 'tour', 'event', 'festival', 'kids', 'solar', 'energy', 'fitness', 'gym', 'workout', 'sport'],
+        },
+        {
+            id: 'midnight',
+            keywords: ['ai', 'saas', 'crypto', 'web3', 'blockchain', 'gaming', 'game', 'cyber', 'security', 'developer', 'code', 'startup', 'dark', 'movie', 'music', 'stream', 'podcast', 'dashboard', 'analytics'],
+        },
+        {
+            id: 'ocean',
+            keywords: ['finance', 'bank', 'fintech', 'insurance', 'investment', 'consulting', 'real estate', 'property', 'housing', 'marine', 'shipping', 'logistics', 'education', 'school', 'course', 'academy', 'learning'],
+        },
+        {
+            id: 'ruby',
+            keywords: ['media', 'news', 'entertainment', 'photography', 'photo', 'art', 'agency', 'marketing', 'advertising', 'wine', 'bar', 'nightlife', 'automotive', 'car', 'auto', 'dealership'],
+        },
+        {
+            id: 'slate',
+            keywords: ['legal', 'law', 'lawyer', 'attorney', 'accounting', 'tax', 'corporate', 'b2b', 'portfolio', 'resume', 'cv', 'architecture', 'construction'],
+        },
+    ];
+
+    for (const rule of rules) {
+        for (const kw of rule.keywords) {
+            if (p.includes(kw)) {
+                return rule.id;
+            }
+        }
+    }
+
+    // Deterministic variety fallback across rich curated themes so "Automatic" never looks bland
+    const richFallbacks = ['ocean', 'midnight', 'arctic', 'forest', 'coral', 'fragrant', 'ruby', 'summer', 'mocha', 'slate'];
+    let hash = 0;
+    for (let i = 0; i < p.length; i++) {
+        hash = (hash * 31 + p.charCodeAt(i)) >>> 0;
+    }
+    return richFallbacks[hash % richFallbacks.length];
 }
 
 export const THEME_PRESETS: ThemePreset[] = [

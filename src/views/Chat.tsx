@@ -20,7 +20,15 @@ import { useUserChannel } from '@/hooks/useUserChannel';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { PageProps, User } from '@/types';
 import type { UserNotification } from '@/types/notifications';
-import { Home, Eye, Code, Loader2, Hammer, ExternalLink, Brain, Settings, Globe, PanelLeftClose, PanelLeftOpen, HelpCircle, MessageSquare } from 'lucide-react';
+import { Home, Eye, Code, Loader2, Hammer, ExternalLink, Brain, Settings, Globe, PanelLeftClose, PanelLeftOpen, HelpCircle, MessageSquare, Sparkles, Coins, KeyRound } from 'lucide-react';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import axios from 'axios';
@@ -101,6 +109,7 @@ interface StorageSettings {
     limitMb: number | null;
     unlimited: boolean;
     maxFileSizeMb?: number;
+    maxImagesPerPrompt?: number;
     allowedTypes?: string[] | null;
 }
 
@@ -253,6 +262,8 @@ export default function Chat({
     const [isChatCollapsed, setIsChatCollapsed] = useState(false);
     const [tourOpen, setTourOpen] = useState(false);
     const [effort, setEffort] = useState<'low' | 'medium' | 'high'>(project.reasoning_effort || 'medium');
+    const [isInputFocused, setIsInputFocused] = useState(false);
+    const [outOfCreditsModalOpen, setOutOfCreditsModalOpen] = useState(false);
 
     // Auto-launch walkthrough tour for new users
     useEffect(() => {
@@ -406,7 +417,11 @@ export default function Chat({
     const handleError = useCallback((error: string) => {
         playSound('error');
         toast.error(error);
-    }, [playSound]);
+        if (error && error.toLowerCase().includes('credit')) {
+            setOutOfCreditsModalOpen(true);
+            refreshCredits();
+        }
+    }, [playSound, refreshCredits]);
 
     const handleMessage = useCallback(() => {
         playSound('message');
@@ -611,9 +626,15 @@ export default function Chat({
         setSuggestions([]);
     };
 
+    const isOutOfCredits = !credits.isUnlimited && !credits.usingOwnKey && credits.remaining <= 0;
+
     const handleSubmit = async (e: React.FormEvent, fileData?: { fileIds: (number | string)[]; attachedFiles: AttachedFile[] }) => {
         e.preventDefault();
         if ((!prompt.trim() && !selectedElement && !fileData?.fileIds.length) || isLoading) return;
+        if (isOutOfCredits) {
+            setOutOfCreditsModalOpen(true);
+            return;
+        }
 
         const msg = prompt.trim();
         const elementContext = selectedElement ? {
@@ -737,7 +758,7 @@ export default function Chat({
             <Head title={project.name} />
             <Toaster />
 
-            <div className="h-screen flex bg-background text-foreground">
+            <div className="h-[100dvh] flex bg-background text-foreground overflow-hidden">
                 {/* Collapsed Chat strip - displays only the icon on the chat section */}
                 {isChatCollapsed && (
                     <div className="h-full border-e bg-card/60 backdrop-blur flex flex-col items-center py-2.5 px-1.5 shrink-0 z-20">
@@ -945,7 +966,39 @@ export default function Chat({
                     )}
 
                     {/* Input */}
-                    <div data-tour="chat-input" className="pt-2 px-4 pb-16 md:pb-4 border-t bg-background">
+                    <div
+                        data-tour="chat-input"
+                        className={`pt-2 px-4 ${isInputFocused ? 'pb-2' : 'pb-16'} md:pb-4 border-t bg-background transition-all`}
+                    >
+                        {isOutOfCredits && (
+                            <div className="mb-2.5 rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-xs">
+                                <div className="flex items-start justify-between gap-2">
+                                    <div className="space-y-1">
+                                        <p className="font-semibold text-destructive flex items-center gap-1.5">
+                                            <Coins className="h-3.5 w-3.5 shrink-0" />
+                                            {t('You have run out of build credits')}
+                                        </p>
+                                        <p className="text-muted-foreground">
+                                            {t('Upgrade your plan to get more monthly build credits, or connect your own AI API key to continue building immediately.')}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                                    <Button size="sm" className="h-7 text-xs" asChild>
+                                        <Link href="/billing/plans">
+                                            <Sparkles className="h-3 w-3 me-1.5" />
+                                            {t('Upgrade Plan / Buy Credits')}
+                                        </Link>
+                                    </Button>
+                                    <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
+                                        <Link href="/profile">
+                                            <KeyRound className="h-3 w-3 me-1.5" />
+                                            {t('Use Own API Key')}
+                                        </Link>
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
                         <div className="pb-1 flex items-center justify-between">
                             <BuildCreditsIndicator {...credits} isRefreshing={isRefreshingCredits} />
                             <div className="flex items-center gap-2">
@@ -966,6 +1019,7 @@ export default function Chat({
                             storageEnabled={storage?.enabled ?? false}
                             projectId={project.id}
                             maxFileSizeMb={storage?.maxFileSizeMb ?? 10}
+                            maxImagesPerPrompt={storage?.maxImagesPerPrompt ?? 4}
                             allowedTypes={storage?.allowedTypes ?? null}
                             projectFiles={localProjectFiles}
                             uploadedFiles={uploadedFiles}
@@ -974,6 +1028,7 @@ export default function Chat({
                             onFilesDropped={handleFilesDropped}
                             effort={effort}
                             onEffortChange={setEffort}
+                            onFocusChange={setIsInputFocused}
                         />
                     </div>
                 </div>
@@ -988,8 +1043,8 @@ export default function Chat({
                                 <button
                                     onClick={() => setViewMode('preview')}
                                     className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${viewMode === 'preview'
-                                            ? 'bg-primary text-primary-foreground'
-                                            : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
+                                        ? 'bg-primary text-primary-foreground'
+                                        : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
                                         }`}
                                 >
                                     <Eye className="h-4 w-4" />
@@ -999,8 +1054,8 @@ export default function Chat({
                                 <button
                                     onClick={() => setViewMode('code')}
                                     className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${viewMode === 'code'
-                                            ? 'bg-primary text-primary-foreground'
-                                            : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
+                                        ? 'bg-primary text-primary-foreground'
+                                        : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
                                         }`}
                                 >
                                     <Code className="h-4 w-4" />
@@ -1010,8 +1065,8 @@ export default function Chat({
                                 <button
                                     onClick={() => setViewMode('settings')}
                                     className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${viewMode === 'settings'
-                                            ? 'bg-primary text-primary-foreground'
-                                            : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
+                                        ? 'bg-primary text-primary-foreground'
+                                        : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
                                         }`}
                                 >
                                     <Settings className="h-4 w-4" />
@@ -1047,7 +1102,20 @@ export default function Chat({
                                             <Button
                                                 variant="outline"
                                                 size="sm"
-                                                onClick={() => window.open(project.subdomain ? `https://${project.subdomain}.${baseDomain}` : `/app/${project.id}`, '_blank')}
+                                                onClick={() => {
+                                                    const canOpenSubdomain = Boolean(
+                                                        subdomainsGloballyEnabled &&
+                                                            project.subdomain &&
+                                                            baseDomain &&
+                                                            baseDomain !== 'example.com'
+                                                    );
+                                                    window.open(
+                                                        canOpenSubdomain
+                                                            ? `https://${project.subdomain}.${baseDomain}`
+                                                            : `/app/${project.id}`,
+                                                        '_blank'
+                                                    );
+                                                }}
                                                 className="h-8"
                                             >
                                                 <ExternalLink className="h-4 w-4 me-1.5" />
@@ -1169,55 +1237,98 @@ export default function Chat({
                     </div>
                 </div>
 
-                {/* Mobile Bottom View Toggle (Chat vs Preview vs Code) */}
-                <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-40 md:hidden flex items-center bg-card/95 backdrop-blur-md border border-border/80 shadow-lg rounded-full p-1 gap-1">
-                    <button
-                        type="button"
-                        onClick={() => setIsChatCollapsed(false)}
-                        className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
-                            !isChatCollapsed
-                                ? 'bg-primary text-primary-foreground shadow-sm'
-                                : 'text-muted-foreground hover:text-foreground'
-                        }`}
-                    >
-                        <MessageSquare className="h-3.5 w-3.5" />
-                        <span>{t('Chat')}</span>
-                        {isLoading && (
-                            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse ms-0.5" />
-                        )}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setIsChatCollapsed(true);
-                            setViewMode('preview');
-                        }}
-                        className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
-                            isChatCollapsed && viewMode === 'preview'
-                                ? 'bg-primary text-primary-foreground shadow-sm'
-                                : 'text-muted-foreground hover:text-foreground'
-                        }`}
-                    >
-                        <Eye className="h-3.5 w-3.5" />
-                        <span>{t('Preview')}</span>
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setIsChatCollapsed(true);
-                            setViewMode('code');
-                        }}
-                        className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all ${
-                            isChatCollapsed && viewMode === 'code'
-                                ? 'bg-primary text-primary-foreground shadow-sm'
-                                : 'text-muted-foreground hover:text-foreground'
-                        }`}
-                    >
-                        <Code className="h-3.5 w-3.5" />
-                        <span>{t('Code')}</span>
-                    </button>
-                </div>
+                {/* Mobile Bottom View Toggle (Chat vs Preview vs Code) — hides when virtual keypad / input is focused */}
+                {!isInputFocused && (
+                    <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-40 md:hidden flex items-center bg-card/95 backdrop-blur-md border border-border/80 shadow-lg rounded-full p-1 gap-1">
+                        <button
+                            type="button"
+                            onClick={() => setIsChatCollapsed(false)}
+                            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
+                                !isChatCollapsed
+                                    ? 'bg-primary text-primary-foreground shadow-sm'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                        >
+                            <MessageSquare className="h-3.5 w-3.5" />
+                            <span>{t('Chat')}</span>
+                            {isLoading && (
+                                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse ms-0.5" />
+                            )}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setIsChatCollapsed(true);
+                                setViewMode('preview');
+                            }}
+                            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
+                                isChatCollapsed && viewMode === 'preview'
+                                    ? 'bg-primary text-primary-foreground shadow-sm'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                        >
+                            <Eye className="h-3.5 w-3.5" />
+                            <span>{t('Preview')}</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setIsChatCollapsed(true);
+                                setViewMode('code');
+                            }}
+                            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all ${
+                                isChatCollapsed && viewMode === 'code'
+                                    ? 'bg-primary text-primary-foreground shadow-sm'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                        >
+                            <Code className="h-3.5 w-3.5" />
+                            <span>{t('Code')}</span>
+                        </button>
+                    </div>
+                )}
             </div>
+
+            {/* Out of Build Credits / Upgrade Modal */}
+            <Dialog open={outOfCreditsModalOpen} onOpenChange={setOutOfCreditsModalOpen}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Coins className="h-5 w-5 text-amber-500" />
+                            {t('Out of Build Credits')}
+                        </DialogTitle>
+                        <DialogDescription>
+                            {t('You have used all of your available build credits for your current plan. Upgrade your subscription plan or connect your own AI API key to continue building.')}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="rounded-lg border bg-muted/40 p-3 text-xs space-y-1.5">
+                        <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">{t('Remaining Credits')}</span>
+                            <span className="font-semibold text-destructive">0</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">{t('Monthly Plan Allocation')}</span>
+                            <span className="font-medium">
+                                {credits.monthlyLimit > 0 ? credits.monthlyLimit.toLocaleString() : t('Free Tier')}
+                            </span>
+                        </div>
+                    </div>
+                    <DialogFooter className="flex-col sm:flex-row gap-2">
+                        <Button variant="outline" asChild className="w-full sm:w-auto">
+                            <Link href="/profile">
+                                <KeyRound className="h-4 w-4 me-2" />
+                                {t('Use Own API Key')}
+                            </Link>
+                        </Button>
+                        <Button asChild className="w-full sm:w-auto">
+                            <Link href="/billing/plans">
+                                <Sparkles className="h-4 w-4 me-2" />
+                                {t('Upgrade Plan / Buy Credits')}
+                            </Link>
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* Publish Modal */}
             <PublishModal
