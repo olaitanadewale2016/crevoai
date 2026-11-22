@@ -65,7 +65,6 @@ export const getSharedAppProps = cache(async function getSharedAppProps(): Promi
         UserNotification.countDocuments({
           user_id: user._id,
           read_at: null,
-          type: { $nin: ['build_complete', 'build_failed'] },
         }),
       ]);
 

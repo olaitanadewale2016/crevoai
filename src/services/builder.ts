@@ -612,6 +612,15 @@ export async function buildDynamicHtml(
   const safeConfigJson = JSON.stringify(appConfig).replace(/</g, '\\u003c');
   metaParts.push(`<script>window.__APP_CONFIG__ = ${safeConfigJson};</script>`);
 
+  // Inject Theme Preset CSS Variables on-the-fly (instant 0ms theme changes without rebuilding)
+  const themePresetId = project.theme_preset || 'default';
+  const themePreset = THEME_PRESETS.find((p) => p.id === themePresetId);
+  if (themePreset) {
+    const lightCss = Object.entries(themePreset.light).map(([k, v]) => `    --${k}: ${v};`).join('\n');
+    const darkCss = Object.entries(themePreset.dark).map(([k, v]) => `    --${k}: ${v};`).join('\n');
+    metaParts.push(`<style id="theme-preset-vars">\n  :root {\n${lightCss}\n  }\n  .dark {\n${darkCss}\n  }\n</style>`);
+  }
+
   if (/<\/head>/i.test(html)) {
     html = html.replace(/<\/head>/i, `    ${metaParts.join('\n    ')}\n</head>`);
   }
@@ -654,18 +663,36 @@ export async function serveBuiltSiteFromR2(params: {
   }
 
   // Special handling: serve local stock image library assets if requested via preview relative URL
-  if (relPath.startsWith('storage/image-library/') || relPath.startsWith('storage/')) {
+  if (
+    relPath.startsWith('storage/image-library/') ||
+    relPath.startsWith('storage/') ||
+    relPath.startsWith('image-library/') ||
+    relPath.startsWith('backgrounds/') ||
+    relPath.startsWith('gallery/')
+  ) {
     try {
-      const localFilePath = path.join(process.cwd(), 'public', relPath);
-      if (fs.existsSync(localFilePath)) {
-        const fileBuf = await fs.promises.readFile(localFilePath);
-        return new Response(fileBuf, {
-          status: 200,
-          headers: {
-            'Content-Type': guessContentType(localFilePath),
-            'Cache-Control': 'public, max-age=31536000, immutable',
-          },
-        });
+      let cleanAssetPath = relPath;
+      if (cleanAssetPath.startsWith('storage/')) {
+        cleanAssetPath = cleanAssetPath.slice('storage/'.length);
+      }
+      const candidates = [
+        path.join(process.cwd(), 'public', 'storage', cleanAssetPath),
+        path.join(process.cwd(), 'public', cleanAssetPath),
+        path.join(process.cwd(), 'public', 'storage', 'image-library', cleanAssetPath),
+        path.join(process.cwd(), 'public', 'storage', 'image-library', 'backgrounds', path.basename(cleanAssetPath)),
+        path.join(process.cwd(), 'public', 'storage', 'image-library', 'gallery', path.basename(cleanAssetPath)),
+      ];
+      for (const localFilePath of candidates) {
+        if (fs.existsSync(localFilePath) && fs.statSync(localFilePath).isFile()) {
+          const fileBuf = await fs.promises.readFile(localFilePath);
+          return new Response(fileBuf, {
+            status: 200,
+            headers: {
+              'Content-Type': guessContentType(localFilePath),
+              'Cache-Control': 'public, max-age=31536000, immutable',
+            },
+          });
+        }
       }
     } catch {
       // Fall through to R2

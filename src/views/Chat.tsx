@@ -712,6 +712,21 @@ export default function Chat({
             <Toaster />
 
             <div className="h-screen flex bg-background text-foreground">
+                {/* Collapsed Chat strip - displays only the icon on the chat section */}
+                {isChatCollapsed && (
+                    <div className="h-full border-e bg-card/60 backdrop-blur flex flex-col items-center py-2.5 px-1.5 shrink-0 z-20">
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setIsChatCollapsed(false)}
+                            className="h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-muted"
+                            title={t('Show Chat')}
+                        >
+                            <PanelLeftOpen className="h-4 w-4" />
+                        </Button>
+                    </div>
+                )}
+
                 {/* Start: Chat Column - Full width on mobile, fixed width on larger screens, collapsible */}
                 <div className={`transition-all duration-300 ease-in-out shrink-0 md:border-e flex flex-col ${
                     isChatCollapsed ? 'w-0 overflow-hidden hidden md:hidden' : 'w-full md:w-[420px]'
@@ -942,27 +957,6 @@ export default function Chat({
                     {/* Preview Header */}
                     <div className="h-14 px-4 border-b flex items-center justify-between shrink-0 bg-background">
                         <div className="flex items-center gap-3">
-                            {/* Collapse/Expand Chat Toggle Button */}
-                            <Button
-                                variant={isChatCollapsed ? 'default' : 'outline'}
-                                size="sm"
-                                onClick={() => setIsChatCollapsed((prev) => !prev)}
-                                className="h-8 px-2.5 text-xs flex items-center gap-1.5"
-                                title={isChatCollapsed ? t('Show Chat') : t('Full Preview')}
-                            >
-                                {isChatCollapsed ? (
-                                    <>
-                                        <PanelLeftOpen className="h-4 w-4" />
-                                        <span className="font-medium">{t('Show Chat')}</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <PanelLeftClose className="h-4 w-4" />
-                                        <span className="hidden lg:inline">{t('Full Preview')}</span>
-                                    </>
-                                )}
-                            </Button>
-
                             {/* View toggle */}
                             <div data-tour="preview-tabs" className="flex items-center border rounded-lg overflow-hidden">
                             <button

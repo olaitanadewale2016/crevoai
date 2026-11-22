@@ -5,7 +5,7 @@ import { parseRequestBody } from '@/lib/http';
 import { Project } from '@/models/Project';
 import { Builder } from '@/models/BuilderAi';
 import { THEME_PRESETS } from '@/lib/theme-presets';
-import { applyThemePresetToWorkspace, triggerBuildAndDeployToR2 } from '@/services/builder';
+import { applyThemePresetToWorkspace } from '@/services/builder';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,13 +47,7 @@ export async function PUT(
   let warning: string | undefined;
   if (builder) {
     const applied = await applyThemePresetToWorkspace(project, builder, theme);
-    if (applied.ok) {
-      try {
-        await triggerBuildAndDeployToR2(project, builder);
-      } catch (err: any) {
-        warning = `Theme applied to workspace, but rebuild failed: ${err.message}`;
-      }
-    } else {
+    if (!applied.ok) {
       warning = applied.warning;
     }
   }

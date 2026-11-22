@@ -16,7 +16,7 @@ export type NotificationType =
  * User notification from the API.
  */
 export interface UserNotification {
-    id: number;
+    id: number | string;
     type: NotificationType;
     title: string;
     message: string;

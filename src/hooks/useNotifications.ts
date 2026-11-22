@@ -10,7 +10,7 @@ export interface UseNotificationsReturn {
     isLoading: boolean;
     error: string | null;
     addNotification: (notification: UserNotification) => void;
-    markAsRead: (id: number) => Promise<void>;
+    markAsRead: (id: number | string) => Promise<void>;
     markAllAsRead: () => Promise<void>;
     refetch: () => Promise<void>;
 }
@@ -40,21 +40,18 @@ export function useNotifications(initialUnreadCount: number = 0): UseNotificatio
     }, []);
 
     const addNotification = useCallback((notification: UserNotification) => {
-        if (notification.type === 'build_complete' || notification.type === 'build_failed') {
-            return;
-        }
         setNotifications(prev => [notification, ...prev]);
         if (!notification.read_at) {
             setUnreadCount(prev => prev + 1);
         }
     }, []);
 
-    const markAsRead = useCallback(async (id: number) => {
+    const markAsRead = useCallback(async (id: number | string) => {
         try {
             const response = await axios.post(`/api/notifications/${id}/read`);
             setNotifications(prev =>
                 prev.map(n =>
-                    n.id === id ? { ...n, read_at: new Date().toISOString() } : n
+                    String(n.id) === String(id) ? { ...n, read_at: new Date().toISOString() } : n
                 )
             );
             setUnreadCount(response.data.unread_count);
@@ -75,9 +72,24 @@ export function useNotifications(initialUnreadCount: number = 0): UseNotificatio
         }
     }, []);
 
-    // Initial fetch
+    // Initial fetch and focus / periodic polling
     useEffect(() => {
         fetchNotifications();
+
+        const handleFocus = () => {
+            fetchNotifications();
+        };
+        window.addEventListener('focus', handleFocus);
+
+        // Lightweight periodic poll every 45s
+        const interval = setInterval(() => {
+            fetchNotifications();
+        }, 45_000);
+
+        return () => {
+            window.removeEventListener('focus', handleFocus);
+            clearInterval(interval);
+        };
     }, [fetchNotifications]);
 
     return {

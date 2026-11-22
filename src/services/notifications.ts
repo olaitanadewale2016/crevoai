@@ -33,9 +33,7 @@ export async function createUserNotification(params: {
     created_at: doc.created_at.toISOString(),
   };
 
-  if (params.type !== 'build_complete' && params.type !== 'build_failed') {
-    await broadcastToUser(params.userId, 'notification', serialized);
-  }
+  await broadcastToUser(params.userId, 'notification', serialized);
 
   return serialized;
 }

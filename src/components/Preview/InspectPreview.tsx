@@ -616,49 +616,45 @@ export function InspectPreview({
                         </div>
                     )}
 
-                    {/* iframe container with responsive device framing */}
-                    <div className={`flex-1 min-h-0 relative ${
-                        deviceMode === 'desktop'
-                            ? ''
-                            : 'flex items-center justify-center p-3 sm:p-6 overflow-hidden bg-muted/10'
-                    }`}>
-                        {deviceMode === 'desktop' ? (
-                            <iframe
-                                ref={iframeRef}
-                                key={refreshTrigger}
-                                src={`${previewUrl}?t=${refreshTrigger}`}
-                                className="absolute inset-0 w-full h-full border-0"
-                                title="Preview"
-                                sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
-                            />
-                        ) : deviceMode === 'tablet' ? (
-                            <div className="w-[768px] max-w-full h-full max-h-[1024px] rounded-[24px] border-[8px] border-zinc-800 dark:border-zinc-700 shadow-2xl overflow-hidden bg-background relative transition-all duration-300">
-                                <iframe
-                                    ref={iframeRef}
-                                    key={refreshTrigger}
-                                    src={`${previewUrl}?t=${refreshTrigger}`}
-                                    className="w-full h-full border-0"
-                                    title="Preview"
-                                    sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
-                                />
-                            </div>
-                        ) : (
-                            <div className="w-[390px] max-w-full h-full max-h-[844px] rounded-[40px] border-[10px] border-zinc-900 dark:border-zinc-800 shadow-2xl overflow-hidden bg-background relative transition-all duration-300 flex flex-col">
-                                {/* Smartphone Camera Notch Bar */}
+                    {/* iframe container with responsive device framing (single persistent iframe) */}
+                    <div className="flex-1 min-h-0 relative flex items-center justify-center p-0 sm:p-2 overflow-hidden bg-muted/15">
+                        <div
+                            className={`transition-all duration-300 relative h-full flex flex-col items-center justify-center ${
+                                deviceMode === 'desktop'
+                                    ? 'w-full'
+                                    : deviceMode === 'tablet'
+                                    ? 'w-[768px] max-w-[96%] max-h-[1024px] rounded-[24px] border-[8px] border-zinc-800 dark:border-zinc-700 shadow-2xl overflow-hidden bg-background my-auto'
+                                    : 'w-[390px] max-w-[96%] max-h-[844px] rounded-[40px] border-[10px] border-zinc-900 dark:border-zinc-800 shadow-2xl overflow-hidden bg-background my-auto'
+                            }`}
+                        >
+                            {deviceMode === 'mobile' && (
                                 <div className="absolute top-2 left-1/2 -translate-x-1/2 w-28 h-4 bg-zinc-900 dark:bg-zinc-800 rounded-full z-30 pointer-events-none flex items-center justify-center gap-2">
                                     <div className="w-2.5 h-2.5 rounded-full bg-zinc-800 dark:bg-zinc-700" />
                                     <div className="w-2 h-2 rounded-full bg-blue-950/70" />
                                 </div>
-                                <iframe
-                                    ref={iframeRef}
-                                    key={refreshTrigger}
-                                    src={`${previewUrl}?t=${refreshTrigger}`}
-                                    className="w-full h-full border-0 pt-2"
-                                    title="Preview"
-                                    sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
-                                />
-                            </div>
-                        )}
+                            )}
+                            <iframe
+                                ref={iframeRef}
+                                key={refreshTrigger}
+                                src={`${previewUrl}?t=${refreshTrigger}`}
+                                className={`w-full h-full border-0 ${
+                                    deviceMode === 'desktop'
+                                        ? 'absolute inset-0'
+                                        : deviceMode === 'mobile'
+                                        ? 'pt-3'
+                                        : ''
+                                }`}
+                                title="Preview"
+                                sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+                                onLoad={() => {
+                                    setIframeReady(true);
+                                    iframeRef.current?.contentWindow?.postMessage({
+                                        type: 'inspector-ping',
+                                        mode: mode === 'inspect' ? 'inspect' : 'preview',
+                                    }, '*');
+                                }}
+                            />
+                        </div>
 
                         {/* Confetti canvas */}
                         <canvas

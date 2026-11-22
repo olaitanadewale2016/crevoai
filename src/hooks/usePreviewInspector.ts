@@ -188,20 +188,43 @@ export function usePreviewInspector({
     }, [handleMessage]);
 
     /**
-     * Update iframe mode when enabled state changes.
+     * Update iframe mode when enabled state changes and handshake active ping.
      */
     useEffect(() => {
-        if (!inspectorReadyRef.current) return;
+        const targetMode = enabled ? 'inspect' : 'preview';
+        sendToIframe({ type: 'inspector-set-mode', mode: targetMode });
+        sendToIframe({ type: 'inspector-ping', mode: targetMode } as any);
 
-        if (enabled) {
-            sendToIframe({ type: 'inspector-set-mode', mode: 'inspect' });
-        } else {
-            sendToIframe({ type: 'inspector-set-mode', mode: 'preview' });
+        if (!enabled) {
             // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing UI state when inspector is disabled
             setContextMenu(null);
             setHoveredElement(null);
+            return;
         }
-    }, [enabled, sendToIframe]);
+
+        // Check if iframe already contains the inspector script
+        try {
+            if (iframeRef.current?.contentDocument?.getElementById('preview-inspector')) {
+                inspectorReadyRef.current = true;
+                setIsReady(true);
+            }
+        } catch {
+            // cross-origin
+        }
+
+        // Retry ping up to 5 times every 300ms if not marked ready yet
+        let count = 0;
+        const interval = setInterval(() => {
+            if (inspectorReadyRef.current || count >= 5) {
+                clearInterval(interval);
+                return;
+            }
+            count++;
+            sendToIframe({ type: 'inspector-ping', mode: 'inspect' } as any);
+        }, 300);
+
+        return () => clearInterval(interval);
+    }, [enabled, sendToIframe, iframeRef]);
 
     /**
      * Send translations to iframe when ready or when translations change.

@@ -127,9 +127,17 @@ export function useChatHistory({ projectId, maxMessages = DEFAULT_MAX_MESSAGES, 
         };
     }, []);
 
-    // Add a message and enforce max limit
+    // Add a message and enforce max limit (with consecutive duplicate prevention)
     const addMessage = useCallback((message: ChatMessage) => {
         setMessages(prev => {
+            const last = prev[prev.length - 1];
+            if (
+                last &&
+                last.type === message.type &&
+                last.content.trim() === message.content.trim()
+            ) {
+                return prev;
+            }
             // Add new message and limit to maxMessages
             const updated = [...prev, message].slice(-maxMessages);
             saveToStorage(updated);

@@ -19,6 +19,10 @@ export async function GET(
   // 1. Try local public/storage or assets fallback (e.g. image-library)
   const localCandidates = [
     path.join(process.cwd(), 'public', 'storage', rawKey),
+    path.join(process.cwd(), 'public', 'storage', 'image-library', rawKey),
+    path.join(process.cwd(), 'public', 'storage', 'image-library', 'backgrounds', path.basename(rawKey)),
+    path.join(process.cwd(), 'public', 'storage', 'image-library', 'gallery', path.basename(rawKey)),
+    path.join(process.cwd(), 'public', rawKey),
     path.join(process.cwd(), 'assets', rawKey),
   ];
 

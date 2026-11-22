@@ -13,6 +13,9 @@ import {
     Clock,
     Globe,
     Loader2,
+    CheckCircle2,
+    XCircle,
+    RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { UserNotification, NotificationType } from '@/types/notifications';
@@ -20,7 +23,7 @@ import type { UserNotification, NotificationType } from '@/types/notifications';
 interface NotificationBellProps {
     notifications: UserNotification[];
     unreadCount: number;
-    onMarkAsRead: (id: number) => void;
+    onMarkAsRead: (id: number | string) => void;
     onMarkAllAsRead: () => void;
     isLoading?: boolean;
 }
@@ -49,6 +52,10 @@ function formatTimeAgo(dateString: string, t: (key: string, replacements?: Recor
 
 function getNotificationIcon(type: NotificationType) {
     switch (type) {
+        case 'build_complete':
+            return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
+        case 'build_failed':
+            return <XCircle className="h-4 w-4 text-destructive" />;
         case 'credits_low':
             return <AlertTriangle className="h-4 w-4 text-warning" />;
         case 'subscription_renewed':
@@ -84,9 +91,12 @@ export function NotificationBell({
         const rect = button.getBoundingClientRect();
 
         if (!open) {
+            const computedLeft = isRtl
+                ? Math.max(10, Math.min(window.innerWidth - menuWidth - 10, rect.left))
+                : Math.max(10, Math.min(window.innerWidth - menuWidth - 10, rect.right - menuWidth));
             setPosition({
                 top: rect.bottom + 4,
-                left: isRtl ? rect.left : rect.right - menuWidth,
+                left: computedLeft,
             });
         }
         setOpen(!open);
@@ -148,9 +158,9 @@ export function NotificationBell({
         if (!notification.read_at) {
             onMarkAsRead(notification.id);
         }
+        setOpen(false);
         if (notification.action_url) {
             router.visit(notification.action_url);
-            setOpen(false);
         }
     };
 
@@ -208,7 +218,7 @@ export function NotificationBell({
                             </div>
                         ) : (
                             <div className="py-1">
-                                {notifications.filter((n) => n.type !== 'build_complete' && n.type !== 'build_failed').map((notification) => (
+                                {notifications.map((notification) => (
                                     <div
                                         key={notification.id}
                                         className={cn(
