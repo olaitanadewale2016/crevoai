@@ -10,6 +10,7 @@ import {
   r2GetBuffer,
   r2DeletePrefix,
   r2Exists,
+  r2ListPrefixes,
   guessContentType,
   getPublicAssetUrl,
 } from '@/lib/r2';
@@ -631,13 +632,14 @@ export async function triggerBuildAndDeployToR2(
 ): Promise<{ success: boolean; preview_url?: string; build_id?: string; error?: string }> {
   // Prevent concurrent builds on the same project workspace
   const lockKey = `build_lock:${project._id}`;
-  const acquired = await cacheAdd(lockKey, true, 180);
+  const prevBuildId = project.active_build_id || null;
+  const acquired = await cacheAdd(lockKey, true, 45);
   if (!acquired) {
-    // Wait for the active build to complete (up to 45 seconds)
-    for (let i = 0; i < 22; i++) {
-      await new Promise((r) => setTimeout(r, 2000));
-      const fresh = await Project.findById(project._id).lean();
-      if (fresh && fresh.active_build_id && fresh.active_build_id !== project.active_build_id) {
+    // Wait for the concurrent build to complete (500ms interval, up to 25 seconds)
+    for (let i = 0; i < 50; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const fresh = await Project.findById(project._id).select('active_build_id').lean();
+      if (fresh?.active_build_id && fresh.active_build_id !== prevBuildId) {
         return {
           success: true,
           build_id: fresh.active_build_id,
@@ -645,11 +647,17 @@ export async function triggerBuildAndDeployToR2(
         };
       }
     }
-    // Return existing build if available
+    const latest = await Project.findById(project._id).select('active_build_id').lean();
+    if (latest?.active_build_id) {
+      return {
+        success: true,
+        build_id: latest.active_build_id,
+        preview_url: `/preview/${project._id}`,
+      };
+    }
     return {
-      success: true,
-      build_id: project.active_build_id || undefined,
-      preview_url: `/preview/${project._id}`,
+      success: false,
+      error: 'Preview build timed out while waiting for active build',
     };
   }
 
@@ -723,7 +731,13 @@ export async function triggerBuildAndDeployToR2(
     await connectDB();
     await Project.updateOne(
       { _id: project._id },
-      { $set: { active_build_id: newBuildId, build_completed_at: new Date() } }
+      {
+        $set: {
+          active_build_id: newBuildId,
+          builder_id: String(builder._id),
+          build_completed_at: new Date(),
+        },
+      }
     );
 
     // Clean up previous build prefix asynchronously (zero downtime)
@@ -743,13 +757,30 @@ export async function triggerBuildAndDeployToR2(
 
 export async function projectPreviewExists(project: IProject): Promise<boolean> {
   if (project.active_build_id) return true;
-  if (
-    (Array.isArray(project.conversation_history) && project.conversation_history.length > 0) ||
-    project.build_status === 'completed' ||
-    Boolean(project.builder_id)
-  ) {
-    return true;
+
+  // Check if a built snapshot exists in Cloudflare R2 and heal missing active_build_id
+  try {
+    const prefixes = await Promise.race([
+      r2ListPrefixes('private', `sites/${project._id}/`),
+      new Promise<string[]>((resolve) => setTimeout(() => resolve([]), 2500)),
+    ]);
+    for (let i = prefixes.length - 1; i >= 0; i--) {
+      const cleanPrefix = prefixes[i].replace(/\/+$/, '');
+      const candidateBuildId = cleanPrefix.split('/').pop();
+      if (!candidateBuildId) continue;
+      const hasIndex = await r2Exists('private', `${cleanPrefix}/index.html`);
+      if (hasIndex) {
+        Project.updateOne(
+          { _id: project._id, active_build_id: null },
+          { $set: { active_build_id: candidateBuildId } }
+        ).catch(() => {});
+        return true;
+      }
+    }
+  } catch {
+    // Ignore R2 errors so Chat.tsx auto-rebuild handles missing previews cleanly
   }
+
   return false;
 }
 
@@ -879,7 +910,7 @@ export async function serveBuiltSiteFromR2(params: {
 
   // Handle relative API or project file paths caused by <base href="/preview/{id}/"> or <base href="/app/{id}/">
   if (relPath.startsWith('api/images/stock') || relPath.startsWith(`project/${project._id}/files/`)) {
-    return Response.redirect(`/${relPath}`, 307);
+    return new Response(null, { status: 307, headers: { Location: `/${relPath}` } });
   }
 
   if (!relPath || relPath.endsWith('/')) {
@@ -930,25 +961,29 @@ export async function serveBuiltSiteFromR2(params: {
     }
   }
 
-  const prefix = `sites/${project._id}/${project.active_build_id}`;
-  let targetKey = `${prefix}/${relPath}`;
+  const hasExtension = /\.[a-zA-Z0-9]+$/.test(relPath);
+  const isHtmlRequest = relPath.endsWith('.html') || relPath.endsWith('.htm') || !hasExtension;
 
-  // 1. Check in-memory RAM cache first (instant sub-millisecond response)
-  let cached = getCachedPreviewAsset(targetKey);
+  let buildId: string | null = project.active_build_id || null;
+  let prefix = buildId ? `sites/${project._id}/${buildId}` : null;
+  let targetKey = prefix ? `${prefix}/${relPath}` : `live/${project._id}/${relPath}`;
+
+  // 1. Check in-memory RAM cache first (instant sub-millisecond response) when active_build_id is known
+  let cached = prefix ? getCachedPreviewAsset(targetKey) : null;
   let buf: Buffer | null = cached?.buffer || null;
   let contentType = cached?.contentType || guessContentType(targetKey);
 
   // 2. Direct Builder proxy for instant zero-latency preview & app tab (streams directly from Render workspace)
   if (!buf) {
     try {
-      const builder = project.builder_id
-        ? await Builder.findById(project.builder_id)
-        : await Builder.findOne({ status: 'active' });
+      const builder =
+        (project.builder_id ? await Builder.findById(project.builder_id) : null) ||
+        (await Builder.findOne({ status: 'active' }));
       if (builder) {
         const streamRes = await builderFetch(
           builder,
           `/api/preview-asset/${project._id}/${relPath}`,
-          { timeoutMs: 8_000 }
+          { timeoutMs: isHtmlRequest ? 45_000 : 12_000 }
         );
         if (streamRes.ok) {
           const resContentType =
@@ -983,7 +1018,7 @@ export async function serveBuiltSiteFromR2(params: {
                 );
               }
             }
-            if (project.active_build_id) {
+            if (prefix) {
               cachePreviewAsset(targetKey, streamBuf, resContentType);
             }
 
@@ -1005,8 +1040,31 @@ export async function serveBuiltSiteFromR2(params: {
     }
   }
 
-  // 3. Fetch from R2 on cache miss / fallback
-  if (!buf) {
+  // 3. Self-heal missing active_build_id from R2 if needed, then fetch from R2
+  if (!buf && !prefix) {
+    try {
+      const prefixes = await r2ListPrefixes('private', `sites/${project._id}/`);
+      for (let i = prefixes.length - 1; i >= 0; i--) {
+        const candPrefix = prefixes[i].replace(/\/+$/, '');
+        const candBuildId = candPrefix.split('/').pop();
+        if (!candBuildId) continue;
+        if (await r2Exists('private', `${candPrefix}/index.html`)) {
+          buildId = candBuildId;
+          prefix = candPrefix;
+          targetKey = `${prefix}/${relPath}`;
+          Project.updateOne(
+            { _id: project._id, active_build_id: null },
+            { $set: { active_build_id: candBuildId } }
+          ).catch(() => {});
+          break;
+        }
+      }
+    } catch {
+      // Ignore R2 listing errors
+    }
+  }
+
+  if (!buf && prefix) {
     buf = await r2GetBuffer('private', targetKey);
     if (buf) {
       cachePreviewAsset(targetKey, buf, contentType);
@@ -1014,35 +1072,32 @@ export async function serveBuiltSiteFromR2(params: {
   }
 
   // Directory index fallback or SPA fallback to root index.html
-  if (!buf) {
-    const hasExtension = /\.[a-zA-Z0-9]+$/.test(relPath);
-    if (!hasExtension) {
-      const dirIndexKey = `${prefix}/${relPath}/index.html`;
-      cached = getCachedPreviewAsset(dirIndexKey);
-      if (cached) {
-        buf = cached.buffer;
+  if (!buf && prefix && !hasExtension) {
+    const dirIndexKey = `${prefix}/${relPath}/index.html`;
+    cached = getCachedPreviewAsset(dirIndexKey);
+    if (cached) {
+      buf = cached.buffer;
+      targetKey = dirIndexKey;
+      contentType = cached.contentType;
+    } else {
+      const dirIndex = await r2GetBuffer('private', dirIndexKey);
+      if (dirIndex) {
+        buf = dirIndex;
         targetKey = dirIndexKey;
-        contentType = cached.contentType;
+        contentType = 'text/html; charset=utf-8';
+        cachePreviewAsset(dirIndexKey, dirIndex, contentType);
       } else {
-        const dirIndex = await r2GetBuffer('private', dirIndexKey);
-        if (dirIndex) {
-          buf = dirIndex;
-          targetKey = dirIndexKey;
-          contentType = 'text/html; charset=utf-8';
-          cachePreviewAsset(dirIndexKey, dirIndex, contentType);
+        const rootIndexKey = `${prefix}/index.html`;
+        cached = getCachedPreviewAsset(rootIndexKey);
+        if (cached) {
+          buf = cached.buffer;
+          targetKey = rootIndexKey;
+          contentType = cached.contentType;
         } else {
-          const rootIndexKey = `${prefix}/index.html`;
-          cached = getCachedPreviewAsset(rootIndexKey);
-          if (cached) {
-            buf = cached.buffer;
-            targetKey = rootIndexKey;
-            contentType = cached.contentType;
-          } else {
-            buf = await r2GetBuffer('private', rootIndexKey);
-            targetKey = rootIndexKey;
-            contentType = 'text/html; charset=utf-8';
-            if (buf) cachePreviewAsset(rootIndexKey, buf, contentType);
-          }
+          buf = await r2GetBuffer('private', rootIndexKey);
+          targetKey = rootIndexKey;
+          contentType = 'text/html; charset=utf-8';
+          if (buf) cachePreviewAsset(rootIndexKey, buf, contentType);
         }
       }
     }

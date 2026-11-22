@@ -167,7 +167,11 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
         // Check if this is a terminal status that should clear thinking state
         const isTerminalStatus = ['cancelled', 'completed', 'failed'].includes(data.status);
-        const previewUrl = (data as any).preview_url || (data.status === 'completed' ? `/preview/${projectId}` : undefined);
+        const previewUrl = (data as any).preview_url || undefined;
+
+        if (previewUrl) {
+            buildTriggeredRef.current = true;
+        }
 
         setProgress(prev => ({
             ...prev,
@@ -352,11 +356,14 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             const response = await axios.get(`/builder/projects/${projectId}/status?quick=1`);
             const status = response.data.status;
             if (status === 'completed' || status === 'failed') {
-                const previewUrl = response.data.preview_url || (status === 'completed' ? `/preview/${projectId}` : undefined);
+                const previewUrl = response.data.preview_url || undefined;
+                if (previewUrl) {
+                    buildTriggeredRef.current = true;
+                }
                 setProgress(prev => ({
                     ...prev,
                     status: status as BuildProgress['status'],
-                    hasFileChanges: status === 'completed' ? true : prev.hasFileChanges,
+                    hasFileChanges: status === 'completed' && !previewUrl ? true : prev.hasFileChanges,
                     ...(previewUrl && { previewUrl }),
                     thinkingContent: null,
                     thinkingStartTime: null,
@@ -450,11 +457,14 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                         }
                     }
                 }
-                const previewUrl = response.data.preview_url || (status === 'completed' ? `/preview/${projectId}` : undefined);
+                const previewUrl = response.data.preview_url || undefined;
+                if (previewUrl) {
+                    buildTriggeredRef.current = true;
+                }
                 setProgress(prev => ({
                     ...prev,
                     status: status as BuildProgress['status'],
-                    hasFileChanges: status === 'completed' ? true : prev.hasFileChanges,
+                    hasFileChanges: status === 'completed' && !previewUrl ? true : prev.hasFileChanges,
                     ...(previewUrl && { previewUrl }),
                     thinkingContent: null,
                     thinkingStartTime: null,

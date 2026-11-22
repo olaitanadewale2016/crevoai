@@ -10,6 +10,7 @@ import { trackBuildCreditUsage } from '@/services/credits';
 import { triggerBuildAndDeployToR2, clearProjectPreviewCache } from '@/services/builder';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   const serverKey = req.headers.get('x-server-key');
@@ -211,8 +212,8 @@ export async function POST(req: NextRequest) {
           rawTokensUsed > prevBilled
             ? rawTokensUsed - prevBilled
             : prevBilled === 0
-            ? rawTokensUsed
-            : 0;
+              ? rawTokensUsed
+              : 0;
         if (rawTokensUsed > 0) {
           project.estimated_tokens = rawTokensUsed;
           if (rawTokensUsed > prevBilled) {
@@ -242,40 +243,47 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // 2. Broadcast completed status and preview URL IMMEDIATELY (instant 0ms response)
-        const shouldBuildPreview =
+        // 2. Build & deploy preview to R2 synchronously BEFORE announcing preview readiness
+        // (Prevents Vercel serverless freeze/kill from leaving active_build_id null & orphaned build locks)
+        const shouldBuildPreview = Boolean(
           data.files_changed ||
           data.build_status === 'completed' ||
-          data.build_required;
+          data.build_required
+        );
 
+        let previewReadyUrl: string | undefined;
         if (shouldBuildPreview) {
           clearProjectPreviewCache(String(project._id));
           project.build_status = 'completed';
+          project.build_completed_at = new Date();
+
+          const builderDoc =
+            (project.builder_id ? await Builder.findById(project.builder_id) : null) ||
+            (await Builder.findOne({ status: 'active' }));
+
+          if (builderDoc && !project.builder_id) {
+            project.builder_id = builderDoc._id;
+          }
           await project.save();
 
-          await broadcastEvent(`session.${sessionId}`, 'status', {
-            status: 'completed',
-            preview_url: `/preview/${project._id}`,
-            message: 'Build completed successfully',
-          });
-          if (project.user_id) {
-            await broadcastToUser(String(project.user_id), 'project.status', {
-              project_id: project._id,
+          if (builderDoc) {
+            try {
+              const buildRes = await triggerBuildAndDeployToR2(project, builderDoc);
+              if (buildRes.success && buildRes.preview_url) {
+                previewReadyUrl = buildRes.preview_url;
+              }
+            } catch (err) {
+              console.error('Error building/syncing preview to R2 in webhook:', err);
+            }
+          }
+
+          if (previewReadyUrl) {
+            await broadcastEvent(`session.${sessionId}`, 'status', {
               status: 'completed',
-              preview_url: `/preview/${project._id}`,
+              preview_url: previewReadyUrl,
+              message: 'Build completed successfully',
             });
           }
-        }
-
-        // 3. Defer R2 deployment to background so preview stream is instant
-        if (shouldBuildPreview && project.builder_id) {
-          Builder.findById(project.builder_id)
-            .then(async (builderDoc) => {
-              if (builderDoc) {
-                await triggerBuildAndDeployToR2(project, builderDoc);
-              }
-            })
-            .catch((err) => console.error('Error background sync to R2:', err));
         }
 
         if (project.user_id) {
@@ -283,6 +291,7 @@ export async function POST(req: NextRequest) {
             project_id: project._id,
             status: data.build_status || 'completed',
             message: data.build_message || null,
+            ...(previewReadyUrl ? { preview_url: previewReadyUrl } : {}),
           });
 
           if (
