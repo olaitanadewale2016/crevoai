@@ -316,7 +316,10 @@ export default async function ProjectChatPage({
         initial_prompt: project.initial_prompt ?? null,
         has_history: conversationHistory.length > 0,
         conversation_history: conversationHistory,
-        preview_url: previewExists ? `/preview/${String(project._id)}` : null,
+        preview_url:
+          previewExists || project.build_status === 'completed' || conversationHistory.length > 0
+            ? `/preview/${String(project._id)}`
+            : null,
         has_active_session: hasActiveSession,
         build_session_id: project.build_session_id ?? null,
         build_status: project.build_status ?? undefined,

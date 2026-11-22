@@ -10,7 +10,7 @@ import { trackBuildCreditUsage } from '@/services/credits';
 import { triggerBuildAndDeployToR2, clearProjectPreviewCache } from '@/services/builder';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 export async function POST(req: NextRequest) {
   const serverKey = req.headers.get('x-server-key');
@@ -275,6 +275,10 @@ export async function POST(req: NextRequest) {
             } catch (err) {
               console.error('Error building/syncing preview to R2 in webhook:', err);
             }
+          }
+
+          if (!previewReadyUrl && shouldBuildPreview) {
+            previewReadyUrl = `/preview/${project._id}`;
           }
 
           if (previewReadyUrl) {

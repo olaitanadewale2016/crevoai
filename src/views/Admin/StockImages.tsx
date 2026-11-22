@@ -345,23 +345,34 @@ export default function StockImagesView({ user, initialImages, stats: initialSta
 
                 {/* Category Filter */}
                 <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                  <SelectTrigger className="w-[150px]">
+                  <SelectTrigger className="w-[180px]">
                     <SelectValue placeholder={t('All Niches')} />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">{t('All Niches')}</SelectItem>
-                    <SelectItem value="dentist">{t('Dentist / Health')}</SelectItem>
-                    <SelectItem value="law">{t('Law / Legal')}</SelectItem>
-                    <SelectItem value="fitness">{t('Fitness / Gym')}</SelectItem>
+                    <SelectItem value="dentist">{t('Dentist / Medical')}</SelectItem>
+                    <SelectItem value="law">{t('Law / Accounting')}</SelectItem>
+                    <SelectItem value="fitness">{t('Fitness / Gym / Yoga')}</SelectItem>
                     <SelectItem value="automotive">{t('Automotive / Cars')}</SelectItem>
-                    <SelectItem value="technology">{t('Tech / SaaS')}</SelectItem>
-                    <SelectItem value="pets">{t('Pets / Vet')}</SelectItem>
-                    <SelectItem value="real-estate">{t('Real Estate')}</SelectItem>
-                    <SelectItem value="plumbing">{t('Plumbing / Trade')}</SelectItem>
-                    <SelectItem value="beauty">{t('Beauty / Salon')}</SelectItem>
-                    <SelectItem value="restaurant">{t('Restaurant / Food')}</SelectItem>
+                    <SelectItem value="technology">{t('Tech / SaaS / AI')}</SelectItem>
+                    <SelectItem value="pets">{t('Pets / Veterinary')}</SelectItem>
+                    <SelectItem value="real-estate">{t('Real Estate / Interior')}</SelectItem>
+                    <SelectItem value="construction">{t('Construction / Trades')}</SelectItem>
+                    <SelectItem value="plumbing">{t('Plumbing / HVAC')}</SelectItem>
+                    <SelectItem value="beauty">{t('Beauty / Salon / Spa')}</SelectItem>
+                    <SelectItem value="restaurant">{t('Restaurant / Cafe / Food')}</SelectItem>
+                    <SelectItem value="cleaning">{t('Cleaning / Maid Services')}</SelectItem>
+                    <SelectItem value="education">{t('Education / Courses')}</SelectItem>
+                    <SelectItem value="photography">{t('Photography / Creative')}</SelectItem>
                     <SelectItem value="travel">{t('Travel / Hotels')}</SelectItem>
-                    <SelectItem value="education">{t('Education')}</SelectItem>
+                    <SelectItem value="fashion">{t('E-Commerce / Fashion')}</SelectItem>
+                    <SelectItem value="finance">{t('Finance / Crypto')}</SelectItem>
+                    <SelectItem value="wedding">{t('Weddings / Events')}</SelectItem>
+                    <SelectItem value="music">{t('Music / Podcast / Gaming')}</SelectItem>
+                    <SelectItem value="nonprofit">{t('Nonprofit / Green Energy')}</SelectItem>
+                    <SelectItem value="logistics">{t('Logistics / Shipping')}</SelectItem>
+                    <SelectItem value="coworking">{t('Coworking / Business')}</SelectItem>
+                    <SelectItem value="avatar">{t('Portraits / Avatars')}</SelectItem>
                   </SelectContent>
                 </Select>
 

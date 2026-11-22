@@ -774,7 +774,7 @@ export async function triggerBuildAndDeployToR2(
 export async function projectPreviewExists(project: IProject): Promise<boolean> {
   if (project.active_build_id) return true;
 
-  // Check if a built snapshot exists in Cloudflare R2 and heal missing active_build_id
+  // 1. Check if a built snapshot exists in Cloudflare R2 and heal missing active_build_id
   try {
     const prefixes = await Promise.race([
       r2ListPrefixes('private', `sites/${project._id}/`),
@@ -794,7 +794,15 @@ export async function projectPreviewExists(project: IProject): Promise<boolean> 
       }
     }
   } catch {
-    // Ignore R2 errors so Chat.tsx auto-rebuild handles missing previews cleanly
+    // Ignore R2 errors
+  }
+
+  // 2. Check if project has completed build status or conversation history
+  if (
+    project.build_status === 'completed' ||
+    (Array.isArray(project.conversation_history) && project.conversation_history.length > 0)
+  ) {
+    return true;
   }
 
   return false;
@@ -1075,7 +1083,7 @@ export async function serveBuiltSiteFromR2(params: {
         const streamRes = await builderFetch(
           builder,
           `/api/preview-asset/${project._id}/${relPath}`,
-          { timeoutMs: isHtmlRequest ? 45_000 : 12_000 }
+          { timeoutMs: isHtmlRequest ? 60_000 : 15_000 }
         );
         if (streamRes.ok) {
           const resContentType =
@@ -1086,15 +1094,47 @@ export async function serveBuiltSiteFromR2(params: {
             resContentType.includes('text/html');
 
           if (isHtml) {
-            const rawHtml = await streamRes.text();
-            // Safeguard: never serve uncompiled Vite source index.html (which references /src/main.tsx)
+            let rawHtml = await streamRes.text();
+            // If the workspace index.html references uncompiled Vite source (/src/main.tsx),
+            // trigger on-demand build on builder so compiled dist/ is created and served
+            if (rawHtml.includes('/src/main.tsx') || rawHtml.includes('./src/main.tsx')) {
+              try {
+                console.log(`[Preview Fallback] Building uncompiled workspace for ${project._id}...`);
+                await builderFetch(builder, `/api/build-workspace/${project._id}`, {
+                  method: 'POST',
+                  timeoutMs: 120_000,
+                });
+                const retryRes = await builderFetch(
+                  builder,
+                  `/api/preview-asset/${project._id}/${relPath}`,
+                  { timeoutMs: 15_000 }
+                );
+                if (retryRes.ok) {
+                  const retryHtml = await retryRes.text();
+                  if (!retryHtml.includes('/src/main.tsx') && !retryHtml.includes('./src/main.tsx')) {
+                    rawHtml = retryHtml;
+                  }
+                }
+              } catch (rebuildErr: any) {
+                console.warn(`[Preview Fallback] Workspace build failed for ${project._id}:`, rebuildErr?.message);
+              }
+            }
+
             if (!rawHtml.includes('/src/main.tsx') && !rawHtml.includes('./src/main.tsx')) {
+              // Self-healing: deploy to R2 in background so subsequent requests hit R2 CDN in 0ms
+              if (!project.active_build_id && builder) {
+                triggerBuildAndDeployToR2(project, builder).catch((err: any) => {
+                  console.warn(`[Preview Fallback] Background R2 sync failed for ${project._id}:`, err?.message);
+                });
+              }
+
               const finalHtml = await buildDynamicHtml(rawHtml, project, mode);
               return new Response(finalHtml, {
                 status: 200,
                 headers: {
                   'Content-Type': 'text/html; charset=utf-8',
                   'Cache-Control': 'no-cache, no-store, must-revalidate',
+                  'X-Frame-Options': 'SAMEORIGIN',
                 },
               });
             }
@@ -1122,6 +1162,7 @@ export async function serveBuiltSiteFromR2(params: {
                 'Cache-Control': isHashedAsset
                   ? 'public, max-age=31536000, immutable'
                   : 'no-cache, no-store, must-revalidate',
+                'X-Frame-Options': 'SAMEORIGIN',
               },
             });
           }
@@ -1157,6 +1198,7 @@ export async function serveBuiltSiteFromR2(params: {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': cacheHeader,
+        'X-Frame-Options': 'SAMEORIGIN',
       },
     });
   }
