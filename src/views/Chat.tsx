@@ -753,6 +753,16 @@ export default function Chat({
                                 </Link>
                             </Button>
                             <Button
+                                variant="outline"
+                                size="sm"
+                                className="md:hidden text-xs h-7 px-2 flex items-center gap-1"
+                                onClick={() => setIsChatCollapsed(true)}
+                                title={t('View Preview')}
+                            >
+                                <Eye className="h-3.5 w-3.5" />
+                                <span>{t('Preview')}</span>
+                            </Button>
+                            <Button
                                 variant="ghost"
                                 size="icon"
                                 className="hidden md:flex text-muted-foreground hover:text-foreground"

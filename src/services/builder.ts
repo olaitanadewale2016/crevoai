@@ -389,6 +389,36 @@ export async function startBuilderSession(params: {
   return { status: 200, data };
 }
 
+// ---------------------------------------------------------------------------
+// In-Memory Fast Preview Asset Cache (Sub-millisecond Preview Iframe Serving)
+// ---------------------------------------------------------------------------
+interface CachedPreviewAsset {
+  buffer: Buffer;
+  contentType: string;
+  cachedAt: number;
+}
+const PREVIEW_ASSET_CACHE = new Map<string, CachedPreviewAsset>();
+const MAX_PREVIEW_CACHE_ENTRIES = 600;
+const PREVIEW_CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+function cachePreviewAsset(key: string, buffer: Buffer, contentType: string) {
+  if (PREVIEW_ASSET_CACHE.size >= MAX_PREVIEW_CACHE_ENTRIES) {
+    const oldestKey = PREVIEW_ASSET_CACHE.keys().next().value;
+    if (oldestKey) PREVIEW_ASSET_CACHE.delete(oldestKey);
+  }
+  PREVIEW_ASSET_CACHE.set(key, { buffer, contentType, cachedAt: Date.now() });
+}
+
+function getCachedPreviewAsset(key: string): { buffer: Buffer; contentType: string } | null {
+  const item = PREVIEW_ASSET_CACHE.get(key);
+  if (!item) return null;
+  if (Date.now() - item.cachedAt > PREVIEW_CACHE_TTL_MS) {
+    PREVIEW_ASSET_CACHE.delete(key);
+    return null;
+  }
+  return item;
+}
+
 /**
  * Triggers Vite build on Go Builder, downloads dist.zip, patches `||"/preview"` -> `||"/"`
  * ONCE on all JS files, uploads atomically to R2 `sites/{projectId}/{newBuildId}/`,
@@ -472,11 +502,15 @@ export async function triggerBuildAndDeployToR2(
           }
 
           const isHashedAsset = relPath.startsWith('assets/');
+          const contentType = guessContentType(relPath);
+          const bufToCache = Buffer.isBuffer(finalBytes) ? finalBytes : Buffer.from(finalBytes);
+          cachePreviewAsset(`sites/${project._id}/${newBuildId}/${relPath}`, bufToCache, contentType);
+
           await r2PutObject({
             visibility: 'private',
             key: `sites/${project._id}/${newBuildId}/${relPath}`,
             body: finalBytes,
-            contentType: guessContentType(relPath),
+            contentType,
             cacheControl: isHashedAsset ? 'public, max-age=31536000, immutable' : 'no-cache',
           });
         })
@@ -619,19 +653,51 @@ export async function serveBuiltSiteFromR2(params: {
 
   const prefix = `sites/${project._id}/${project.active_build_id}`;
   let targetKey = `${prefix}/${relPath}`;
-  let buf = await r2GetBuffer('private', targetKey);
+
+  // 1. Check in-memory RAM cache first (instant sub-millisecond response)
+  let cached = getCachedPreviewAsset(targetKey);
+  let buf: Buffer | null = cached?.buffer || null;
+  let contentType = cached?.contentType || guessContentType(targetKey);
+
+  // 2. Fetch from R2 on cache miss
+  if (!buf) {
+    buf = await r2GetBuffer('private', targetKey);
+    if (buf) {
+      cachePreviewAsset(targetKey, buf, contentType);
+    }
+  }
 
   // Directory index fallback or SPA fallback to root index.html
   if (!buf) {
     const hasExtension = /\.[a-zA-Z0-9]+$/.test(relPath);
     if (!hasExtension) {
-      const dirIndex = await r2GetBuffer('private', `${prefix}/${relPath}/index.html`);
-      if (dirIndex) {
-        buf = dirIndex;
-        targetKey = `${prefix}/${relPath}/index.html`;
+      const dirIndexKey = `${prefix}/${relPath}/index.html`;
+      cached = getCachedPreviewAsset(dirIndexKey);
+      if (cached) {
+        buf = cached.buffer;
+        targetKey = dirIndexKey;
+        contentType = cached.contentType;
       } else {
-        buf = await r2GetBuffer('private', `${prefix}/index.html`);
-        targetKey = `${prefix}/index.html`;
+        const dirIndex = await r2GetBuffer('private', dirIndexKey);
+        if (dirIndex) {
+          buf = dirIndex;
+          targetKey = dirIndexKey;
+          contentType = 'text/html; charset=utf-8';
+          cachePreviewAsset(dirIndexKey, dirIndex, contentType);
+        } else {
+          const rootIndexKey = `${prefix}/index.html`;
+          cached = getCachedPreviewAsset(rootIndexKey);
+          if (cached) {
+            buf = cached.buffer;
+            targetKey = rootIndexKey;
+            contentType = cached.contentType;
+          } else {
+            buf = await r2GetBuffer('private', rootIndexKey);
+            targetKey = rootIndexKey;
+            contentType = 'text/html; charset=utf-8';
+            if (buf) cachePreviewAsset(rootIndexKey, buf, contentType);
+          }
+        }
       }
     }
   }
@@ -641,12 +707,18 @@ export async function serveBuiltSiteFromR2(params: {
   }
 
   const isHtml = targetKey.endsWith('.html') || targetKey.endsWith('.htm');
+  const isHashedAsset = relPath.startsWith('assets/');
+
+  // For hashed assets in preview, allow browser disk caching with immutable (instant 0ms loading)
+  // For HTML, keep no-cache so changes are seen immediately
   const cacheHeader =
     mode === 'published' && project.published_visibility === 'public'
       ? isHtml
         ? 'public, max-age=3600'
         : 'public, max-age=31536000, immutable'
-      : 'no-cache, no-store, must-revalidate';
+      : isHashedAsset
+        ? 'public, max-age=31536000, immutable'
+        : 'no-cache, no-store, must-revalidate';
 
   if (isHtml) {
     const finalHtml = await buildDynamicHtml(buf.toString('utf8'), project, mode);
@@ -662,7 +734,7 @@ export async function serveBuiltSiteFromR2(params: {
   return new Response(new Uint8Array(buf), {
     status: 200,
     headers: {
-      'Content-Type': guessContentType(targetKey),
+      'Content-Type': contentType,
       'Cache-Control': cacheHeader,
     },
   });

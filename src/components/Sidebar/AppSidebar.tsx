@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useLayoutEffect, useRef, useState, useEffect } from 'react';
 import { Link, usePage } from '@/lib/inertia-compat';

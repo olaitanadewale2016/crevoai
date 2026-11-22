@@ -11,7 +11,7 @@ import { usePreviewThemeSync } from '@/hooks/usePreviewThemeSync';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { MousePointerClick, Loader2, Palette, Undo2, Redo2, Bot, Cog, Wrench, History, Clock } from 'lucide-react';
+import { MousePointerClick, Loader2, Palette, Undo2, Redo2, Bot, Cog, Wrench, History, Clock, Monitor, Tablet, Smartphone } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import type { InspectorElement, ElementMention, PendingEdit } from '@/types/inspector';
@@ -20,7 +20,8 @@ import confetti from 'canvas-confetti';
 import { usePreviewThemeInjection } from '@/hooks/usePreviewThemeInjection';
 import { useThumbnailCapture } from '@/hooks/useThumbnailCapture';
 
-type PreviewMode = 'preview' | 'inspect' | 'design';
+export type PreviewMode = 'preview' | 'inspect' | 'design';
+export type DeviceMode = 'desktop' | 'tablet' | 'mobile';
 
 interface InspectPreviewProps {
     previewUrl?: string | null;
@@ -110,6 +111,16 @@ export function InspectPreview({
     const previousMode = useRef<PreviewMode>(mode);
     const [isSaving, setIsSaving] = useState(false);
     const [iframeReady, setIframeReady] = useState(false);
+    const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop');
+
+    const handleSetDeviceMode = useCallback((newMode: DeviceMode) => {
+        setDeviceMode(newMode);
+        const breakpoint = newMode === 'mobile' ? 'sm' : newMode === 'tablet' ? 'md' : 'lg';
+        iframeRef.current?.contentWindow?.postMessage({
+            type: 'inspector-set-breakpoint',
+            breakpoint,
+        }, '*');
+    }, []);
 
     // Revision history state
     interface RevisionItem {
@@ -323,6 +334,19 @@ export function InspectPreview({
         onSendStyleEdit?.(`[AI_EDIT] Improve the styling of ${description}: "${element.textPreview}"`);
     }, [closeContextMenu, onSendStyleEdit]);
 
+    // Handle element deletion from toolbar
+    const handleDeleteElement = useCallback((element: InspectorElement) => {
+        closeContextMenu();
+        iframeRef.current?.contentWindow?.postMessage({
+            type: 'inspector-delete-element',
+            selector: element.cssSelector,
+        }, '*');
+        const description = `<${element.tagName}${element.classNames[0] ? '.' + element.classNames[0] : ''}>`;
+        const textSample = element.textPreview ? ` containing "${element.textPreview.slice(0, 40)}"` : '';
+        onSendStyleEdit?.(`[AI_EDIT] Please remove the element ${description}${textSample} (selector: \`${element.cssSelector}\`) from this page entirely.`);
+        toast.success(t('Element deletion requested to AI'));
+    }, [closeContextMenu, onSendStyleEdit, t]);
+
     // Handle style panel apply
     const handleStyleApply = useCallback(() => {
         if (!styleElement) return;
@@ -405,7 +429,49 @@ export function InspectPreview({
                             <Palette className="h-3.5 w-3.5 me-1.5" />
                             {t('Design')}
                         </Button>
+                    </div>
 
+                    {/* Responsive Device Viewport Switcher (Desktop, Tablet, Mobile) */}
+                    <div className="flex items-center bg-muted/70 p-0.5 rounded-lg border border-border/50">
+                        <Button
+                            variant={deviceMode === 'desktop' ? 'secondary' : 'ghost'}
+                            size="icon"
+                            className={`h-7 w-7 rounded-md transition-all ${
+                                deviceMode === 'desktop'
+                                    ? 'bg-background shadow-xs text-foreground font-semibold'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                            onClick={() => handleSetDeviceMode('desktop')}
+                            title={t('Desktop View (100%)')}
+                        >
+                            <Monitor className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                            variant={deviceMode === 'tablet' ? 'secondary' : 'ghost'}
+                            size="icon"
+                            className={`h-7 w-7 rounded-md transition-all ${
+                                deviceMode === 'tablet'
+                                    ? 'bg-background shadow-xs text-foreground font-semibold'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                            onClick={() => handleSetDeviceMode('tablet')}
+                            title={t('Tablet View (768px)')}
+                        >
+                            <Tablet className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                            variant={deviceMode === 'mobile' ? 'secondary' : 'ghost'}
+                            size="icon"
+                            className={`h-7 w-7 rounded-md transition-all ${
+                                deviceMode === 'mobile'
+                                    ? 'bg-background shadow-xs text-foreground font-semibold'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                            onClick={() => handleSetDeviceMode('mobile')}
+                            title={t('Mobile View (390px)')}
+                        >
+                            <Smartphone className="h-3.5 w-3.5" />
+                        </Button>
                     </div>
 
                     {/* Right side: hints + Undo/Redo */}
@@ -547,16 +613,49 @@ export function InspectPreview({
                         </div>
                     )}
 
-                    {/* iframe container */}
-                    <div className="flex-1 min-h-0 relative">
-                        <iframe
-                            ref={iframeRef}
-                            key={refreshTrigger}
-                            src={`${previewUrl}?t=${refreshTrigger}`}
-                            className="absolute inset-0 w-full h-full border-0"
-                            title="Preview"
-                            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
-                        />
+                    {/* iframe container with responsive device framing */}
+                    <div className={`flex-1 min-h-0 relative ${
+                        deviceMode === 'desktop'
+                            ? ''
+                            : 'flex items-center justify-center p-3 sm:p-6 overflow-hidden bg-muted/10'
+                    }`}>
+                        {deviceMode === 'desktop' ? (
+                            <iframe
+                                ref={iframeRef}
+                                key={refreshTrigger}
+                                src={`${previewUrl}?t=${refreshTrigger}`}
+                                className="absolute inset-0 w-full h-full border-0"
+                                title="Preview"
+                                sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+                            />
+                        ) : deviceMode === 'tablet' ? (
+                            <div className="w-[768px] max-w-full h-full max-h-[1024px] rounded-[24px] border-[8px] border-zinc-800 dark:border-zinc-700 shadow-2xl overflow-hidden bg-background relative transition-all duration-300">
+                                <iframe
+                                    ref={iframeRef}
+                                    key={refreshTrigger}
+                                    src={`${previewUrl}?t=${refreshTrigger}`}
+                                    className="w-full h-full border-0"
+                                    title="Preview"
+                                    sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+                                />
+                            </div>
+                        ) : (
+                            <div className="w-[390px] max-w-full h-full max-h-[844px] rounded-[40px] border-[10px] border-zinc-900 dark:border-zinc-800 shadow-2xl overflow-hidden bg-background relative transition-all duration-300 flex flex-col">
+                                {/* Smartphone Camera Notch Bar */}
+                                <div className="absolute top-2 left-1/2 -translate-x-1/2 w-28 h-4 bg-zinc-900 dark:bg-zinc-800 rounded-full z-30 pointer-events-none flex items-center justify-center gap-2">
+                                    <div className="w-2.5 h-2.5 rounded-full bg-zinc-800 dark:bg-zinc-700" />
+                                    <div className="w-2 h-2 rounded-full bg-blue-950/70" />
+                                </div>
+                                <iframe
+                                    ref={iframeRef}
+                                    key={refreshTrigger}
+                                    src={`${previewUrl}?t=${refreshTrigger}`}
+                                    className="w-full h-full border-0 pt-2"
+                                    title="Preview"
+                                    sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+                                />
+                            </div>
+                        )}
 
                         {/* Confetti canvas */}
                         <canvas
@@ -615,6 +714,7 @@ export function InspectPreview({
                         onStyle={() => handleOpenStyle(contextMenu.element)}
                         onAiEdit={() => handleAiEdit(contextMenu.element)}
                         onClose={closeContextMenu}
+                        onDelete={() => handleDeleteElement(contextMenu.element)}
                     />,
                     document.body
                 )}
