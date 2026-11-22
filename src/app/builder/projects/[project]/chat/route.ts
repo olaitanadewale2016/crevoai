@@ -122,8 +122,9 @@ export async function POST(
       timestamp: new Date().toISOString(),
       ...(fileRefs && fileRefs.length > 0 ? { files: fileRefs } : {}),
     };
+    const priorHistory = project.conversation_history || [];
+    const priorCompacted = project.compacted_history || null;
     const addedTokens = Math.ceil(rawMessage.length / 4);
-    const updatedHistory = [...(project.conversation_history || []), userEntry];
 
     await Project.updateOne(
       { _id: project._id },
@@ -141,10 +142,11 @@ export async function POST(
       messageToSend += `\n\n[Attached Files]\n${fileLines.join('\n')}\nUse these URLs directly in img src, href, or background-image attributes in the generated code.`;
     }
 
+    // Pass prior history only so the current message isn't duplicated inside history
     const { history, isCompacted } = buildOptimizedHistoryForBuilder({
       ...project,
-      conversation_history: updatedHistory,
-      compacted_history: null,
+      conversation_history: priorHistory,
+      compacted_history: priorCompacted,
     });
 
     const aiConfig = await getAiConfigForUser(ctx.user);

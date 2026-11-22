@@ -471,55 +471,102 @@ export default function Chat({
     // Undo/Redo state
     const [isUndoing, setIsUndoing] = useState(false);
     const [isRedoing, setIsRedoing] = useState(false);
+    const [canUndo, setCanUndo] = useState(false);
+    const [canRedo, setCanRedo] = useState(false);
+
+    const refreshRevisionState = useCallback(async () => {
+        try {
+            const response = await axios.get(`/builder/projects/${project.id}/revisions`);
+            if (typeof response.data?.can_undo === 'boolean') {
+                setCanUndo(response.data.can_undo);
+            }
+            if (typeof response.data?.can_redo === 'boolean') {
+                setCanRedo(response.data.can_redo);
+            }
+        } catch {
+            // Leave existing state unchanged if builder is temporarily unreachable
+        }
+    }, [project.id]);
+
+    useEffect(() => {
+        if (!isLoading && !isBuildingPreview) {
+            void refreshRevisionState();
+        }
+    }, [refreshRevisionState, isLoading, isBuildingPreview, fileRefreshTrigger, previewRefreshTrigger]);
 
     const handleUndo = useCallback(async () => {
-        if (isUndoing || isLoading) return;
+        if (isUndoing || isRedoing || isLoading || !canUndo) return;
         setIsUndoing(true);
         try {
             const response = await axios.post(`/builder/projects/${project.id}/undo`);
             if (response.data.success) {
+                if (typeof response.data.can_undo === 'boolean') {
+                    setCanUndo(response.data.can_undo);
+                }
+                if (typeof response.data.can_redo === 'boolean') {
+                    setCanRedo(response.data.can_redo);
+                }
                 setPreviewRefreshTrigger(Date.now());
-                toast.success(t('Undone'));
+                setFileRefreshTrigger(tf => tf + 1);
+                if (response.data.build_success === false && response.data.build_error) {
+                    toast.warning(response.data.build_error);
+                } else {
+                    toast.success(t('Undone'));
+                }
             } else {
                 toast.error(response.data.error || t('Nothing to undo'));
             }
-        } catch {
-            toast.error(t('Undo failed'));
+        } catch (err: any) {
+            toast.error(err?.response?.data?.error || t('Undo failed'));
+            void refreshRevisionState();
         } finally {
             setIsUndoing(false);
         }
-    }, [project.id, isUndoing, isLoading, t]);
+    }, [project.id, isUndoing, isRedoing, isLoading, canUndo, refreshRevisionState, t]);
 
     const handleRedo = useCallback(async () => {
-        if (isRedoing || isLoading) return;
+        if (isUndoing || isRedoing || isLoading || !canRedo) return;
         setIsRedoing(true);
         try {
             const response = await axios.post(`/builder/projects/${project.id}/redo`);
             if (response.data.success) {
+                if (typeof response.data.can_undo === 'boolean') {
+                    setCanUndo(response.data.can_undo);
+                }
+                if (typeof response.data.can_redo === 'boolean') {
+                    setCanRedo(response.data.can_redo);
+                }
                 setPreviewRefreshTrigger(Date.now());
-                toast.success(t('Redone'));
+                setFileRefreshTrigger(tf => tf + 1);
+                if (response.data.build_success === false && response.data.build_error) {
+                    toast.warning(response.data.build_error);
+                } else {
+                    toast.success(t('Redone'));
+                }
             } else {
                 toast.error(response.data.error || t('Nothing to redo'));
             }
-        } catch {
-            toast.error(t('Redo failed'));
+        } catch (err: any) {
+            toast.error(err?.response?.data?.error || t('Redo failed'));
+            void refreshRevisionState();
         } finally {
             setIsRedoing(false);
         }
-    }, [project.id, isRedoing, isLoading, t]);
+    }, [project.id, isUndoing, isRedoing, isLoading, canRedo, refreshRevisionState, t]);
 
     // Keyboard shortcuts for undo/redo (skip when typing in input/textarea)
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             const tag = (document.activeElement as HTMLElement)?.tagName;
             if (tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement as HTMLElement)?.isContentEditable) return;
-            if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+            const key = e.key.toLowerCase();
+            if ((e.metaKey || e.ctrlKey) && key === 'z' && !e.shiftKey) {
                 e.preventDefault();
-                handleUndo();
+                void handleUndo();
             }
-            if ((e.metaKey || e.ctrlKey) && e.key === 'z' && e.shiftKey) {
+            if (((e.metaKey || e.ctrlKey) && key === 'z' && e.shiftKey) || (e.ctrlKey && !e.metaKey && !e.shiftKey && key === 'y')) {
                 e.preventDefault();
-                handleRedo();
+                void handleRedo();
             }
         };
         window.addEventListener('keydown', handleKeyDown);
@@ -1210,6 +1257,8 @@ export default function Chat({
                                 isUndoing={isUndoing}
                                 isRedoing={isRedoing}
                                 isUndoRedoDisabled={isLoading}
+                                canUndo={canUndo}
+                                canRedo={canRedo}
                                 onElementSelect={handleElementSelect}
                                 onElementEdit={handleElementEdit}
                                 pendingEdits={pendingEdits}

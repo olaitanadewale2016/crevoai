@@ -279,6 +279,9 @@ export async function POST(
         '\n\nNOTE: The user has asked about this issue multiple times before. Previous attempts may not have fully resolved it. Try a fundamentally different approach.';
     }
 
+    const priorHistory = project.conversation_history || [];
+    const priorCompacted = project.compacted_history || null;
+
     // Append user entry to conversation_history and invalidate compacted_history
     const userEntry: IConversationEntry = {
       role: 'user',
@@ -287,7 +290,6 @@ export async function POST(
       ...(fileRefs && fileRefs.length > 0 ? { files: fileRefs } : {}),
     };
     const addedTokens = Math.ceil(rawPrompt.length / 4);
-    const updatedHistory = [...(project.conversation_history || []), userEntry];
 
     await Project.updateOne(
       { _id: project._id },
@@ -306,15 +308,16 @@ export async function POST(
       promptToSend += `\n\n[Attached Images (${attachedFiles.length})]\n${fileLines.join('\n')}\n\nHOW TO USE ATTACHED IMAGES:\n1. DIRECT PLACEMENT: If the user asks to place, use, or display an attached image in a section (e.g. "use this as the logo", "put the first image in the hero section", "use these as product photos" or by filename), embed its exact URL above in \`<img src="..." />\` or CSS \`backgroundImage\` in that exact location.\n2. UI/UX DESIGN INSPIRATION: If the user asks to draw inspiration from, replicate, clone, or match the design/layout of an attached image/screenshot/mockup (e.g. "build a site inspired by this image", "match this UI design"), replicate the visual hierarchy, navbar/hero/section structure, card layout, spacing, typography, and color palette in \`src/custom.css\` and the page components.`;
     }
 
-    const updatedProject = {
+    // Pass prior history (without duplicating the current prompt already sent in `goal`)
+    const projectForBuilder = {
       ...project,
       reasoning_effort: effort,
-      conversation_history: updatedHistory,
-      compacted_history: null,
+      conversation_history: priorHistory,
+      compacted_history: priorCompacted,
     };
 
     const result = await startBuilderSession({
-      project: updatedProject,
+      project: projectForBuilder,
       user: ctx.user,
       builder,
       goal: promptToSend,

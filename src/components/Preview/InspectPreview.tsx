@@ -48,6 +48,8 @@ interface InspectPreviewProps {
     isUndoing?: boolean;
     isRedoing?: boolean;
     isUndoRedoDisabled?: boolean;
+    canUndo?: boolean;
+    canRedo?: boolean;
 }
 
 function BuildingAnimation({ t }: { t: (key: string) => string }) {
@@ -100,6 +102,8 @@ export function InspectPreview({
     isUndoing = false,
     isRedoing = false,
     isUndoRedoDisabled = false,
+    canUndo = true,
+    canRedo = true,
 }: InspectPreviewProps) {
     const { t } = useTranslation();
     const containerRef = useRef<HTMLDivElement>(null);
@@ -443,7 +447,7 @@ export function InspectPreview({
                             variant="outline"
                             size="icon"
                             onClick={onUndo}
-                            disabled={isUndoing || isUndoRedoDisabled}
+                            disabled={isUndoing || isUndoRedoDisabled || canUndo === false}
                             className="h-7 w-7"
                             title={`${t('Undo')} (${typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+Z)`}
                         >
@@ -453,7 +457,7 @@ export function InspectPreview({
                             variant="outline"
                             size="icon"
                             onClick={onRedo}
-                            disabled={isRedoing || isUndoRedoDisabled}
+                            disabled={isRedoing || isUndoRedoDisabled || canRedo === false}
                             className="h-7 w-7"
                             title={`${t('Redo')} (${typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+Shift+Z)`}
                         >
