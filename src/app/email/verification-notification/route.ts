@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSessionContext, hasVerifiedEmail } from '@/lib/auth';
 import { sendVerificationEmail } from '@/lib/email';
 import { hmacSha256 } from '@/lib/crypto';
+import { resolveRequestOrigin } from '@/lib/kinde';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,11 +16,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.redirect(new URL('/create', req.url), 303);
   }
 
-  const appKey = process.env.APP_KEY || 'default-secret-key-32-chars-long!';
+  const appKey =
+    process.env.APP_ENCRYPTION_KEY ||
+    process.env.APP_KEY ||
+    'default-secret-key-32-chars-long!';
   const expires = Math.floor(Date.now() / 1000) + 3600;
-  const hash = hmacSha256(`${ctx.user._id}|${ctx.user.email}|${expires}`, appKey);
+  const hash = hmacSha256(appKey, `${ctx.user._id}|${ctx.user.email}|${expires}`);
 
-  const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+  const appUrl = resolveRequestOrigin(req);
   const verifyUrl = `${appUrl}/verify-email/${ctx.user._id}/${hash}?expires=${expires}`;
 
   try {

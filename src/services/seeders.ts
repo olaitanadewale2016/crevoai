@@ -277,9 +277,9 @@ export async function seedSystemSettings(markInstalled = false) {
 
 export async function seedPaymentGatewayPlugins() {
   await connectDB();
-  const slugs = ['bank-transfer', 'paypal'];
+  const slugs = ['bank-transfer', 'paypal', 'paystack'];
   if (process.env.APP_ENV === 'local' || process.env.NODE_ENV === 'development') {
-    slugs.push('stripe', 'paystack', 'razorpay', 'cryptocom', 'yookassa');
+    slugs.push('stripe', 'razorpay', 'cryptocom', 'yookassa');
   }
 
   for (const slug of slugs) {

@@ -51,7 +51,14 @@ import { useTranslation } from '@/contexts/LanguageContext';
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
     'credit-card': CreditCard,
     'plugins/paypal/icon.svg': Wallet,
+    '/plugins/paypal/icon.svg': Wallet,
     'plugins/bank-transfer/icon.svg': Building2,
+    '/plugins/bank-transfer/icon.svg': Building2,
+    '/plugins/paystack/icon.svg': CreditCard,
+    '/plugins/stripe/icon.svg': CreditCard,
+    '/plugins/razorpay/icon.svg': CreditCard,
+    '/plugins/cryptocom/icon.svg': Shield,
+    '/plugins/yookassa/icon.svg': CreditCard,
 };
 
 function copyToClipboard(text: string): Promise<boolean> {

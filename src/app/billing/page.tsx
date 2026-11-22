@@ -251,8 +251,8 @@ export default async function BillingPage({
   });
 
   const plans = planDocs.map(serializePlan);
-  const paymentGateways = rawGateways.filter(
-    (g): g is UiPaymentGateway => g !== null && g !== undefined
+  const paymentGateways: UiPaymentGateway[] = rawGateways.filter(
+    (g): g is NonNullable<typeof g> => g !== null && g !== undefined
   );
 
   const referralBalance = Number(user.referral_credit_balance ?? 0);

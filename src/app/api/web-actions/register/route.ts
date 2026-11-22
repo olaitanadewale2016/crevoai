@@ -52,13 +52,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ errors }, { status: 422 });
   }
 
+  const ip = getClientIp(req);
+
   // Recaptcha check if enabled
   const recaptchaEnabled = await getSetting<boolean>('recaptcha_enabled', false);
   if (recaptchaEnabled) {
-    const verified = await verifyRecaptchaToken(recaptchaToken, 'register');
-    if (!verified) {
+    const verified = await verifyRecaptchaToken(recaptchaToken || '', ip);
+    if (!verified.ok) {
       return NextResponse.json(
-        { errors: { recaptcha_token: 'reCAPTCHA verification failed. Please try again.' } },
+        {
+          errors: {
+            recaptcha_token: verified.error || 'reCAPTCHA verification failed. Please try again.',
+          },
+        },
         { status: 422 }
       );
     }
@@ -88,6 +94,8 @@ export async function POST(req: NextRequest) {
     name,
     email,
     password: hashedPassword,
+    has_password: true,
+    auth_provider: 'local',
     role: 'user',
     status: 'active',
     plan_id: defaultPlan?._id || null,
@@ -117,7 +125,7 @@ export async function POST(req: NextRequest) {
       await recordReferralSignup({
         referee: user,
         codeOrSlug: referralCookie,
-        ip: getClientIp(req),
+        ip,
         userAgent: req.headers.get('user-agent'),
       });
     } catch {}
@@ -140,7 +148,6 @@ export async function POST(req: NextRequest) {
     });
   } catch {}
 
-  const ip = getClientIp(req);
   const sessionTimeoutMin = await getSetting<number>('session_timeout', 120);
   const ttlSeconds = sessionTimeoutMin * 60;
 
@@ -150,11 +157,13 @@ export async function POST(req: NextRequest) {
     userAgent: req.headers.get('user-agent'),
     remember: false,
     ttlSeconds,
+    host: req.headers.get('host'),
+    payload: { auth_provider: 'local' },
   });
 
   const redirectUrl = requireVerify ? '/verify-email' : '/create';
   const res = NextResponse.redirect(new URL(redirectUrl, req.url), 303);
-  await attachSessionCookie(res, session.token, ttlSeconds, req.headers.get('host'));
+  attachSessionCookie(res, session.token, ttlSeconds, session.cookieDomain);
 
   return res;
 }

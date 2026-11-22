@@ -108,7 +108,7 @@ export async function broadcastEvent(
 
 export async function broadcastToUser(
   userId: string,
-  event: 'notification' | 'credits.updated' | 'project.status',
+  event: 'notification' | 'credits.updated' | 'project.status' | 'subscription.updated',
   data: Record<string, unknown>
 ): Promise<boolean> {
   return broadcastEvent(`private-App.Models.User.${userId}`, event, data);

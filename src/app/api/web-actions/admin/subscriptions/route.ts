@@ -75,13 +75,14 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const invoiceSeq = await getNextSequence('invoice_seq');
+  const invoiceSeq = await getNextSequence('transaction_invoice_seq');
+  const currency = ((await import('@/lib/settings').then((m) => m.getSetting<string>('default_currency', 'USD'))) || 'USD').toUpperCase();
   await Transaction.create({
     invoice_seq: invoiceSeq,
     user_id: user._id,
     subscription_id: sub._id,
     amount: plan.price,
-    currency: 'USD',
+    currency,
     status: status === 'active' ? 'completed' : 'pending',
     type: 'subscription_new',
     payment_method,

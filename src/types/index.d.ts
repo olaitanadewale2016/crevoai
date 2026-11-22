@@ -97,6 +97,7 @@ export interface AppSettings {
     google_login_enabled: boolean;
     facebook_login_enabled: boolean;
     github_login_enabled: boolean;
+    kinde_login_enabled?: boolean;
     recaptcha_enabled: boolean;
     recaptcha_site_key: string;
     realtime_provider: RealtimeProvider;

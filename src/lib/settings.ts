@@ -3,6 +3,7 @@ import { SystemSetting, SettingType } from '@/models/System';
 import { encryptJson, decryptJson } from './crypto';
 import { cacheGet, cacheSet, cacheForget, cacheForgetPrefix } from './cache';
 import { getCurrencySymbol } from './currency';
+import { isKindeConfigured } from './kinde';
 
 const CACHE_TTL = 3600;
 const MISSING_SENTINEL = '__SYSTEM_SETTING_NOT_FOUND__';
@@ -77,6 +78,10 @@ export async function invalidateAllSettingsCaches(group?: string): Promise<void>
     await clearSettingsCache();
     await cacheForgetPrefix('landing_page:config:');
     await cacheForgetPrefix('internal_ai:');
+    try {
+      const { invalidateSharedContextCache } = await import('@/services/shared-context');
+      invalidateSharedContextCache();
+    } catch {}
     try {
       const { revalidatePath } = await import('next/cache');
       revalidatePath('/', 'layout');
@@ -255,9 +260,13 @@ export async function getSharedAppSettings() {
     landing_page_enabled: general.landing_page_enabled !== false,
     cookie_consent_enabled: gdpr.cookie_consent_enabled !== false,
     enable_registration: auth.enable_registration !== false,
-    google_login_enabled: Boolean(auth.google_login_enabled ?? false),
+    google_login_enabled:
+      Boolean(auth.google_login_enabled ?? false) ||
+      isKindeConfigured() ||
+      Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
     facebook_login_enabled: Boolean(auth.facebook_login_enabled ?? false),
     github_login_enabled: Boolean(auth.github_login_enabled ?? false),
+    kinde_login_enabled: isKindeConfigured(),
     recaptcha_enabled: recaptchaEnabled,
     recaptcha_site_key: recaptchaEnabled ? auth.recaptcha_site_key || '' : '',
     realtime_provider: 'pusher' as 'sse' | 'pusher',

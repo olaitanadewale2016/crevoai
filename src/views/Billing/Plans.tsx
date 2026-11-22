@@ -45,9 +45,10 @@ export default function Plans({
     currentPlanId,
     referralCreditBalance,
 }: PlansPageProps) {
-    const { auth, flash } = usePage<PlansPageProps & { flash: { bankTransfer?: BankTransferData } }>().props;
+    const { auth, flash, appSettings } = usePage<PlansPageProps & { flash: { bankTransfer?: BankTransferData } }>().props;
     const { t, locale } = useTranslation();
     const { isLoading } = usePageLoading();
+    const siteCurrency = (appSettings?.default_currency || 'USD').toUpperCase();
     const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
     const [isGatewayModalOpen, setIsGatewayModalOpen] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -94,7 +95,7 @@ export default function Plans({
         }
     };
 
-    const formatCurrency = (amount: number, currency: string = 'USD') => {
+    const formatCurrency = (amount: number, currency: string = siteCurrency) => {
         return new Intl.NumberFormat(locale, {
             style: 'currency',
             currency,
@@ -420,7 +421,7 @@ export default function Plans({
                                     </div>
                                     <div className="text-right flex-shrink-0">
                                         <p className="text-xl font-bold whitespace-nowrap">
-                                            {useReferralCredits ? '$0.00' : formatCurrency(selectedPlan.price)}
+                                            {useReferralCredits ? formatCurrency(0) : formatCurrency(selectedPlan.price)}
                                         </p>
                                         <p className="text-xs text-muted-foreground whitespace-nowrap">
                                             {billingPeriodLabels[selectedPlan.billing_period]}
@@ -450,7 +451,7 @@ export default function Plans({
                                     </div>
                                     {useReferralCredits && (
                                         <div className="mt-3 p-2 bg-success/10 rounded text-sm font-medium text-success">
-                                            {t('Total: :amount — No payment required!', { amount: '$0.00' })}
+                                            {t('Total: :amount — No payment required!', { amount: formatCurrency(0) })}
                                         </div>
                                     )}
                                 </div>
@@ -485,7 +486,12 @@ export default function Plans({
                                 </Button>
                             ) : paymentGateways.length > 0 ? (
                                 <div className="space-y-2 w-full overflow-hidden">
-                                    {paymentGateways.map((gateway) => (
+                                    {paymentGateways.map((gateway) => {
+                                        const hasConversion = Boolean(gateway.charge_currency && gateway.exchange_rate && gateway.charge_currency !== siteCurrency);
+                                        const convertedAmount = hasConversion
+                                            ? Math.round(selectedPlan.price * (gateway.exchange_rate ?? 1) * 100) / 100
+                                            : selectedPlan.price;
+                                        return (
                                         <Button
                                             key={gateway.slug}
                                             variant="outline"
@@ -494,7 +500,14 @@ export default function Plans({
                                             onClick={() => handleGatewaySelect(gateway)}
                                         >
                                             <div className="text-start min-w-0 flex-1">
-                                                <div className="font-semibold">{gateway.name}</div>
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <span className="font-semibold">{gateway.name}</span>
+                                                    {hasConversion && (
+                                                        <Badge variant="secondary" className="text-[11px] font-normal">
+                                                            {formatCurrency(convertedAmount, gateway.charge_currency)}
+                                                        </Badge>
+                                                    )}
+                                                </div>
                                                 {gateway.description && (
                                                     <div className="text-xs text-muted-foreground line-clamp-1">
                                                         {gateway.description}
@@ -509,7 +522,8 @@ export default function Plans({
                                                 )}
                                             </div>
                                         </Button>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             ) : (
                                 <div className="text-center py-4">

@@ -4,6 +4,7 @@ import { Plugin } from '@/models/Billing';
 import { GATEWAY_REGISTRY, getPluginConfigDecrypted } from '@/services/payment-gateways';
 
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 
 export async function POST(
   req: NextRequest,
@@ -17,7 +18,7 @@ export async function POST(
   }
 
   await connectDB();
-  const pluginDoc = await Plugin.findOne({ slug: pluginSlug, is_active: true });
+  const pluginDoc = await Plugin.findOne({ slug: pluginSlug, status: 'active' });
   if (!pluginDoc) {
     return new NextResponse('Plugin inactive or not found', { status: 404 });
   }

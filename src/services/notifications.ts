@@ -158,6 +158,19 @@ export async function broadcastUserCredits(user: IUser) {
   return snapshot;
 }
 
+export async function broadcastSubscriptionUpdated(
+  userId: string,
+  payload: {
+    subscription_id?: string | null;
+    plan_id?: string | null;
+    plan_name?: string | null;
+    status: string;
+    renewal_at?: string | null;
+  }
+) {
+  await broadcastToUser(userId, 'subscription.updated', payload).catch(() => {});
+}
+
 export async function broadcastProjectStatus(
   userId: string,
   projectId: string,

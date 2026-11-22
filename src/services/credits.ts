@@ -119,6 +119,10 @@ export async function refillUserBuildCredits(userId: string, planId?: string | n
     update.credits_reset_at = new Date();
   }
   await User.updateOne({ _id: user._id }, { $set: update });
+  const updatedUser = await User.findById(user._id).lean();
+  if (updatedUser) {
+    await broadcastUserCredits(updatedUser).catch(() => {});
+  }
 }
 
 export async function trackBuildCreditUsage(params: {

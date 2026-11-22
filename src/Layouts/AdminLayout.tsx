@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import { PropsWithChildren, useState } from 'react';
+import { PropsWithChildren, useState, useEffect } from 'react';
 import { Head, Link, usePage } from '@/lib/inertia-compat';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
@@ -50,8 +50,12 @@ export default function AdminLayout({ user, title, children }: AdminLayoutProps)
         markAllAsRead,
     } = useNotifications(unreadNotificationCount);
 
-    // Credits state
+    // Credits state (keep synced with server props after reload/navigation)
     const [credits, setCredits] = useState<UserCredits | null>(userCredits);
+
+    useEffect(() => {
+        setCredits(userCredits);
+    }, [userCredits]);
 
     // Subscribe to user channel for real-time updates
     useUserChannel({
@@ -61,7 +65,11 @@ export default function AdminLayout({ user, title, children }: AdminLayoutProps)
         onNotification: (notification: UserNotification) => {
             addNotification(notification);
             // Show toast for important notifications
-            if (notification.type === 'credits_low') {
+            if (
+                notification.type === 'credits_low' ||
+                notification.type === 'payment_completed' ||
+                notification.type === 'subscription_renewed'
+            ) {
                 toast(notification.title, {
                     description: notification.message,
                 });

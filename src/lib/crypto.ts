@@ -105,6 +105,10 @@ export function hmacSha256Hex(secret: string, data: string): string {
   return crypto.createHmac('sha256', secret).update(data).digest('hex');
 }
 
+export function hmacSha512Hex(secret: string, data: string): string {
+  return crypto.createHmac('sha512', secret).update(data).digest('hex');
+}
+
 export function signHmacToken(payload: string): string {
   return hmacSha256Hex(getEncryptionKey().toString('hex'), payload);
 }

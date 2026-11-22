@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import GuestLayout from '@/Layouts/GuestLayout';
-import { Head, Link, useForm, usePage, router } from '@/lib/inertia-compat';
+import { Head, Link, useForm, usePage } from '@/lib/inertia-compat';
 import { FormEventHandler } from 'react';
 import { toast } from 'sonner';
 import { PageProps } from '@/types';
@@ -14,7 +14,36 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { SocialLoginButtons } from '@/components/Auth/SocialLoginButtons';
 import { useReCaptcha } from '@/components/Auth/ReCaptchaProvider';
 import { useTranslation } from '@/contexts/LanguageContext';
-import { Info } from 'lucide-react';
+import { AlertCircle, Info } from 'lucide-react';
+
+function resolveAuthErrorMessage(
+    error: string | null | undefined,
+    t: (key: string) => string
+): string | null {
+    if (!error) return null;
+    switch (error) {
+        case 'oauth_cancelled':
+            return t('Authentication was cancelled.');
+        case 'oauth_failed':
+            return t('Unable to complete sign in. Please try again.');
+        case 'invalid_oauth_state':
+            return t('Your sign-in session expired. Please try again.');
+        case 'provider_not_configured':
+            return t('This sign-in provider is not configured yet.');
+        case 'kinde_not_configured':
+            return t('Kinde authentication is not configured yet. Please add Kinde environment variables.');
+        case 'email_not_provided':
+            return t('No verified email address was returned by the provider.');
+        case 'registration_disabled':
+            return t('Registration is currently disabled.');
+        case 'account_inactive':
+            return t('Your account has been deactivated. Please contact support.');
+        case 'unsupported_provider':
+            return t('Unsupported authentication provider.');
+        default:
+            return error;
+    }
+}
 
 export default function Login({
     status,
@@ -26,10 +55,11 @@ export default function Login({
     demoCredentials?: { email: string; password: string } | null;
 }) {
     const { t } = useTranslation();
-    const { appSettings } = usePage<PageProps>().props;
+    const { appSettings, flash } = usePage<PageProps>().props;
     const { getToken, isEnabled: recaptchaEnabled } = useReCaptcha();
+    const authErrorMessage = resolveAuthErrorMessage(flash?.error, t);
 
-    const { data, setData, processing, errors, reset } = useForm({
+    const { data, setData, post, transform, processing, errors, reset } = useForm({
         email: demoCredentials?.email || '',
         password: demoCredentials?.password || '',
         remember: false as boolean,
@@ -45,12 +75,21 @@ export default function Login({
             recaptchaToken = await getToken('login');
         }
 
-        router.post(route('login'), {
-            ...data,
+        transform((form) => ({
+            ...form,
             recaptcha_token: recaptchaToken,
-        }, {
+        }));
+
+        post(route('login'), {
             onFinish: () => reset('password'),
-            onError: () => toast.error(t('Invalid credentials')),
+            onError: (errs) =>
+                toast.error(
+                    errs.email ||
+                    errs.password ||
+                    errs.recaptcha_token ||
+                    errs.error ||
+                    t('Invalid credentials')
+                ),
         });
     };
 
@@ -62,6 +101,13 @@ export default function Login({
                 <h1 className="text-2xl font-bold text-foreground mb-2">{t('Welcome back')}</h1>
                 <p className="text-muted-foreground text-sm">{t('Sign in to continue building')}</p>
             </div>
+
+            {authErrorMessage && (
+                <Alert variant="destructive" className="mb-4">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>{authErrorMessage}</AlertDescription>
+                </Alert>
+            )}
 
             {status && (
                 <div className="mb-4 text-sm font-medium text-primary bg-primary/10 rounded-lg p-3 text-center">

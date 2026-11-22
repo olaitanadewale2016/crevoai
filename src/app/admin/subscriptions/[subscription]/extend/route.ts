@@ -4,6 +4,7 @@ import { getSessionContext, isDemoMode } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { Subscription, Transaction } from '@/models/Billing';
 import { getNextSequence } from '@/models/Counter';
+import { getSetting } from '@/lib/settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,16 +40,17 @@ export async function POST(
   sub.admin_notes = `${sub.admin_notes || ''}\n[Extended]: ${days} days - ${reason}`.trim();
   await sub.save();
 
-  const invoiceSeq = await getNextSequence('invoice_seq');
+  const invoiceSeq = await getNextSequence('transaction_invoice_seq');
+  const currency = ((await getSetting<string>('default_currency', 'USD')) || 'USD').toUpperCase();
   await Transaction.create({
     invoice_seq: invoiceSeq,
     user_id: sub.user_id,
     subscription_id: sub._id,
     amount: 0,
-    currency: 'USD',
+    currency,
     status: 'completed',
     type: 'subscription_renewal',
-    payment_method: 'Manual',
+    payment_method: 'manual',
     processed_by: ctx.user._id,
     notes: `Extended by ${days} days. Reason: ${reason}`,
   });

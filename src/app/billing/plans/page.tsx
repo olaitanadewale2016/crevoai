@@ -64,8 +64,8 @@ export default async function BillingPlansPage() {
     ]);
 
   const plans = planDocs.map(serializePlan);
-  const paymentGateways = rawGateways.filter(
-    (g): g is UiPaymentGateway => g !== null && g !== undefined
+  const paymentGateways: UiPaymentGateway[] = rawGateways.filter(
+    (g): g is NonNullable<typeof g> => g !== null && g !== undefined
   );
   const currentPlanId = activeSubDoc
     ? (String(activeSubDoc.plan_id) as unknown as number)

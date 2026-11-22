@@ -768,6 +768,250 @@ export const CURATED_INDUSTRY_IMAGES: StockImageItem[] = [
     alt: 'Condenser vocal recording microphone in acoustically treated sound studio with mixing console',
     source: 'curated',
   },
+
+  // EXPANDED MULTI-NICHE VARIETY (PREVENT IMAGE REUSE ACROSS CARDS)
+  {
+    filename: 'curated_bakery_pastries_display.jpg',
+    url: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=1200&q=80',
+    type: 'gallery',
+    subject: 'Freshly Baked Artisan Sourdough Bread',
+    category: 'restaurant',
+    categories: ['restaurant', 'bakery', 'bread', 'pastry', 'food', 'cafe'],
+    tone: 'warm',
+    contrast: 'dark-text',
+    alt: 'Warm crusted artisan sourdough loaves arranged in a bakery display',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_bakery_croissants_coffee.jpg',
+    url: 'https://images.unsplash.com/photo-1555507036-ab1f4038808a?auto=format&fit=crop&w=1200&q=80',
+    type: 'gallery',
+    subject: 'Golden Croissants & Espresso Bar',
+    category: 'restaurant',
+    categories: ['restaurant', 'bakery', 'cafe', 'coffee', 'pastry', 'breakfast', 'food'],
+    tone: 'warm',
+    contrast: 'dark-text',
+    alt: 'Freshly baked butter croissants arranged on a bakery rack',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_restaurant_fine_dining.jpg',
+    url: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1200&q=80',
+    type: 'gallery',
+    subject: 'Modern Bistro Dining Room Interior',
+    category: 'restaurant',
+    categories: ['restaurant', 'dining', 'bistro', 'hospitality', 'food', 'interior'],
+    tone: 'dark',
+    contrast: 'light-text',
+    alt: 'Ambient evening lighting in an upscale restaurant dining room',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_restaurant_plated_dish.jpg',
+    url: 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1200&q=80',
+    type: 'gallery',
+    subject: 'Chef Signature Plated Entree',
+    category: 'restaurant',
+    categories: ['restaurant', 'food', 'menu', 'chef', 'catering', 'dinner'],
+    tone: 'warm',
+    contrast: 'dark-text',
+    alt: 'Overhead photograph of gourmet chef-prepared signature dishes',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_tech_team_collaboration.jpg',
+    url: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1200&q=80',
+    type: 'gallery',
+    subject: 'Software Engineering Team Collaboration',
+    category: 'technology',
+    categories: ['technology', 'saas', 'agency', 'startup', 'software', 'team', 'business'],
+    tone: 'light',
+    contrast: 'dark-text',
+    alt: 'Product and engineering team collaborating around laptops in a sunlit workspace',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_tech_dashboard_analytics.jpg',
+    url: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1200&q=80',
+    type: 'gallery',
+    subject: 'Cloud Analytics & Data Platform Screen',
+    category: 'technology',
+    categories: ['technology', 'saas', 'analytics', 'fintech', 'dashboard', 'software', 'ai'],
+    tone: 'cool',
+    contrast: 'dark-text',
+    alt: 'Laptop screen showing clean financial charts and performance metrics',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_tech_developer_setup.jpg',
+    url: 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=1200&q=80',
+    type: 'gallery',
+    subject: 'Modern Developer Desk & Code Workstation',
+    category: 'technology',
+    categories: ['technology', 'developer', 'coding', 'software', 'agency', 'product'],
+    tone: 'cool',
+    contrast: 'dark-text',
+    alt: 'Developer laptop running application code on a minimalist desk',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_beauty_skincare_serum.jpg',
+    url: 'https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?auto=format&fit=crop&w=1200&q=80',
+    type: 'gallery',
+    subject: 'Luxury Facial & Skincare Treatment',
+    category: 'beauty',
+    categories: ['beauty', 'spa', 'skincare', 'salon', 'wellness', 'cosmetics'],
+    tone: 'light',
+    contrast: 'dark-text',
+    alt: 'Calm spa aesthetician performing facial skincare treatment',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_fashion_ecommerce_store.jpg',
+    url: 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=1200&q=80',
+    type: 'gallery',
+    subject: 'Curated Boutique Apparel & Retail Store',
+    category: 'fashion',
+    categories: ['fashion', 'ecommerce', 'shop', 'store', 'retail', 'apparel', 'clothing'],
+    tone: 'warm',
+    contrast: 'dark-text',
+    alt: 'Minimalist clothing rack inside a modern boutique retail storefront',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_ecommerce_product_watch.jpg',
+    url: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=1200&q=80',
+    type: 'gallery',
+    subject: 'Minimalist Product Showcase Photography',
+    category: 'fashion',
+    categories: ['ecommerce', 'product', 'shop', 'store', 'watch', 'accessories', 'fashion'],
+    tone: 'light',
+    contrast: 'dark-text',
+    alt: 'Clean studio product shot of a modern minimalist wristwatch',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_realestate_living_interior.jpg',
+    url: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80',
+    type: 'gallery',
+    subject: 'Contemporary Architectural Residence Exterior',
+    category: 'real-estate',
+    categories: ['real-estate', 'architecture', 'home', 'property', 'house', 'luxury'],
+    tone: 'light',
+    contrast: 'dark-text',
+    alt: 'Modern architectural home with glass facade and landscaped yard',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_realestate_modern_kitchen.jpg',
+    url: 'https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?auto=format&fit=crop&w=1200&q=80',
+    type: 'gallery',
+    subject: 'Open Concept Luxury Residence Lounge',
+    category: 'real-estate',
+    categories: ['real-estate', 'interior', 'design', 'apartment', 'home', 'luxury'],
+    tone: 'light',
+    contrast: 'dark-text',
+    alt: 'Spacious bright modern living room overlooking garden patio',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_finance_advisory_meeting.jpg',
+    url: 'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=1200&q=80',
+    type: 'gallery',
+    subject: 'Financial Advisory & Business Consulting Session',
+    category: 'finance',
+    categories: ['finance', 'accounting', 'consulting', 'law', 'tax', 'business', 'investment'],
+    tone: 'cool',
+    contrast: 'dark-text',
+    alt: 'Financial consultant reviewing strategy charts and portfolio documents on desk',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_medical_doctor_clinic.jpg',
+    url: 'https://images.unsplash.com/photo-1576091160550-2173dba999ef?auto=format&fit=crop&w=1200&q=80',
+    type: 'gallery',
+    subject: 'Healthcare Digital Consultation & Diagnostics',
+    category: 'dentist',
+    categories: ['medical', 'healthcare', 'clinic', 'doctor', 'hospital', 'dentist'],
+    tone: 'cool',
+    contrast: 'dark-text',
+    alt: 'Healthcare specialist reviewing patient diagnostics on digital tablet',
+    source: 'curated',
+  },
+
+  // HEADSHOTS, PORTRAITS, TEAM MEMBERS & TESTIMONIAL AVATARS
+  {
+    filename: 'curated_avatar_executive_woman.jpg',
+    url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=600&q=80',
+    type: 'gallery',
+    subject: 'Female Business Founder Headshot',
+    category: 'avatar',
+    categories: ['avatar', 'portrait', 'headshot', 'testimonial', 'team', 'woman', 'founder', 'person'],
+    tone: 'light',
+    contrast: 'dark-text',
+    alt: 'Professional portrait headshot of a smiling female executive founder',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_avatar_creative_man.jpg',
+    url: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=600&q=80',
+    type: 'gallery',
+    subject: 'Male Director Professional Headshot',
+    category: 'avatar',
+    categories: ['avatar', 'portrait', 'headshot', 'testimonial', 'team', 'man', 'ceo', 'person'],
+    tone: 'cool',
+    contrast: 'dark-text',
+    alt: 'Studio headshot portrait of a male business leader in tailored suit',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_avatar_designer_woman.jpg',
+    url: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=600&q=80',
+    type: 'gallery',
+    subject: 'Friendly Customer Testimonial Portrait',
+    category: 'avatar',
+    categories: ['avatar', 'portrait', 'headshot', 'testimonial', 'team', 'woman', 'customer', 'review'],
+    tone: 'warm',
+    contrast: 'dark-text',
+    alt: 'Warm portrait of a smiling woman for testimonial or team profile',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_avatar_engineer_man.jpg',
+    url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=600&q=80',
+    type: 'gallery',
+    subject: 'Product Specialist Headshot Portrait',
+    category: 'avatar',
+    categories: ['avatar', 'portrait', 'headshot', 'testimonial', 'team', 'man', 'developer', 'client'],
+    tone: 'light',
+    contrast: 'dark-text',
+    alt: 'Friendly portrait headshot of a young product specialist',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_avatar_consultant_woman.jpg',
+    url: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=600&q=80',
+    type: 'gallery',
+    subject: 'Client Testimonial Woman Portrait',
+    category: 'avatar',
+    categories: ['avatar', 'portrait', 'headshot', 'testimonial', 'team', 'woman', 'client', 'profile'],
+    tone: 'warm',
+    contrast: 'dark-text',
+    alt: 'Natural portrait photograph of a satisfied client smiling',
+    source: 'curated',
+  },
+  {
+    filename: 'curated_avatar_founder_man.jpg',
+    url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=600&q=80',
+    type: 'gallery',
+    subject: 'Customer Profile Avatar Man',
+    category: 'avatar',
+    categories: ['avatar', 'portrait', 'headshot', 'testimonial', 'team', 'man', 'customer', 'profile'],
+    tone: 'light',
+    contrast: 'dark-text',
+    alt: 'Close-up portrait of a smiling male customer',
+    source: 'curated',
+  },
 ];
 
 // Combine all libraries into a master list
@@ -776,6 +1020,26 @@ export const ALL_PRESET_IMAGES: StockImageItem[] = [
   ...CURATED_INDUSTRY_IMAGES,
 ];
 
+const DYNAMIC_FALLBACK_POOL = [
+  'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1497215728101-856f4ea42174?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1556761175-b413da4baf72?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1551434678-e076c223a692?auto=format&fit=crop&w=1200&q=80',
+];
+
+function hashSeed(input: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
 export interface SearchStockImagesOptions {
   query?: string;
   category?: string;
@@ -783,6 +1047,8 @@ export interface SearchStockImagesOptions {
   mood?: string;
   tone?: string;
   limit?: number;
+  index?: number;
+  seed?: string;
   customImages?: StockImageItem[];
   baseUrl?: string;
 }
@@ -795,6 +1061,8 @@ export function searchStockImages(opts: SearchStockImagesOptions): StockImageIte
     mood = '',
     tone = '',
     limit = 10,
+    index,
+    seed = '',
     customImages = [],
     baseUrl = '',
   } = opts;
@@ -859,17 +1127,18 @@ export function searchStockImages(opts: SearchStockImagesOptions): StockImageIte
   scored.sort((a, b) => b.score - a.score);
   const results = scored.slice(0, limit).map((s) => s.item);
 
-  // Fallback: If 0 matches found for a specific query, dynamically generate a contextual Unsplash / Pollinations image
+  // Fallback: If 0 matches found for a specific query, pick a deterministic image from the multi-photo pool
   if (results.length === 0 && searchTokens.length > 0) {
     const topic = searchTokens.join('-');
     const displayTopic = searchTokens.join(' ');
     const isBg = type === 'background';
-
-    // Generates a high-quality Unsplash image direct URL or Pollinations AI image
-    const dynamicUrl = `https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1200&q=80`;
+    const slot =
+      index !== undefined
+        ? Math.abs(index)
+        : hashSeed(`${rawKeywords}|${seed}|${type || ''}`);
     const fallbackDynamic: StockImageItem = {
-      filename: `dynamic_${topic}_${type || 'gallery'}.jpg`,
-      url: `https://image.pollinations.ai/prompt/${encodeURIComponent(displayTopic + ' professional photography, high quality modern commercial website') }?width=1200&height=800&nologo=true`,
+      filename: `dynamic_${topic}_${slot}_${type || 'gallery'}.jpg`,
+      url: DYNAMIC_FALLBACK_POOL[slot % DYNAMIC_FALLBACK_POOL.length],
       type: type || 'gallery',
       subject: humanize(displayTopic),
       category: searchTokens[0] || 'custom',

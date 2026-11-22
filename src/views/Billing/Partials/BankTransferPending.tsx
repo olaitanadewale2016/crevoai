@@ -5,7 +5,9 @@ import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/Admin/StatusBadge';
 import { Clock, Copy, Check, Building2, Banknote, AlertCircle } from 'lucide-react';
 import { useState } from 'react';
+import { usePage } from '@/lib/inertia-compat';
 import type { Subscription } from '@/types/billing';
+import type { PageProps } from '@/types';
 import { useTranslation } from '@/contexts/LanguageContext';
 
 interface BankTransferPendingProps {
@@ -21,6 +23,8 @@ const formatCurrency = (amount: number, currency: string = 'USD', locale: string
 
 export default function BankTransferPending({ subscription }: BankTransferPendingProps) {
     const { t, locale, isRtl } = useTranslation();
+    const { appSettings } = usePage<PageProps>().props;
+    const siteCurrency = (appSettings?.default_currency || 'USD').toUpperCase();
     const [copied, setCopied] = useState<string | null>(null);
 
     const copyToClipboard = async (text: string, field: string) => {
@@ -91,7 +95,7 @@ export default function BankTransferPending({ subscription }: BankTransferPendin
                     <div className="space-y-1">
                         <p className="text-sm text-muted-foreground">{t('Amount to Pay')}</p>
                         <p className="text-xl font-bold text-primary">
-                            {formatCurrency(subscription.amount, 'USD', isRtl ? 'ar-SA' : locale)}
+                            {formatCurrency(subscription.amount, siteCurrency, isRtl ? 'ar-SA' : locale)}
                         </p>
                     </div>
 

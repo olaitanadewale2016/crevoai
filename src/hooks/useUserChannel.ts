@@ -10,6 +10,14 @@ import type {
   ProjectStatusEvent,
 } from '@/types/notifications';
 
+export interface SubscriptionUpdatedEvent {
+  subscription_id?: string | null;
+  plan_id?: string | null;
+  plan_name?: string | null;
+  status: string;
+  renewal_at?: string | null;
+}
+
 export interface UseUserChannelOptions {
   userId: string | number | null;
   broadcastConfig: BroadcastConfig | null;
@@ -17,6 +25,7 @@ export interface UseUserChannelOptions {
   onNotification?: (notification: UserNotification) => void;
   onCreditsUpdated?: (credits: CreditsUpdatedEvent) => void;
   onProjectStatus?: (status: ProjectStatusEvent) => void;
+  onSubscriptionUpdated?: (subscription: SubscriptionUpdatedEvent) => void;
 }
 
 export interface UseUserChannelReturn {
@@ -109,6 +118,9 @@ export function useUserChannel(options: UseUserChannelOptions): UseUserChannelRe
       });
       channel.bind('project.status', (data: ProjectStatusEvent) => {
         optionsRef.current.onProjectStatus?.(data);
+      });
+      channel.bind('subscription.updated', (data: SubscriptionUpdatedEvent) => {
+        optionsRef.current.onSubscriptionUpdated?.(data);
       });
 
       currentChannelNameRef.current = channelName;

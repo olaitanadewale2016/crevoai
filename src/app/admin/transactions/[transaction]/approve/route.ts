@@ -4,6 +4,10 @@ import { getSessionContext, isDemoMode } from '@/lib/auth';
 import { Transaction, Subscription, Plan } from '@/models/Billing';
 import { User } from '@/models/User';
 import { calculateNextRenewalDate } from '@/services/payment-gateways';
+import { refillUserBuildCredits } from '@/services/credits';
+import { processPaymentCommission } from '@/services/referrals';
+import { notifyPaymentCompleted, broadcastSubscriptionUpdated } from '@/services/notifications';
+import { sendUserEmailNotification } from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,12 +42,20 @@ export async function POST(
   tx.processed_by = ctx.user._id;
   await tx.save();
 
+  const user = await User.findById(tx.user_id).lean();
+  await processPaymentCommission(tx.toObject()).catch(() => {});
+  await notifyPaymentCompleted(String(tx.user_id), tx.amount, tx.currency, tx.transaction_id).catch(() => {});
+
   if (tx.subscription_id) {
     const sub = await Subscription.findById(tx.subscription_id);
     if (sub && sub.status === 'pending') {
-      const plan = await Plan.findById(sub.plan_id);
-      const user = await User.findById(sub.user_id);
+      const plan = await Plan.findById(sub.plan_id).lean();
       const now = new Date();
+
+      await Subscription.updateMany(
+        { user_id: sub.user_id, status: 'active', _id: { $ne: sub._id } },
+        { $set: { status: 'cancelled', cancelled_at: now, ends_at: now } }
+      );
 
       sub.status = 'active';
       sub.starts_at = now;
@@ -52,12 +64,22 @@ export async function POST(
       sub.approved_at = now;
       await sub.save();
 
+      await refillUserBuildCredits(String(sub.user_id), String(sub.plan_id));
+      await broadcastSubscriptionUpdated(String(sub.user_id), {
+        subscription_id: String(sub._id),
+        plan_id: String(sub.plan_id),
+        plan_name: plan?.name ?? null,
+        status: 'active',
+        renewal_at: sub.renewal_at.toISOString(),
+      });
+
       if (user && plan) {
-        user.plan_id = plan._id;
-        if (plan.monthly_build_credits) {
-          user.build_credits = Math.max(user.build_credits || 0, plan.monthly_build_credits);
-        }
-        await user.save();
+        await sendUserEmailNotification('bank_transfer_approved', user, {
+          plan_name: plan.name,
+          amount: tx.amount,
+          currency: tx.currency,
+          renewal_at: sub.renewal_at,
+        }).catch(() => {});
       }
     }
   }

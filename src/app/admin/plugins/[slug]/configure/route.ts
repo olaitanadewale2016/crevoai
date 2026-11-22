@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { getSessionContext, isDemoAdminUser } from '@/lib/auth';
-import { parseRequestBody } from '@/lib/http';
+import { parseRequestBody, toBool } from '@/lib/http';
 import { Plugin } from '@/models/Billing';
-import { GATEWAY_REGISTRY, encryptPluginConfig } from '@/services/payment-gateways';
+import { GATEWAY_REGISTRY, encryptPluginConfig, getPluginConfigDecrypted } from '@/services/payment-gateways';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,15 +36,30 @@ export async function POST(
   const def = GATEWAY_REGISTRY[slug];
   const body = await parseRequestBody<Record<string, any>>(req);
 
-  const appUrl = process.env.APP_URL || 'http://localhost:3000';
+  const appUrl = (process.env.APP_URL || req.nextUrl.origin || 'http://localhost:3000').replace(/\/+$/, '');
   const schema = def ? def.getConfigSchema(appUrl) : [];
-  const allowedKeys = schema.map((f) => f.name);
+  const existingConfig = getPluginConfigDecrypted(plugin);
 
-  // Filter only schema-defined fields (ignore _token, _method, etc.)
+  // Filter schema-defined fields, strip readonly, coerce toggles, and keep existing secrets when masked/blank
   const cleanConfig: Record<string, any> = {};
-  for (const key of allowedKeys) {
-    if (body[key] !== undefined) {
-      cleanConfig[key] = body[key];
+  for (const field of schema) {
+    if (field.type === 'readonly') continue;
+    const rawVal = body[field.name];
+    if (field.type === 'toggle') {
+      cleanConfig[field.name] = toBool(rawVal, Boolean(existingConfig[field.name] ?? field.default));
+      continue;
+    }
+    if (field.sensitive) {
+      const strVal = typeof rawVal === 'string' ? rawVal.trim() : '';
+      if (!strVal || strVal === '••••••••') {
+        if (existingConfig[field.name]) cleanConfig[field.name] = existingConfig[field.name];
+      } else {
+        cleanConfig[field.name] = strVal;
+      }
+      continue;
+    }
+    if (rawVal !== undefined) {
+      cleanConfig[field.name] = typeof rawVal === 'string' ? rawVal.trim() : rawVal;
     }
   }
 

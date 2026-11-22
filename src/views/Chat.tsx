@@ -264,6 +264,7 @@ export default function Chat({
         getInitialViewMode() === 'settings' ? 'settings' : 'chat'
     );
     const [mobileFilesOpen, setMobileFilesOpen] = useState(false);
+    const [isChatCollapsed, setIsChatCollapsed] = useState(false);
     const allowedEfforts: Array<'low' | 'medium' | 'high'> =
         storage?.allowedEfforts && storage.allowedEfforts.length > 0
             ? storage.allowedEfforts
@@ -681,17 +682,25 @@ export default function Chat({
     // Send style edit message with health check (used by preview inspector)
     const handleSendStyleEdit = useCallback(async (msg: string) => {
         if (isLoading) return;
+        if (isOutOfCredits) {
+            setOutOfCreditsModalOpen(true);
+            return;
+        }
         try {
             const healthResponse = await axios.get(`/builder/projects/${project.id}/health`);
-            if (!healthResponse.data.online) return;
+            if (!healthResponse.data.online) {
+                toast.error(t('Builder service is currently unavailable'));
+                return;
+            }
         } catch {
+            toast.error(t('Builder service is currently unavailable'));
             return;
         }
         playSound('send');
         setThinkingStartTime(Date.now());
         setThinkingDuration(null);
         await sendMessage(msg, { effort });
-    }, [isLoading, project.id, playSound, sendMessage, effort]);
+    }, [isLoading, isOutOfCredits, project.id, playSound, sendMessage, effort, t]);
 
     // Element selection handler for inspect mode
     const handleElementSelect = useCallback((element: ElementMention) => {
@@ -763,8 +772,23 @@ export default function Chat({
             <Toaster />
 
             <div className="h-[100dvh] flex bg-background text-foreground overflow-hidden">
-                {/* Start: Chat Column - Full width on mobile (when mobileView === 'chat'), fixed width on larger screens */}
-                <div className={`${mobileView === 'chat' ? 'flex' : 'hidden md:flex'} w-full md:w-[420px] shrink-0 md:border-e flex-col`}>
+                {/* Desktop-only collapsed chat sidebar expand strip */}
+                {isChatCollapsed && (
+                    <div className="hidden md:flex h-full border-e bg-card/60 backdrop-blur flex-col items-center py-2.5 px-1.5 shrink-0 z-20">
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setIsChatCollapsed(false)}
+                            className="h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-muted"
+                            title={t('Show Chat')}
+                        >
+                            <PanelLeftOpen className="h-4 w-4" />
+                        </Button>
+                    </div>
+                )}
+
+                {/* Start: Chat Column - Full width on mobile (when mobileView === 'chat'), fixed width & collapsible on desktop */}
+                <div className={`${mobileView === 'chat' ? 'flex' : 'hidden'} ${isChatCollapsed ? 'md:hidden' : 'md:flex'} w-full md:w-[420px] shrink-0 md:border-e flex-col`}>
                     {/* Chat Header */}
                     <div className="h-14 px-4 border-b flex items-center justify-between shrink-0 bg-background">
                         <div className="min-w-0 flex-1">
@@ -815,6 +839,15 @@ export default function Chat({
                                 <Link href="/create">
                                     <Home className="h-4 w-4" />
                                 </Link>
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setIsChatCollapsed(true)}
+                                className="hidden md:inline-flex"
+                                title={t('Collapse chat')}
+                            >
+                                <PanelLeftClose className="h-4 w-4" />
                             </Button>
                         </div>
                     </div>

@@ -14,7 +14,7 @@ import {
 } from '@/services/payment-gateways';
 import { refillUserBuildCredits } from '@/services/credits';
 import { redeemReferralCreditsForBilling } from '@/services/referrals';
-import { notifyPaymentCompleted } from '@/services/notifications';
+import { notifyPaymentCompleted, broadcastSubscriptionUpdated } from '@/services/notifications';
 
 export const runtime = 'nodejs';
 
@@ -132,14 +132,14 @@ export async function POST(req: NextRequest) {
       const balance = Number(user.referral_credit_balance ?? 0);
       if (balance < planPrice) {
         return validationError({
-          referral: `Insufficient referral credits. You need $${planPrice.toFixed(2)} but only have $${balance.toFixed(2)}.`,
+          referral: `Insufficient referral credits. You need ${formatCurrencyAmount(planPrice, currency)} but only have ${formatCurrencyAmount(balance, currency)}.`,
         });
       }
 
       const redemption = await redeemReferralCreditsForBilling(
         String(user._id),
         planPrice,
-        `Applied $${planPrice.toFixed(2)} to ${plan.name} subscription`
+        `Applied ${formatCurrencyAmount(planPrice, currency)} to ${plan.name} subscription`
       );
       if (!redemption.ok) {
         return validationError({
@@ -171,6 +171,13 @@ export async function POST(req: NextRequest) {
       });
 
       await refillUserBuildCredits(String(user._id), String(plan._id));
+      await broadcastSubscriptionUpdated(String(user._id), {
+        subscription_id: String(sub._id),
+        plan_id: String(plan._id),
+        plan_name: plan.name,
+        status: 'active',
+        renewal_at: renewalAt.toISOString(),
+      });
 
       const invoiceSeq = await getNextSequence('transaction_invoice_seq');
       const tx = await Transaction.create({
@@ -236,7 +243,7 @@ export async function POST(req: NextRequest) {
 
       const now = new Date();
       const renewalAt = calculateNextRenewalDate(plan.billing_period, now);
-      await Subscription.create({
+      const sub = await Subscription.create({
         user_id: user._id,
         plan_id: plan._id,
         status: 'active',
@@ -247,6 +254,13 @@ export async function POST(req: NextRequest) {
       });
 
       await refillUserBuildCredits(String(user._id), String(plan._id));
+      await broadcastSubscriptionUpdated(String(user._id), {
+        subscription_id: String(sub._id),
+        plan_id: String(plan._id),
+        plan_name: plan.name,
+        status: 'active',
+        renewal_at: renewalAt.toISOString(),
+      });
 
       return NextResponse.json({
         redirect: '/billing',
@@ -270,13 +284,19 @@ export async function POST(req: NextRequest) {
       return validationError({ gateway: 'Payment gateway is not configured.' });
     }
 
-    if (def.supportedCurrencies.length > 0 && !def.supportedCurrencies.includes(currency)) {
+    const effectiveCurrency =
+      gateway === 'paystack' && cfg.settlement_currency
+        ? String(cfg.settlement_currency).toUpperCase()
+        : currency;
+    if (def.supportedCurrencies.length > 0 && !def.supportedCurrencies.includes(effectiveCurrency)) {
       return validationError({
-        gateway: `${def.name} does not support ${currency}.`,
+        gateway: `${def.name} does not support ${effectiveCurrency}.`,
       });
     }
 
-    const result = await def.initPayment(plan, user, cfg, currency);
+    const result = await def.initPayment(plan, user, cfg, currency, {
+      appUrl: req.nextUrl.origin.replace(/\/+$/, ''),
+    });
 
     if (result.type === 'error') {
       return validationError({

@@ -40,8 +40,16 @@ export async function PUT(req: NextRequest) {
 
   const minLength = await getSetting<number>('password_min_length', 8);
 
+  const user = await User.findById(ctx.user._id).select('+password');
+  if (!user) {
+    return NextResponse.redirect(new URL('/login', req.url), 303);
+  }
+
+  const requiresCurrentPassword = user.has_password !== false;
   const errors: Record<string, string> = {};
-  if (!currentPassword) errors.current_password = 'The current password field is required.';
+  if (requiresCurrentPassword && !currentPassword) {
+    errors.current_password = 'The current password field is required.';
+  }
   if (!password || password.length < minLength) {
     errors.password = `The password must be at least ${minLength} characters.`;
   }
@@ -53,8 +61,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ errors }, { status: 422 });
   }
 
-  const user = await User.findById(ctx.user._id).select('+password');
-  if (!user || !(await verifyPassword(currentPassword, user.password))) {
+  if (requiresCurrentPassword && !(await verifyPassword(currentPassword, user.password))) {
     return NextResponse.json(
       { errors: { current_password: 'The provided password does not match your current password.' } },
       { status: 422 }
@@ -62,7 +69,10 @@ export async function PUT(req: NextRequest) {
   }
 
   const hashedPassword = await hashPassword(password);
-  await User.updateOne({ _id: user._id }, { $set: { password: hashedPassword } });
+  await User.updateOne(
+    { _id: user._id },
+    { $set: { password: hashedPassword, has_password: true } }
+  );
 
   return NextResponse.redirect(new URL('/profile', req.url), 303);
 }

@@ -22,8 +22,10 @@ const PROVIDER_TYPES = {
 const DEFAULT_MODELS = {
   gemini: [
     'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
     'gemini-3.1-flash-lite',
     'gemini-3-flash-preview',
+    'gemini-2.5-flash-lite',
     'gemini-2.5-flash',
     'gemini-2.5-pro',
     'gemini-2.0-flash',
@@ -99,10 +101,12 @@ const DEFAULT_MODELS = {
 const MODEL_PRICING = {
   gemini: {
     'gemini-3.5-flash': { input: 0.1, output: 0.4 },
+    'gemini-3.5-flash-lite': { input: 0.05, output: 0.2 },
     'gemini-3.1-flash-lite': { input: 0.05, output: 0.2 },
     'gemini-3-flash-preview': { input: 0.0, output: 0.0 },
     'gemini-2.5-pro': { input: 1.25, output: 5.0 },
     'gemini-2.5-flash': { input: 0.15, output: 0.6 },
+    'gemini-2.5-flash-lite': { input: 0.05, output: 0.2 },
     'gemini-2.0-pro-exp-02-05': { input: 0.0, output: 0.0 },
     'gemini-2.0-flash': { input: 0.1, output: 0.4 },
     'gemini-2.0-flash-lite': { input: 0.075, output: 0.3 },
@@ -210,6 +214,11 @@ export default async function AdminAiProvidersPage() {
       }
     }
 
+    const defaultForType = DEFAULT_MODELS[p.type as keyof typeof DEFAULT_MODELS] || [];
+    const mergedModels = p.available_models?.length
+      ? Array.from(new Set([...defaultForType, ...p.available_models]))
+      : defaultForType;
+
     return {
       id: String(p._id) as any,
       name: p.name,
@@ -219,9 +228,7 @@ export default async function AdminAiProvidersPage() {
       is_default: Boolean(p.is_default),
       has_credentials: Boolean(p.credentials),
       masked_key: maskedKey,
-      available_models: p.available_models?.length
-        ? p.available_models
-        : DEFAULT_MODELS[p.type as keyof typeof DEFAULT_MODELS] || [],
+      available_models: mergedModels,
       config: p.config || {},
       plans_count: countMap.get(String(p._id)) || 0,
       total_requests: p.total_requests || 0,

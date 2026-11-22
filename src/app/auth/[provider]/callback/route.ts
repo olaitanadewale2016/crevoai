@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectDB } from '@/lib/db';
 import { getSetting } from '@/lib/settings';
-import { User, UserAiSettings, Plan } from '@/models';
-import { createSession, attachSessionCookie, getClientIp, hashPassword } from '@/lib/auth';
-import { generateHexToken } from '@/lib/crypto';
+import { timingSafeEqualStr } from '@/lib/crypto';
+import { resolveRequestOrigin } from '@/lib/kinde';
+import { completeOAuthLoginResponse, provisionOrSyncOAuthUser } from '@/lib/oauth';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,25 +12,51 @@ export async function GET(
 ) {
   const { provider } = await context.params;
   const p = provider.toLowerCase();
+  if (p !== 'google' && p !== 'github' && p !== 'facebook') {
+    return NextResponse.redirect(new URL('/login?error=unsupported_provider', req.url));
+  }
+
   const searchParams = req.nextUrl.searchParams;
-  const code = searchParams.get('code');
-  const state = searchParams.get('state');
-
-  const cookieState = req.cookies.get(`oauth_state_${p}`)?.value;
-  if (!code || !state || !cookieState || state !== cookieState) {
-    return NextResponse.redirect(new URL('/login?error=invalid_oauth_state', req.url));
+  const oauthError = searchParams.get('error');
+  if (oauthError) {
+    const mapped =
+      oauthError === 'access_denied' ? 'oauth_cancelled' : 'oauth_failed';
+    const res = NextResponse.redirect(new URL(`/login?error=${mapped}`, req.url));
+    res.cookies.delete(`oauth_state_${p}`);
+    return res;
   }
 
-  const clientId = await getSetting<string>(`${p}_client_id`, '');
-  const clientSecret = await getSetting<string>(`${p}_client_secret`, '');
+  const code = searchParams.get('code') || '';
+  const state = searchParams.get('state') || '';
+  const cookieState = req.cookies.get(`oauth_state_${p}`)?.value || '';
+  if (!code || !state || !cookieState || !timingSafeEqualStr(state, cookieState)) {
+    const res = NextResponse.redirect(new URL('/login?error=invalid_oauth_state', req.url));
+    res.cookies.delete(`oauth_state_${p}`);
+    return res;
+  }
+
+  let clientId = await getSetting<string>(`${p}_client_id`, '');
+  let clientSecret = await getSetting<string>(`${p}_client_secret`, '');
+  if (p === 'google') {
+    clientId = clientId || (process.env.GOOGLE_CLIENT_ID || '').trim();
+    clientSecret = clientSecret || (process.env.GOOGLE_CLIENT_SECRET || '').trim();
+  }
+
   if (!clientId || !clientSecret) {
-    return NextResponse.redirect(new URL('/login?error=provider_not_configured', req.url));
+    const res = NextResponse.redirect(new URL('/login?error=provider_not_configured', req.url));
+    res.cookies.delete(`oauth_state_${p}`);
+    return res;
   }
 
-  const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+  const appUrl = resolveRequestOrigin(req);
   const redirectUri = `${appUrl}/auth/${p}/callback`;
 
-  let profile: { email: string; name: string; avatar?: string | null } | null = null;
+  let profile: {
+    email: string;
+    name: string;
+    avatar?: string | null;
+    emailVerified?: boolean;
+  } | null = null;
 
   try {
     if (p === 'google') {
@@ -55,8 +80,9 @@ export async function GET(
       const userData = await userRes.json();
       profile = {
         email: userData.email,
-        name: userData.name || userData.email.split('@')[0],
+        name: userData.name || (userData.email ? String(userData.email).split('@')[0] : 'Google User'),
         avatar: userData.picture || null,
+        emailVerified: userData.verified_email !== undefined ? Boolean(userData.verified_email) : true,
       };
     } else if (p === 'github') {
       const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
@@ -100,97 +126,62 @@ export async function GET(
         email,
         name: userData.name || userData.login || 'GitHub User',
         avatar: userData.avatar_url || null,
+        emailVerified: true,
       };
     } else if (p === 'facebook') {
       const tokenRes = await fetch(
-        `https://graph.facebook.com/v19.0/oauth/access_token?client_id=${clientId}&client_secret=${clientSecret}&redirect_uri=${encodeURIComponent(
-          redirectUri
-        )}&code=${code}`
+        `https://graph.facebook.com/v19.0/oauth/access_token?client_id=${encodeURIComponent(
+          clientId
+        )}&client_secret=${encodeURIComponent(
+          clientSecret
+        )}&redirect_uri=${encodeURIComponent(redirectUri)}&code=${encodeURIComponent(code)}`
       );
       const tokenData = await tokenRes.json();
       if (!tokenData.access_token) throw new Error('Failed to get Facebook access token');
 
       const userRes = await fetch(
-        `https://graph.facebook.com/me?fields=id,name,email,picture.type(large)&access_token=${tokenData.access_token}`
+        `https://graph.facebook.com/me?fields=id,name,email,picture.type(large)&access_token=${encodeURIComponent(
+          tokenData.access_token
+        )}`
       );
       const userData = await userRes.json();
       profile = {
         email: userData.email,
         name: userData.name || 'Facebook User',
         avatar: userData.picture?.data?.url || null,
+        emailVerified: true,
       };
     }
-  } catch (err: any) {
-    return NextResponse.redirect(new URL('/login?error=oauth_failed', req.url));
+  } catch {
+    const res = NextResponse.redirect(new URL('/login?error=oauth_failed', req.url));
+    res.cookies.delete(`oauth_state_${p}`);
+    return res;
   }
 
   if (!profile?.email) {
-    return NextResponse.redirect(new URL('/login?error=email_not_provided', req.url));
+    const res = NextResponse.redirect(new URL('/login?error=email_not_provided', req.url));
+    res.cookies.delete(`oauth_state_${p}`);
+    return res;
   }
 
-  await connectDB();
-  let user = await User.findOne({ email: profile.email.toLowerCase() });
-
-  if (user) {
-    if (!user.avatar && profile.avatar) {
-      user.avatar = profile.avatar;
-      await user.save();
-    }
-  } else {
-    const enableReg = await getSetting<boolean>('enable_registration', true);
-    if (!enableReg) {
-      return NextResponse.redirect(new URL('/login?error=registration_disabled', req.url));
-    }
-
-    const defaultPlanId = await getSetting<string | null>('default_plan_id', null);
-    const plan = defaultPlanId
-      ? await Plan.findById(defaultPlanId).lean()
-      : await Plan.findOne({ is_active: true, price: 0 }).lean();
-    const initialCredits =
-      plan?.monthly_build_credits === -1 ? 0 : plan?.monthly_build_credits || 0;
-    const randomPassword = await hashPassword(generateHexToken(16));
-
-    user = await User.create({
-      name: profile.name,
-      email: profile.email.toLowerCase(),
-      password: randomPassword,
-      avatar: profile.avatar,
-      role: 'user',
-      status: 'active',
-      plan_id: plan?._id || null,
-      build_credits: initialCredits,
-      credits_reset_at: plan ? new Date() : null,
-      email_verified_at: new Date(),
-    });
-
-    await UserAiSettings.findOneAndUpdate(
-      { user_id: user._id },
-      {
-        $setOnInsert: {
-          user_id: user._id,
-          sounds_enabled: true,
-          sound_style: 'playful',
-          sound_volume: 100,
-        },
-      },
-      { upsert: true }
-    ).catch(() => {});
-  }
-
-  const sessionTimeoutMin = await getSetting<number>('session_timeout', 120);
-  const ttlSeconds = sessionTimeoutMin * 60;
-
-  const session = await createSession({
-    userId: user._id,
-    ipAddress: getClientIp(req),
-    userAgent: req.headers.get('user-agent'),
-    remember: true,
-    ttlSeconds,
+  const provisioned = await provisionOrSyncOAuthUser(req, {
+    provider: p,
+    email: profile.email,
+    name: profile.name,
+    avatar: profile.avatar,
+    emailVerified: profile.emailVerified,
   });
 
-  const res = NextResponse.redirect(new URL('/create', req.url), 303);
-  res.cookies.delete(`oauth_state_${p}`);
-  await attachSessionCookie(res, session.token, ttlSeconds, req.headers.get('host'));
+  if (!provisioned.ok) {
+    const res = NextResponse.redirect(
+      new URL(`/login?error=${provisioned.errorCode}`, req.url)
+    );
+    res.cookies.delete(`oauth_state_${p}`);
+    return res;
+  }
 
-  return res;
+  return await completeOAuthLoginResponse(req, provisioned.user, {
+    authProvider: p,
+    clearCookies: [`oauth_state_${p}`],
+  });
 }

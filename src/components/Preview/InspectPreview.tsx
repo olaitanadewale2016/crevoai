@@ -10,7 +10,7 @@ import { usePreviewInspector } from '@/hooks/usePreviewInspector';
 import { usePreviewThemeSync } from '@/hooks/usePreviewThemeSync';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { Button } from '@/components/ui/button';
-import { MousePointerClick, Loader2, Palette, Undo2, Redo2, Bot, Cog, Wrench } from 'lucide-react';
+import { MousePointerClick, Loader2, Palette, Undo2, Redo2, Bot, Cog, Wrench, Monitor, Tablet, Smartphone } from 'lucide-react';
 import { toast } from 'sonner';
 import type { InspectorElement, ElementMention, PendingEdit } from '@/types/inspector';
 import { formatStyleEditMessage } from '@/lib/style-save';
@@ -109,6 +109,16 @@ export function InspectPreview({
     const previousMode = useRef<PreviewMode>(mode);
     const [isSaving, setIsSaving] = useState(false);
     const [iframeReady, setIframeReady] = useState(false);
+    const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop');
+
+    const handleSetDeviceMode = useCallback((newMode: DeviceMode) => {
+        setDeviceMode(newMode);
+        const breakpoint = newMode === 'mobile' ? 'sm' : newMode === 'tablet' ? 'md' : 'lg';
+        iframeRef.current?.contentWindow?.postMessage({
+            type: 'inspector-set-breakpoint',
+            breakpoint,
+        }, '*');
+    }, []);
 
     // Use the preview inspector hook - only enabled in inspect mode
     const {
@@ -263,11 +273,15 @@ export function InspectPreview({
     }, [closeContextMenu, openStylePanel]);
 
     // Handle AI edit from toolbar
-    const handleAiEdit = useCallback((element: InspectorElement) => {
+    const handleAiEdit = useCallback((element: InspectorElement, customPrompt: string) => {
+        const trimmed = customPrompt.trim();
+        if (!trimmed) return;
         closeContextMenu();
         const description = `<${element.tagName}${element.classNames[0] ? '.' + element.classNames[0] : ''}>`;
-        onSendStyleEdit?.(`[AI_EDIT] Improve the styling of ${description}: "${element.textPreview}"`);
-    }, [closeContextMenu, onSendStyleEdit]);
+        const textSample = element.textPreview ? ` ("${element.textPreview.slice(0, 60)}")` : '';
+        onSendStyleEdit?.(`[AI_EDIT] For element ${description}${textSample} (selector: \`${element.cssSelector}\`): ${trimmed}`);
+        toast.success(t('Request sent to AI'));
+    }, [closeContextMenu, onSendStyleEdit, t]);
 
     // Handle element deletion from toolbar
     const handleDeleteElement = useCallback((element: InspectorElement) => {
@@ -305,7 +319,7 @@ export function InspectPreview({
                 height: contextMenu.element.boundingRect.height,
             },
         };
-    }, [contextMenu?.element, iframeRef]);
+    }, [contextMenu?.element, iframeRef, deviceMode]);
 
     // Handle save all edits
     const handleSaveAll = useCallback(async () => {
@@ -343,7 +357,7 @@ export function InspectPreview({
                 <GradientBackground />
 
                 {/* Unified toolbar bar */}
-                <div className="h-10 px-3 border-b flex items-center justify-between shrink-0 bg-background/80 backdrop-blur-sm z-20">
+                <div className="h-10 px-3 border-b flex items-center justify-between gap-2 shrink-0 bg-background/80 backdrop-blur-sm z-20">
                     <div className="flex items-center gap-1.5">
                         {/* Mode toggles */}
                         <Button
@@ -366,6 +380,49 @@ export function InspectPreview({
                         </Button>
                     </div>
 
+                    {/* Desktop-only Responsive Device Viewport Switcher (Desktop, Tablet, Mobile) */}
+                    <div className="hidden md:flex items-center bg-muted/70 p-0.5 rounded-lg border border-border/50">
+                        <Button
+                            variant={deviceMode === 'desktop' ? 'secondary' : 'ghost'}
+                            size="icon"
+                            className={`h-7 w-7 rounded-md transition-all ${
+                                deviceMode === 'desktop'
+                                    ? 'bg-background shadow-xs text-foreground font-semibold'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                            onClick={() => handleSetDeviceMode('desktop')}
+                            title={t('Desktop View (100%)')}
+                        >
+                            <Monitor className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                            variant={deviceMode === 'tablet' ? 'secondary' : 'ghost'}
+                            size="icon"
+                            className={`h-7 w-7 rounded-md transition-all ${
+                                deviceMode === 'tablet'
+                                    ? 'bg-background shadow-xs text-foreground font-semibold'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                            onClick={() => handleSetDeviceMode('tablet')}
+                            title={t('Tablet View (768px)')}
+                        >
+                            <Tablet className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                            variant={deviceMode === 'mobile' ? 'secondary' : 'ghost'}
+                            size="icon"
+                            className={`h-7 w-7 rounded-md transition-all ${
+                                deviceMode === 'mobile'
+                                    ? 'bg-background shadow-xs text-foreground font-semibold'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                            onClick={() => handleSetDeviceMode('mobile')}
+                            title={t('Mobile View (390px)')}
+                        >
+                            <Smartphone className="h-3.5 w-3.5" />
+                        </Button>
+                    </div>
+
                     {/* Right side: hints + Undo/Redo */}
                     <div className="flex items-center gap-2">
                         {mode === 'inspect' && !isReady && !isBuilding && (
@@ -375,12 +432,12 @@ export function InspectPreview({
                             </span>
                         )}
                         {mode === 'inspect' && isReady && !isBuilding && (
-                            <span className="hidden sm:inline-flex text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                            <span className="hidden lg:inline-flex text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
                                 {t('Click any element to see options')}
                             </span>
                         )}
 
-                        {mode === 'inspect' && <div className="hidden sm:block w-px h-5 bg-border mx-1" />}
+                        {mode === 'inspect' && <div className="hidden lg:block w-px h-5 bg-border mx-1" />}
 
                         <Button
                             variant="outline"
@@ -419,22 +476,36 @@ export function InspectPreview({
                     )}
 
                     {/* iframe container */}
-                    <div className="flex-1 min-h-0 relative">
-                        <iframe
-                            ref={iframeRef}
-                            key={refreshTrigger}
-                            src={`${previewUrl}?t=${refreshTrigger}`}
-                            className="absolute inset-0 w-full h-full border-0"
-                            title="Preview"
-                            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
-                            onLoad={() => {
-                                setIframeReady(true);
-                                iframeRef.current?.contentWindow?.postMessage({
-                                    type: 'inspector-ping',
-                                    mode: mode === 'inspect' ? 'inspect' : 'preview',
-                                }, '*');
-                            }}
-                        />
+                    <div
+                        className={`flex-1 min-h-0 relative flex items-center justify-center overflow-auto ${
+                            deviceMode !== 'desktop' ? 'md:bg-muted/30' : ''
+                        }`}
+                    >
+                        <div
+                            className={
+                                deviceMode === 'mobile'
+                                    ? 'relative w-full h-full md:w-[390px] md:max-w-full md:h-[min(844px,calc(100%-24px))] md:my-3 md:rounded-[24px] md:border-4 md:border-foreground/15 md:shadow-2xl md:overflow-hidden bg-background transition-all duration-200'
+                                    : deviceMode === 'tablet'
+                                    ? 'relative w-full h-full md:w-[768px] md:max-w-full md:h-[calc(100%-24px)] md:my-3 md:rounded-xl md:border md:shadow-xl md:overflow-hidden bg-background transition-all duration-200'
+                                    : 'relative w-full h-full'
+                            }
+                        >
+                            <iframe
+                                ref={iframeRef}
+                                key={refreshTrigger}
+                                src={`${previewUrl}?t=${refreshTrigger}`}
+                                className="w-full h-full border-0"
+                                title="Preview"
+                                sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+                                onLoad={() => {
+                                    setIframeReady(true);
+                                    iframeRef.current?.contentWindow?.postMessage({
+                                        type: 'inspector-ping',
+                                        mode: mode === 'inspect' ? 'inspect' : 'preview',
+                                    }, '*');
+                                }}
+                            />
+                        </div>
 
                         {/* Confetti canvas */}
                         <canvas
@@ -491,7 +562,7 @@ export function InspectPreview({
                         element={adjustedContextElement}
                         onEdit={() => handleEdit(contextMenu.element)}
                         onStyle={() => handleOpenStyle(contextMenu.element)}
-                        onAiEdit={() => handleAiEdit(contextMenu.element)}
+                        onAiEdit={(customPrompt) => handleAiEdit(contextMenu.element, customPrompt)}
                         onClose={closeContextMenu}
                         onDelete={() => handleDeleteElement(contextMenu.element)}
                     />,

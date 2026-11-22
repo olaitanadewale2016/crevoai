@@ -171,6 +171,8 @@ export interface PaymentGateway {
     icon: string;
     supports_auto_renewal: boolean;
     requires_manual_approval: boolean;
+    charge_currency?: string;
+    exchange_rate?: number;
 }
 
 // Stats Types

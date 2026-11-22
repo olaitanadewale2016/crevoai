@@ -1,22 +1,26 @@
-﻿'use client';
+'use client';
 
 import { route } from '@/lib/route';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import GuestLayout from '@/Layouts/GuestLayout';
-import { Head, Link, useForm, router } from '@/lib/inertia-compat';
+import { Head, Link, useForm, usePage } from '@/lib/inertia-compat';
 import { FormEventHandler } from 'react';
 import { toast } from 'sonner';
+import { PageProps } from '@/types';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { SocialLoginButtons } from '@/components/Auth/SocialLoginButtons';
 import { useReCaptcha } from '@/components/Auth/ReCaptchaProvider';
 import { useTranslation } from '@/contexts/LanguageContext';
+import { AlertCircle } from 'lucide-react';
 
 export default function Register() {
     const { t } = useTranslation();
+    const { flash } = usePage<PageProps>().props;
     const { getToken, isEnabled: recaptchaEnabled } = useReCaptcha();
 
-    const { data, setData, processing, errors, reset } = useForm({
+    const { data, setData, post, transform, processing, errors, reset } = useForm({
         name: '',
         email: '',
         password: '',
@@ -33,12 +37,23 @@ export default function Register() {
             recaptchaToken = await getToken('register');
         }
 
-        router.post(route('register'), {
-            ...data,
+        transform((form) => ({
+            ...form,
             recaptcha_token: recaptchaToken,
-        }, {
+        }));
+
+        post(route('register'), {
             onFinish: () => reset('password', 'password_confirmation'),
-            onError: () => toast.error(t('Registration failed')),
+            onError: (errs) =>
+                toast.error(
+                    errs.name ||
+                        errs.email ||
+                        errs.password ||
+                        errs.password_confirmation ||
+                        errs.recaptcha_token ||
+                        errs.error ||
+                        t('Registration failed')
+                ),
         });
     };
 
@@ -50,6 +65,13 @@ export default function Register() {
                 <h1 className="text-2xl font-bold text-foreground mb-2">{t('Create your account')}</h1>
                 <p className="text-muted-foreground text-sm">{t('Start building with AI')}</p>
             </div>
+
+            {flash?.error && (
+                <Alert variant="destructive" className="mb-4">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>{flash.error}</AlertDescription>
+                </Alert>
+            )}
 
             <form onSubmit={submit} className="space-y-4">
                 <div className="space-y-2">

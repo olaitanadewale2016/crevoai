@@ -1,12 +1,12 @@
-﻿'use client';
+'use client';
 
 import { route } from '@/lib/route';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import GuestLayout from '@/Layouts/GuestLayout';
-import { Head, Link, useForm, router } from '@/lib/inertia-compat';
-import { FormEventHandler } from 'react';
+import { Head, Link, useForm } from '@/lib/inertia-compat';
+import { FormEventHandler, useState } from 'react';
 import { toast } from 'sonner';
 import { useReCaptcha } from '@/components/Auth/ReCaptchaProvider';
 import { useTranslation } from '@/contexts/LanguageContext';
@@ -14,8 +14,9 @@ import { useTranslation } from '@/contexts/LanguageContext';
 export default function ForgotPassword({ status }: { status?: string }) {
     const { t } = useTranslation();
     const { getToken, isEnabled: recaptchaEnabled } = useReCaptcha();
+    const [sent, setSent] = useState(false);
 
-    const { data, setData, processing, errors } = useForm({
+    const { data, setData, post, transform, processing, errors } = useForm({
         email: '',
         recaptcha_token: '',
     });
@@ -29,14 +30,28 @@ export default function ForgotPassword({ status }: { status?: string }) {
             recaptchaToken = await getToken('forgot_password');
         }
 
-        router.post(route('password.email'), {
-            ...data,
+        transform((form) => ({
+            ...form,
             recaptcha_token: recaptchaToken,
-        }, {
-            onSuccess: () => toast.success(t('Reset link sent to your email')),
-            onError: () => toast.error(t('Failed to send reset link')),
+        }));
+
+        post(route('password.email'), {
+            onSuccess: () => {
+                setSent(true);
+                toast.success(t('Reset link sent to your email'));
+            },
+            onError: (errs) =>
+                toast.error(
+                    errs.email ||
+                        errs.recaptcha_token ||
+                        errs.error ||
+                        t('Failed to send reset link')
+                ),
         });
     };
+
+    const displayStatus =
+        status || (sent ? t('We have emailed your password reset link.') : undefined);
 
     return (
         <GuestLayout>
@@ -49,9 +64,9 @@ export default function ForgotPassword({ status }: { status?: string }) {
                 </p>
             </div>
 
-            {status && (
+            {displayStatus && (
                 <div className="mb-4 text-sm font-medium text-primary bg-primary/10 rounded-lg p-3 text-center">
-                    {status}
+                    {displayStatus}
                 </div>
             )}
 

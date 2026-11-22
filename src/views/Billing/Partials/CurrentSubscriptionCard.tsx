@@ -2,7 +2,7 @@
 
 import { route } from '@/lib/route';
 import { useState } from 'react';
-import { router } from '@/lib/inertia-compat';
+import { router, usePage } from '@/lib/inertia-compat';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,6 +21,7 @@ import {
 import { CreditCard, Calendar, Banknote } from 'lucide-react';
 import { useAppDate } from '@/lib/date';
 import type { Subscription } from '@/types/billing';
+import type { PageProps } from '@/types';
 import { useTranslation } from '@/contexts/LanguageContext';
 
 interface CurrentSubscriptionCardProps {
@@ -36,6 +37,8 @@ const formatCurrency = (amount: number, currency: string = 'USD', locale: string
 
 export default function CurrentSubscriptionCard({ subscription }: CurrentSubscriptionCardProps) {
     const { t, locale, isRtl } = useTranslation();
+    const { appSettings } = usePage<PageProps>().props;
+    const siteCurrency = (appSettings?.default_currency || 'USD').toUpperCase();
     const { formatDate } = useAppDate();
     const [isCancelling, setIsCancelling] = useState(false);
 
@@ -91,7 +94,7 @@ export default function CurrentSubscriptionCard({ subscription }: CurrentSubscri
                         <p className="text-sm text-muted-foreground">{t('Plan')}</p>
                         <p className="text-lg font-semibold">{plan?.name || t('Unknown Plan')}</p>
                         <p className="text-xl font-bold text-primary">
-                            {formatCurrency(subscription.amount, 'USD', isRtl ? 'ar-SA' : locale)}
+                            {formatCurrency(subscription.amount, siteCurrency, isRtl ? 'ar-SA' : locale)}
                             <span className="text-sm font-normal text-muted-foreground">
                                 /{plan?.billing_period === 'lifetime' ? '' : billingPeriodLabels[plan?.billing_period || 'monthly']?.toLowerCase() || t('month')}
                             </span>

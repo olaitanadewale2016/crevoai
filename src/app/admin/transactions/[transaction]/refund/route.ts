@@ -44,7 +44,7 @@ export async function POST(
   tx.notes = `${tx.notes || ''}\nRefunded: $${refundAmount.toFixed(2)} - ${reason}`.trim();
   await tx.save();
 
-  const invoiceSeq = await getNextSequence('invoice_seq');
+  const invoiceSeq = await getNextSequence('transaction_invoice_seq');
   await Transaction.create({
     invoice_seq: invoiceSeq,
     user_id: tx.user_id,

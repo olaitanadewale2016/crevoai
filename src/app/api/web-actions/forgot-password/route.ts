@@ -3,8 +3,9 @@ import { connectDB } from '@/lib/db';
 import { getSetting } from '@/lib/settings';
 import { User, PasswordResetToken } from '@/models';
 import { parseRequestBody } from '@/lib/http';
-import { verifyRecaptchaToken } from '@/lib/auth';
+import { verifyRecaptchaToken, getClientIp } from '@/lib/auth';
 import { sendPasswordResetEmail } from '@/lib/email';
+import { resolveRequestOrigin } from '@/lib/kinde';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
@@ -25,10 +26,14 @@ export async function POST(req: NextRequest) {
   // Recaptcha check if enabled
   const recaptchaEnabled = await getSetting<boolean>('recaptcha_enabled', false);
   if (recaptchaEnabled) {
-    const verified = await verifyRecaptchaToken(recaptchaToken, 'password_request');
-    if (!verified) {
+    const verified = await verifyRecaptchaToken(recaptchaToken || '', getClientIp(req));
+    if (!verified.ok) {
       return NextResponse.json(
-        { errors: { recaptcha_token: 'reCAPTCHA verification failed. Please try again.' } },
+        {
+          errors: {
+            recaptcha_token: verified.error || 'reCAPTCHA verification failed. Please try again.',
+          },
+        },
         { status: 422 }
       );
     }
@@ -46,12 +51,12 @@ export async function POST(req: NextRequest) {
       { upsert: true }
     );
 
-    const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+    const appUrl = resolveRequestOrigin(req);
     const resetUrl = `${appUrl}/reset-password/${rawToken}?email=${encodeURIComponent(email)}`;
 
     try {
       await sendPasswordResetEmail(user, resetUrl);
-    } catch {}
+    } catch { }
   }
 
   // Always return success status to prevent email enumeration

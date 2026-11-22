@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { PageProps } from '@/types';
 
@@ -60,6 +60,8 @@ export interface AuthSettings {
     github_login_enabled: boolean;
     github_client_id: string;
     github_has_secret: boolean;
+    kinde_configured?: boolean;
+    kinde_google_configured?: boolean;
     session_timeout: number;
     password_min_length: number;
 }

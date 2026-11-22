@@ -69,8 +69,12 @@ export default function Create({
         markAllAsRead,
     } = useNotifications(unreadNotificationCount);
 
-    // Credits state
+    // Credits state (keep synced with shared props)
     const [credits, setCredits] = useState<UserCredits | null>(userCredits);
+
+    useEffect(() => {
+        setCredits(userCredits);
+    }, [userCredits]);
 
     // Subscribe to user channel for real-time updates
     useUserChannel({
@@ -80,7 +84,11 @@ export default function Create({
         onNotification: (notification: UserNotification) => {
             addNotification(notification);
             // Show toast for important notifications
-            if (notification.type === 'credits_low') {
+            if (
+                notification.type === 'credits_low' ||
+                notification.type === 'payment_completed' ||
+                notification.type === 'subscription_renewed'
+            ) {
                 toast(notification.title, {
                     description: notification.message,
                 });

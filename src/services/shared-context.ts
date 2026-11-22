@@ -41,6 +41,10 @@ let cachedStaticContext: {
 } | null = null;
 const TRANSLATION_MEM_CACHE = new Map<string, Record<string, string>>();
 
+export function invalidateSharedContextCache(): void {
+  cachedStaticContext = null;
+}
+
 async function getFastStaticContext() {
   if (cachedStaticContext && Date.now() < cachedStaticContext.expiresAt) {
     return cachedStaticContext;

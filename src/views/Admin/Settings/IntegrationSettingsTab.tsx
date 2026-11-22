@@ -67,6 +67,11 @@ const RECOMMENDED_MODELS: Record<string, { value: string; label: string }[]> = {
     zhipu: [
         { value: 'glm-4.5-air', label: 'GLM-4.5 Air (Recommended)' },
     ],
+    gemini: [
+        { value: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash Lite (Recommended)' },
+        { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
+        { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+    ],
 };
 
 export default function IntegrationSettingsTab({ settings, aiProviders }: Props) {

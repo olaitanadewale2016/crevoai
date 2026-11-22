@@ -156,8 +156,8 @@ export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) 
   const pType = provider.type;
   const baseUrl = provider.config?.base_url || AI_DEFAULT_BASE_URLS[pType];
   let model = provider.config?.default_model || provider.available_models?.[0] || AI_DEFAULT_MODELS[pType]?.[0];
-  if (pType === 'gemini' && (!model || model === 'gemini-2.5-flash' || model === 'gemini-3.5-flash')) {
-    model = 'gemini-3.1-flash-lite';
+  if (pType === 'gemini' && !model) {
+    model = 'gemini-3.5-flash';
   }
   const baseMaxTokens = Number(provider.config?.max_tokens || 16384);
   const maxTokens = resolveEffortMaxTokens(baseMaxTokens, resolvedEffort);
@@ -346,9 +346,14 @@ export async function startBuilderSession(params: {
       ? Math.max(baseIterations, 28)
       : baseIterations;
 
-  const enrichedGoal = supabaseEnabled
-    ? `${goal}\n\n[Supabase Database Active]\nSupabase is pre-configured and injected at runtime via \`window.__APP_CONFIG__.supabase\` (\`{ url: "${supabaseCfg?.url}", anonKey: "...", tablePrefix: "${supabaseTablePrefix}" }\`). You can use \`@supabase/supabase-js\` or \`fetch("\${window.__APP_CONFIG__.supabase.url}/rest/v1/...", { headers: { apikey: window.__APP_CONFIG__.supabase.anonKey, Authorization: "Bearer " + window.__APP_CONFIG__.supabase.anonKey } })\` for database persistence and auth.`
-    : goal;
+  const isFirstPrompt = history.length === 0;
+  let enrichedGoal = goal;
+  if (isFirstPrompt) {
+    enrichedGoal += `\n\n[First-Build Layout & Media Requirements]\n1. You MUST visibly render a complete responsive sticky Navbar (<header>/<nav> with brand logo, desktop navigation links, primary CTA button, and working mobile menu toggle) AND a rich multi-column Footer (<footer> with brand summary, quick links, contact/hours or newsletter, and copyright) on the home page '/' immediately. Because '/' defaults to layout: 'bare' in src/routes.tsx, either build and render the Navbar & Footer directly inside src/pages/Home.tsx OR set '/' to layout: 'default' and customize src/components/Navigation.tsx and src/components/Layout.tsx.\n2. NEVER reuse the same image URL across multiple cards, hero, gallery items, or testimonials/avatars. Every single <img> and background image slot MUST use a unique image URL or distinct /api/images/stock?q=<specific-subject>&type=gallery&index=<0,1,2...> query with a different subject and incrementing index.`;
+  }
+  if (supabaseEnabled) {
+    enrichedGoal += `\n\n[Supabase Database Active]\nSupabase is pre-configured and injected at runtime via \`window.__APP_CONFIG__.supabase\` (\`{ url: "${supabaseCfg?.url}", anonKey: "...", tablePrefix: "${supabaseTablePrefix}" }\`). You can use \`@supabase/supabase-js\` or \`fetch("\${window.__APP_CONFIG__.supabase.url}/rest/v1/...", { headers: { apikey: window.__APP_CONFIG__.supabase.anonKey, Authorization: "Bearer " + window.__APP_CONFIG__.supabase.anonKey } })\` for database persistence and auth.`;
+  }
 
   const payload: Record<string, unknown> = {
     goal: enrichedGoal,

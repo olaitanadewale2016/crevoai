@@ -22,8 +22,11 @@ export async function GET(
     return NextResponse.redirect(new URL('/login', req.url));
   }
 
-  const appKey = process.env.APP_KEY || 'default-secret-key-32-chars-long!';
-  const expectedHash = hmacSha256(`${user._id}|${user.email}|${expiresStr}`, appKey);
+  const appKey =
+    process.env.APP_ENCRYPTION_KEY ||
+    process.env.APP_KEY ||
+    'default-secret-key-32-chars-long!';
+  const expectedHash = hmacSha256(appKey, `${user._id}|${user.email}|${expiresStr}`);
 
   if (!timingSafeEqualString(hash, expectedHash)) {
     return NextResponse.redirect(new URL('/verify-email?error=invalid', req.url));

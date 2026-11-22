@@ -33,10 +33,14 @@ export async function POST(req: NextRequest) {
   // Rate limiting by email + IP (5 attempts per minute)
   const ip = getClientIp(req);
   const rateLimitKey = `login_throttle:${email}:${ip}`;
-  const allowed = await checkRateLimit(rateLimitKey, 5, 60);
-  if (!allowed) {
+  const rl = await checkRateLimit(rateLimitKey, 5, 60);
+  if (!rl.allowed) {
     return NextResponse.json(
-      { errors: { email: 'Too many login attempts. Please try again in 60 seconds.' } },
+      {
+        errors: {
+          email: `Too many login attempts. Please try again in ${rl.retryAfterSeconds} seconds.`,
+        },
+      },
       { status: 429 }
     );
   }
@@ -44,10 +48,14 @@ export async function POST(req: NextRequest) {
   // Recaptcha check if enabled
   const recaptchaEnabled = await getSetting<boolean>('recaptcha_enabled', false);
   if (recaptchaEnabled) {
-    const verified = await verifyRecaptchaToken(recaptchaToken, 'login');
-    if (!verified) {
+    const verified = await verifyRecaptchaToken(recaptchaToken || '', ip);
+    if (!verified.ok) {
       return NextResponse.json(
-        { errors: { recaptcha_token: 'reCAPTCHA verification failed. Please try again.' } },
+        {
+          errors: {
+            recaptcha_token: verified.error || 'reCAPTCHA verification failed. Please try again.',
+          },
+        },
         { status: 422 }
       );
     }
@@ -80,11 +88,13 @@ export async function POST(req: NextRequest) {
     userAgent: req.headers.get('user-agent'),
     remember,
     ttlSeconds,
+    host: req.headers.get('host'),
+    payload: { auth_provider: 'local' },
   });
 
   const redirectUrl = user.role === 'admin' ? '/admin/overview' : '/create';
   const res = NextResponse.redirect(new URL(redirectUrl, req.url), 303);
-  await attachSessionCookie(res, session.token, ttlSeconds, req.headers.get('host'));
+  attachSessionCookie(res, session.token, ttlSeconds, session.cookieDomain);
 
   return res;
 }
