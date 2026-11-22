@@ -1,5 +1,6 @@
 import { unzipSync } from 'fflate';
 import { connectDB } from '@/lib/db';
+import { cacheAdd, cacheForget } from '@/lib/cache';
 import { decryptJson, decryptString, generateUuidV7 } from '@/lib/crypto';
 import { getSetting, getSettingGroup } from '@/lib/settings';
 import {
@@ -396,82 +397,110 @@ export async function triggerBuildAndDeployToR2(
   project: IProject,
   builder: IBuilder
 ): Promise<{ success: boolean; preview_url?: string; build_id?: string; error?: string }> {
-  const buildRes = await builderFetch(builder, `/api/build-workspace/${project._id}`, {
-    method: 'POST',
-    timeoutMs: 300_000,
-  });
-
-  if (!buildRes.ok) {
-    const errJson = await buildRes.json().catch(() => ({}));
+  // Prevent concurrent builds on the same project workspace
+  const lockKey = `build_lock:${project._id}`;
+  const acquired = await cacheAdd(lockKey, true, 180);
+  if (!acquired) {
+    // Wait for the active build to complete (up to 45 seconds)
+    for (let i = 0; i < 22; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const fresh = await Project.findById(project._id).lean();
+      if (fresh && fresh.active_build_id && fresh.active_build_id !== project.active_build_id) {
+        return {
+          success: true,
+          build_id: fresh.active_build_id,
+          preview_url: `/preview/${fresh._id}`,
+        };
+      }
+    }
+    // Return existing build if available
     return {
-      success: false,
-      error: (errJson as any)?.error || `Build failed (HTTP ${buildRes.status})`,
+      success: true,
+      build_id: project.active_build_id,
+      preview_url: `/preview/${project._id}`,
     };
   }
 
-  const zipRes = await builderFetch(builder, `/api/build-output-workspace/${project._id}`, {
-    method: 'GET',
-    timeoutMs: 120_000,
-  });
-  if (!zipRes.ok) {
-    return { success: false, error: `Failed to download build output (HTTP ${zipRes.status})` };
-  }
+  try {
+    const buildRes = await builderFetch(builder, `/api/build-workspace/${project._id}`, {
+      method: 'POST',
+      timeoutMs: 300_000,
+    });
 
-  const zipBuf = new Uint8Array(await zipRes.arrayBuffer());
-  const extracted = unzipSync(zipBuf);
-  const newBuildId = generateUuidV7();
-  const oldBuildId = project.active_build_id;
+    if (!buildRes.ok) {
+      const errJson = await buildRes.json().catch(() => ({}));
+      return {
+        success: false,
+        error: (errJson as any)?.error || `Build failed (HTTP ${buildRes.status})`,
+      };
+    }
 
-  const entries = Object.entries(extracted).filter(([filePath]) => !filePath.endsWith('/'));
+    const zipRes = await builderFetch(builder, `/api/build-output-workspace/${project._id}`, {
+      method: 'GET',
+      timeoutMs: 120_000,
+    });
+    if (!zipRes.ok) {
+      return { success: false, error: `Failed to download build output (HTTP ${zipRes.status})` };
+    }
 
-  // Parallel batched uploads to Private R2 (16 concurrent)
-  const batchSize = 16;
-  for (let i = 0; i < entries.length; i += batchSize) {
-    const slice = entries.slice(i, i + batchSize);
-    await Promise.all(
-      slice.map(async ([rawPath, bytes]) => {
-        const relPath = rawPath.replace(/^\/+/, '');
-        let finalBytes: Uint8Array | Buffer = bytes;
+    const zipBuf = new Uint8Array(await zipRes.arrayBuffer());
+    const extracted = unzipSync(zipBuf);
+    const newBuildId = generateUuidV7();
+    const oldBuildId = project.active_build_id;
 
-        // CRITICAL PATCH: Patch React Router basename fallback ONCE so /preview, /app, AND / all work!
-        if (relPath.endsWith('.js') || relPath.endsWith('.mjs')) {
-          const text = Buffer.from(bytes).toString('utf8');
-          if (text.includes('||"/preview"') || text.includes("||'/preview'")) {
-            finalBytes = Buffer.from(
-              text.replaceAll('||"/preview"', '||"/"').replaceAll("||'/preview'", "||'/'"),
-              'utf8'
-            );
+    const entries = Object.entries(extracted).filter(([filePath]) => !filePath.endsWith('/'));
+
+    // Parallel batched uploads to Private R2 (16 concurrent)
+    const batchSize = 16;
+    for (let i = 0; i < entries.length; i += batchSize) {
+      const slice = entries.slice(i, i + batchSize);
+      await Promise.all(
+        slice.map(async ([rawPath, bytes]) => {
+          const relPath = rawPath.replace(/^\/+/, '');
+          let finalBytes: Uint8Array | Buffer = bytes;
+
+          // CRITICAL PATCH: Patch React Router basename fallback ONCE so /preview, /app, AND / all work!
+          if (relPath.endsWith('.js') || relPath.endsWith('.mjs')) {
+            const text = Buffer.from(bytes).toString('utf8');
+            if (text.includes('||"/preview"') || text.includes("||'/preview'")) {
+              finalBytes = Buffer.from(
+                text.replaceAll('||"/preview"', '||"/"').replaceAll("||'/preview'", "||'/'"),
+                'utf8'
+              );
+            }
           }
-        }
 
-        const isHashedAsset = relPath.startsWith('assets/');
-        await r2PutObject({
-          visibility: 'private',
-          key: `sites/${project._id}/${newBuildId}/${relPath}`,
-          body: finalBytes,
-          contentType: guessContentType(relPath),
-          cacheControl: isHashedAsset ? 'public, max-age=31536000, immutable' : 'no-cache',
-        });
-      })
+          const isHashedAsset = relPath.startsWith('assets/');
+          await r2PutObject({
+            visibility: 'private',
+            key: `sites/${project._id}/${newBuildId}/${relPath}`,
+            body: finalBytes,
+            contentType: guessContentType(relPath),
+            cacheControl: isHashedAsset ? 'public, max-age=31536000, immutable' : 'no-cache',
+          });
+        })
+      );
+    }
+
+    await connectDB();
+    await Project.updateOne(
+      { _id: project._id },
+      { $set: { active_build_id: newBuildId, build_completed_at: new Date() } }
     );
+
+    // Clean up previous build prefix asynchronously (zero downtime)
+    if (oldBuildId && oldBuildId !== newBuildId) {
+      r2DeletePrefix('private', `sites/${project._id}/${oldBuildId}/`).catch(() => {});
+    }
+
+    return {
+      success: true,
+      build_id: newBuildId,
+      preview_url: `/preview/${project._id}`,
+    };
+  } finally {
+    await cacheForget(lockKey);
   }
-
-  await connectDB();
-  await Project.updateOne(
-    { _id: project._id },
-    { $set: { active_build_id: newBuildId, build_completed_at: new Date() } }
-  );
-
-  // Clean up previous build prefix asynchronously (zero downtime)
-  if (oldBuildId && oldBuildId !== newBuildId) {
-    r2DeletePrefix('private', `sites/${project._id}/${oldBuildId}/`).catch(() => {});
-  }
-
-  return {
-    success: true,
-    build_id: newBuildId,
-    preview_url: `/preview/${project._id}`,
-  };
 }
 
 export async function projectPreviewExists(project: IProject): Promise<boolean> {

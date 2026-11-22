@@ -3,7 +3,7 @@ import { connectDB } from '@/lib/db';
 import { getSessionContext } from '@/lib/auth';
 import { Project } from '@/models/Project';
 import { Builder } from '@/models/BuilderAi';
-import { triggerBuildAndDeployToR2 } from '@/services/builder';
+import { triggerBuildAndDeployToR2, projectPreviewExists } from '@/services/builder';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +25,20 @@ export async function POST(
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+
+  // Short-circuit: if a build already succeeded within the last 2 minutes and index.html exists in R2,
+  // return it immediately to prevent slow re-runs or build collisions on Render
+  const hasPreview = await projectPreviewExists(project);
+  const recentBuild =
+    project.build_completed_at &&
+    Date.now() - new Date(project.build_completed_at).getTime() < 120_000;
+  if (hasPreview && recentBuild) {
+    return NextResponse.json({
+      success: true,
+      build_id: project.active_build_id,
+      preview_url: `/preview/${project._id}`,
+    });
   }
 
   const builderId = project.builder_id;

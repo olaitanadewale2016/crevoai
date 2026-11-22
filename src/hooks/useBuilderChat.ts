@@ -165,17 +165,23 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
         // Check if this is a terminal status that should clear thinking state
         const isTerminalStatus = ['cancelled', 'completed', 'failed'].includes(data.status);
+        const previewUrl = (data as any).preview_url || (data.status === 'completed' ? `/preview/${projectId}` : undefined);
 
         setProgress(prev => ({
             ...prev,
             status: data.status as BuildProgress['status'],
+            ...(previewUrl && { previewUrl }),
             // Clear thinking state for terminal statuses
             ...(isTerminalStatus && {
                 thinkingContent: null,
                 thinkingStartTime: null,
             }),
         }));
-    }, [history]);
+
+        if (data.status === 'completed' && previewUrl) {
+            onBuildComplete?.(previewUrl);
+        }
+    }, [history, projectId, onBuildComplete]);
 
     const handleThinking = useCallback((data: ThinkingEvent) => {
         // Dedup: skip exact duplicate thinking content
@@ -197,8 +203,11 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     }, []);
 
     const handleAction = useCallback((data: ActionEvent) => {
-        // Dedup: Go builder sends directly to Pusher AND Laravel broadcasts
-        const actionKey = `${data.category}:${data.action}:${data.target}:${data.details}`;
+        // Dedup: normalize action key across Pusher and Webhook
+        const cleanCat = (data.category || '').trim().toLowerCase();
+        const cleanAct = (data.action || '').trim().toLowerCase();
+        const cleanTgt = (data.target || '').trim().toLowerCase();
+        const actionKey = `${cleanCat}:${cleanAct}:${cleanTgt}`;
         if (addedActionsRef.current.has(actionKey)) return;
         addedActionsRef.current.add(actionKey);
 
@@ -206,7 +215,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         const activityMessage: ChatMessage = {
             id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             type: 'activity',
-            content: `${data.action} ${data.target}`,
+            content: `${data.action} ${data.target}`.trim(),
             timestamp: new Date(),
             activityType: data.category || data.action.toLowerCase(),
         };
@@ -341,13 +350,18 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             const response = await axios.get(`/builder/projects/${projectId}/status?quick=1`);
             const status = response.data.status;
             if (status === 'completed' || status === 'failed') {
+                const previewUrl = response.data.preview_url || (status === 'completed' ? `/preview/${projectId}` : undefined);
                 setProgress(prev => ({
                     ...prev,
                     status: status as BuildProgress['status'],
                     hasFileChanges: status === 'completed' ? true : prev.hasFileChanges,
+                    ...(previewUrl && { previewUrl }),
                     thinkingContent: null,
                     thinkingStartTime: null,
                 }));
+                if (status === 'completed' && previewUrl) {
+                    onBuildComplete?.(previewUrl);
+                }
             }
         } catch {
             // Silent - regular polling will catch it
@@ -434,13 +448,18 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                         }
                     }
                 }
+                const previewUrl = response.data.preview_url || (status === 'completed' ? `/preview/${projectId}` : undefined);
                 setProgress(prev => ({
                     ...prev,
                     status: status as BuildProgress['status'],
                     hasFileChanges: status === 'completed' ? true : prev.hasFileChanges,
+                    ...(previewUrl && { previewUrl }),
                     thinkingContent: null,
                     thinkingStartTime: null,
                 }));
+                if (status === 'completed' && previewUrl) {
+                    onBuildComplete?.(previewUrl);
+                }
             }
         } catch {
             // Silent - will retry on next interval

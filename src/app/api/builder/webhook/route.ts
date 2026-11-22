@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   const sessionId = body.session_id;
   const eventType = body.event_type;
   const data = body.data || {};
-  const pusherActive = Boolean(body.pusher_active);
+  const pusherActive = Boolean(body.pusher_active) || Boolean(process.env.PUSHER_APP_KEY);
 
   if (!sessionId || !eventType) {
     return NextResponse.json({ error: 'session_id and event_type are required' }, { status: 400 });
@@ -116,23 +116,27 @@ export async function POST(req: NextRequest) {
     }
 
     case 'tool_call': {
-      await broadcastEvent(`session.${sessionId}`, 'tool_call', {
-        id: data.id || '',
-        tool: data.tool || '',
-        params: data.params || {},
-      });
+      if (!pusherActive) {
+        await broadcastEvent(`session.${sessionId}`, 'tool_call', {
+          id: data.id || '',
+          tool: data.tool || '',
+          params: data.params || {},
+        });
+      }
       break;
     }
 
     case 'tool_result': {
-      await broadcastEvent(`session.${sessionId}`, 'tool_result', {
-        id: data.id || '',
-        tool: data.tool || '',
-        success: Boolean(data.success),
-        output: data.output || '',
-        duration_ms: Number(data.duration_ms || 0),
-        iteration: Number(data.iteration || 0),
-      });
+      if (!pusherActive) {
+        await broadcastEvent(`session.${sessionId}`, 'tool_result', {
+          id: data.id || '',
+          tool: data.tool || '',
+          success: Boolean(data.success),
+          output: data.output || '',
+          duration_ms: Number(data.duration_ms || 0),
+          iteration: Number(data.iteration || 0),
+        });
+      }
       break;
     }
 
