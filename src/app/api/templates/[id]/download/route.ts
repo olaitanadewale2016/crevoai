@@ -20,25 +20,44 @@ export async function GET(
 
   const template = await Template.findOne(query).lean();
   let buffer: Buffer | null = null;
+  const isDefaultTemplate =
+    !template?.zip_path || template.zip_path === 'templates/default-template.zip';
 
-  // 1. Try to fetch from Cloudflare R2 private bucket when template has a zip_path
-  if (template?.zip_path) {
-    try {
-      buffer = await r2GetBuffer('private', template.zip_path);
-    } catch (err: any) {
-      console.warn(`[Template Download] R2 fetch failed for key ${template.zip_path}:`, err?.message);
-    }
-  }
-
-  // 2. If not found in R2 or storage error, fall back to bundled default-template.zip
-  if (!buffer) {
+  const readBundledDefault = (): Buffer | null => {
     try {
       const bundledPath = path.join(process.cwd(), 'assets', 'templates', 'default-template.zip');
       if (fs.existsSync(bundledPath)) {
-        buffer = fs.readFileSync(bundledPath);
+        return fs.readFileSync(bundledPath);
       }
     } catch (e: any) {
       console.error('[Template Download] Local fallback failed:', e?.message);
+    }
+    return null;
+  };
+
+  if (isDefaultTemplate) {
+    // Prefer bundled default template so starter updates apply immediately
+    buffer = readBundledDefault();
+    if (!buffer) {
+      try {
+        buffer = await r2GetBuffer('private', template?.zip_path || 'templates/default-template.zip');
+      } catch (err: any) {
+        console.warn('[Template Download] R2 default fetch failed:', err?.message);
+      }
+    }
+  } else {
+    // 1. Fetch custom template from Cloudflare R2 private bucket
+    if (template?.zip_path) {
+      try {
+        buffer = await r2GetBuffer('private', template.zip_path);
+      } catch (err: any) {
+        console.warn(`[Template Download] R2 fetch failed for key ${template.zip_path}:`, err?.message);
+      }
+    }
+
+    // 2. If not found in R2 or storage error, fall back to bundled default-template.zip
+    if (!buffer) {
+      buffer = readBundledDefault();
     }
   }
 

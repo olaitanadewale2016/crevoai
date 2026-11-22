@@ -505,7 +505,7 @@ async function loadTemplateZipFiles(project: IProject): Promise<Record<string, U
   if (project.template_id) {
     try {
       const tpl = await Template.findById(project.template_id).lean();
-      if (tpl?.zip_path) {
+      if (tpl?.zip_path && tpl.zip_path !== 'templates/default-template.zip') {
         zipBuffer = await r2GetBuffer('private', tpl.zip_path);
       }
     } catch {
@@ -524,6 +524,13 @@ async function loadTemplateZipFiles(project: IProject): Promise<Record<string, U
       }
     } catch {
       // Ignore fs errors
+    }
+    if (!zipBuffer) {
+      try {
+        zipBuffer = await r2GetBuffer('private', 'templates/default-template.zip');
+      } catch {
+        // Ignore R2 errors
+      }
     }
   }
 
