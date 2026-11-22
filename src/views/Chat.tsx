@@ -459,6 +459,9 @@ export default function Chat({
         onMessage: handleMessage,
         onAction: handleAction,
         onBuildComplete: handleBuildComplete,
+        onBuildError: (error) => {
+            toast.error(error);
+        },
         errorSanitizer,
     });
 

@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { getSessionContext } from '@/lib/auth';
+import { getSessionContext, canUpdateProject } from '@/lib/auth';
 import { Project } from '@/models/Project';
 import { Builder } from '@/models/BuilderAi';
-import { triggerBuildAndDeployToR2, projectPreviewExists } from '@/services/builder';
+import { triggerBuildAndDeployToR2 } from '@/services/builder';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 export async function POST(
   req: NextRequest,
@@ -20,17 +21,21 @@ export async function POST(
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
   }
 
+  if (!(await canUpdateProject(ctx.user, project))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
+  }
+
   const builderId = project.builder_id;
-  const builder = builderId
-    ? await Builder.findById(builderId)
-    : await Builder.findOne({ status: 'active' });
+  const builder =
+    (builderId ? await Builder.findById(builderId) : null) ||
+    (await Builder.findOne({ status: 'active' }));
   if (!builder) {
     return NextResponse.json({ error: 'No builder assigned to this project' }, { status: 404 });
   }

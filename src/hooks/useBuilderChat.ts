@@ -148,8 +148,8 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
     // Reverb event handlers
     const handleStatus = useCallback((data: StatusEvent) => {
-        // Dedup: skip duplicate status events with same status+message
-        const statusKey = `${data.status}:${data.message ?? ''}`;
+        // Dedup: skip duplicate status events with same status+message+preview_url
+        const statusKey = `${data.status}:${data.message ?? ''}:${(data as any).preview_url ?? ''}`;
         if (lastStatusRef.current === statusKey) return;
         lastStatusRef.current = statusKey;
 

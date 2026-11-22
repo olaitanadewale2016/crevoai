@@ -698,7 +698,7 @@ export async function triggerBuildAndDeployToR2(
       const slice = entries.slice(i, i + batchSize);
       await Promise.all(
         slice.map(async ([rawPath, bytes]) => {
-          const relPath = rawPath.replace(/^\/+/, '');
+          const relPath = rawPath.replace(/\\/g, '/').replace(/^\/+/, '');
           let finalBytes: Uint8Array | Buffer = bytes;
 
           // CRITICAL PATCH: Patch React Router basename fallback ONCE so /preview, /app, AND / all work!
@@ -973,7 +973,83 @@ export async function serveBuiltSiteFromR2(params: {
   let buf: Buffer | null = cached?.buffer || null;
   let contentType = cached?.contentType || guessContentType(targetKey);
 
-  // 2. Direct Builder proxy for instant zero-latency preview & app tab (streams directly from Render workspace)
+  // 2. Check durable Cloudflare R2 FIRST (instant CDN/S3 read, independent of Render Go Builder cold starts)
+  if (!buf && !prefix) {
+    try {
+      const prefixes = await r2ListPrefixes('private', `sites/${project._id}/`);
+      for (let i = prefixes.length - 1; i >= 0; i--) {
+        const candPrefix = prefixes[i].replace(/\/+$/, '');
+        const candBuildId = candPrefix.split('/').pop();
+        if (!candBuildId) continue;
+        if (await r2Exists('private', `${candPrefix}/index.html`)) {
+          buildId = candBuildId;
+          prefix = candPrefix;
+          targetKey = `${prefix}/${relPath}`;
+          Project.updateOne(
+            { _id: project._id, active_build_id: null },
+            { $set: { active_build_id: candBuildId } }
+          ).catch(() => {});
+          break;
+        }
+      }
+    } catch {
+      // Ignore R2 listing errors
+    }
+  }
+
+  if (!buf && prefix) {
+    try {
+      buf = await r2GetBuffer('private', targetKey);
+      if (buf) {
+        cachePreviewAsset(targetKey, buf, contentType);
+      }
+    } catch {
+      buf = null;
+    }
+  }
+
+  // Directory index fallback or SPA fallback to root index.html in RAM/R2
+  if (!buf && prefix && !hasExtension) {
+    const dirIndexKey = `${prefix}/${relPath}/index.html`;
+    cached = getCachedPreviewAsset(dirIndexKey);
+    if (cached) {
+      buf = cached.buffer;
+      targetKey = dirIndexKey;
+      contentType = cached.contentType;
+    } else {
+      let dirIndex: Buffer | null = null;
+      try {
+        dirIndex = await r2GetBuffer('private', dirIndexKey);
+      } catch {
+        dirIndex = null;
+      }
+      if (dirIndex) {
+        buf = dirIndex;
+        targetKey = dirIndexKey;
+        contentType = 'text/html; charset=utf-8';
+        cachePreviewAsset(dirIndexKey, dirIndex, contentType);
+      } else {
+        const rootIndexKey = `${prefix}/index.html`;
+        cached = getCachedPreviewAsset(rootIndexKey);
+        if (cached) {
+          buf = cached.buffer;
+          targetKey = rootIndexKey;
+          contentType = cached.contentType;
+        } else {
+          try {
+            buf = await r2GetBuffer('private', rootIndexKey);
+          } catch {
+            buf = null;
+          }
+          targetKey = rootIndexKey;
+          contentType = 'text/html; charset=utf-8';
+          if (buf) cachePreviewAsset(rootIndexKey, buf, contentType);
+        }
+      }
+    }
+  }
+
+  // 3. Fallback to Direct Builder proxy ONLY when RAM cache & R2 both missed (e.g. un-synced live workspace)
   if (!buf) {
     try {
       const builder =
@@ -1036,70 +1112,7 @@ export async function serveBuiltSiteFromR2(params: {
         }
       }
     } catch (err: any) {
-      console.warn(`[Preview Stream] Direct builder stream fallback to R2 for ${relPath}:`, err?.message);
-    }
-  }
-
-  // 3. Self-heal missing active_build_id from R2 if needed, then fetch from R2
-  if (!buf && !prefix) {
-    try {
-      const prefixes = await r2ListPrefixes('private', `sites/${project._id}/`);
-      for (let i = prefixes.length - 1; i >= 0; i--) {
-        const candPrefix = prefixes[i].replace(/\/+$/, '');
-        const candBuildId = candPrefix.split('/').pop();
-        if (!candBuildId) continue;
-        if (await r2Exists('private', `${candPrefix}/index.html`)) {
-          buildId = candBuildId;
-          prefix = candPrefix;
-          targetKey = `${prefix}/${relPath}`;
-          Project.updateOne(
-            { _id: project._id, active_build_id: null },
-            { $set: { active_build_id: candBuildId } }
-          ).catch(() => {});
-          break;
-        }
-      }
-    } catch {
-      // Ignore R2 listing errors
-    }
-  }
-
-  if (!buf && prefix) {
-    buf = await r2GetBuffer('private', targetKey);
-    if (buf) {
-      cachePreviewAsset(targetKey, buf, contentType);
-    }
-  }
-
-  // Directory index fallback or SPA fallback to root index.html
-  if (!buf && prefix && !hasExtension) {
-    const dirIndexKey = `${prefix}/${relPath}/index.html`;
-    cached = getCachedPreviewAsset(dirIndexKey);
-    if (cached) {
-      buf = cached.buffer;
-      targetKey = dirIndexKey;
-      contentType = cached.contentType;
-    } else {
-      const dirIndex = await r2GetBuffer('private', dirIndexKey);
-      if (dirIndex) {
-        buf = dirIndex;
-        targetKey = dirIndexKey;
-        contentType = 'text/html; charset=utf-8';
-        cachePreviewAsset(dirIndexKey, dirIndex, contentType);
-      } else {
-        const rootIndexKey = `${prefix}/index.html`;
-        cached = getCachedPreviewAsset(rootIndexKey);
-        if (cached) {
-          buf = cached.buffer;
-          targetKey = rootIndexKey;
-          contentType = cached.contentType;
-        } else {
-          buf = await r2GetBuffer('private', rootIndexKey);
-          targetKey = rootIndexKey;
-          contentType = 'text/html; charset=utf-8';
-          if (buf) cachePreviewAsset(rootIndexKey, buf, contentType);
-        }
-      }
+      console.warn(`[Preview Stream] Direct builder stream fallback failed for ${relPath}:`, err?.message);
     }
   }
 

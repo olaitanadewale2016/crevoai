@@ -19,17 +19,15 @@ export async function GET(
     : { slug: id };
 
   const template = await Template.findOne(query).lean();
-  if (!template || !template.zip_path) {
-    return NextResponse.json({ error: 'Template file not available' }, { status: 404 });
-  }
-
   let buffer: Buffer | null = null;
 
-  // 1. Try to fetch from Cloudflare R2 private bucket
-  try {
-    buffer = await r2GetBuffer('private', template.zip_path);
-  } catch (err: any) {
-    console.warn(`[Template Download] R2 fetch failed for key ${template.zip_path}:`, err?.message);
+  // 1. Try to fetch from Cloudflare R2 private bucket when template has a zip_path
+  if (template?.zip_path) {
+    try {
+      buffer = await r2GetBuffer('private', template.zip_path);
+    } catch (err: any) {
+      console.warn(`[Template Download] R2 fetch failed for key ${template.zip_path}:`, err?.message);
+    }
   }
 
   // 2. If not found in R2 or storage error, fall back to bundled default-template.zip
@@ -48,7 +46,7 @@ export async function GET(
     return NextResponse.json({ error: 'Template file not found in storage' }, { status: 404 });
   }
 
-  const filename = `${template.slug || 'template'}-template.zip`;
+  const filename = `${template?.slug || 'template'}-template.zip`;
   return new NextResponse(new Uint8Array(buffer), {
     headers: {
       'Content-Type': 'application/zip',
