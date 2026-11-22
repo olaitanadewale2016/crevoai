@@ -416,7 +416,7 @@ export async function triggerBuildAndDeployToR2(
     // Return existing build if available
     return {
       success: true,
-      build_id: project.active_build_id,
+      build_id: project.active_build_id || undefined,
       preview_url: `/preview/${project._id}`,
     };
   }
