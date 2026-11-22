@@ -5,7 +5,7 @@ import { $isFileMentionNode, type FileMentionNode } from '../nodes/FileMentionNo
 import type { AttachedFile } from '@/types/chat';
 
 export interface ExtractedFileMentions {
-    fileIds: number[];
+    fileIds: (number | string)[];
     attachedFiles: AttachedFile[];
 }
 
@@ -14,12 +14,12 @@ export interface ExtractedFileMentions {
  * Resolves full file metadata from projectFiles when available.
  */
 export function extractFileMentions(editorState: EditorState, projectFiles?: AttachedFile[]): ExtractedFileMentions {
-    const fileIds: number[] = [];
+    const fileIds: (number | string)[] = [];
     const attachedFiles: AttachedFile[] = [];
-    const seenIds = new Set<number>();
+    const seenIds = new Set<number | string>();
 
     // Build lookup map for full metadata
-    const fileMap = new Map<number, AttachedFile>();
+    const fileMap = new Map<number | string, AttachedFile>();
     if (projectFiles) {
         for (const f of projectFiles) {
             fileMap.set(f.id, f);

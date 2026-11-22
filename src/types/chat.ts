@@ -1,7 +1,7 @@
 ﻿import { PageProps, User } from '@/types';
 
 export interface AttachedFile {
-    id: number;
+    id: number | string;
     filename: string;
     mime_type: string;
     size: number;

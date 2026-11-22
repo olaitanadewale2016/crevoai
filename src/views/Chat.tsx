@@ -274,7 +274,7 @@ export default function Chat({
         setUploadedFiles(prev => [...prev, file]);
     }, []);
 
-    const handleRemoveUploadedFile = useCallback((fileId: number) => {
+    const handleRemoveUploadedFile = useCallback((fileId: number | string) => {
         setUploadedFiles(prev => prev.filter(f => f.id !== fileId));
     }, []);
 
@@ -354,6 +354,22 @@ export default function Chat({
         return () => container.removeEventListener('wheel', handleWheel);
     }, [suggestions]);
 
+    // Fetch AI suggestions
+    const fetchSuggestions = useCallback(async () => {
+        setIsLoadingSuggestions(true);
+        try {
+            const response = await axios.get(`/project/${project.id}/suggestions`);
+            if (response.data.suggestions) {
+                setSuggestions(response.data.suggestions);
+            }
+        } catch {
+            // Silently fail - suggestions are optional
+            setSuggestions([]);
+        } finally {
+            setIsLoadingSuggestions(false);
+        }
+    }, [project.id]);
+
     const handleComplete = useCallback((event: CompleteEvent) => {
         playSound('complete');
         if (event.files_changed) {
@@ -361,7 +377,9 @@ export default function Chat({
         } else {
             toast.success(t('Build complete!'));
         }
-    }, [playSound, t]);
+        // Fetch AI suggestions immediately after build completes
+        fetchSuggestions();
+    }, [playSound, t, fetchSuggestions]);
 
     const handleError = useCallback((error: string) => {
         playSound('error');
@@ -379,7 +397,8 @@ export default function Chat({
     const handleBuildComplete = useCallback((_previewUrl: string) => {
         setPreviewRefreshTrigger(Date.now());
         playSound('build');
-    }, [playSound]);
+        fetchSuggestions();
+    }, [playSound, fetchSuggestions]);
 
     const errorSanitizer = useCallback(
         (rawError: string) => sanitizeBuilderError(rawError, t),
@@ -535,22 +554,6 @@ export default function Chat({
         }
     }, [project.has_history, project.preview_url, project.build_status, triggerBuild]);
 
-    // Fetch AI suggestions
-    const fetchSuggestions = useCallback(async () => {
-        setIsLoadingSuggestions(true);
-        try {
-            const response = await axios.get(`/project/${project.id}/suggestions`);
-            if (response.data.suggestions) {
-                setSuggestions(response.data.suggestions);
-            }
-        } catch {
-            // Silently fail - suggestions are optional
-            setSuggestions([]);
-        } finally {
-            setIsLoadingSuggestions(false);
-        }
-    }, [project.id]);
-
     // Track if initial page load is complete
     const isInitialLoad = useRef(true);
 
@@ -586,7 +589,7 @@ export default function Chat({
         setSuggestions([]);
     };
 
-    const handleSubmit = async (e: React.FormEvent, fileData?: { fileIds: number[]; attachedFiles: AttachedFile[] }) => {
+    const handleSubmit = async (e: React.FormEvent, fileData?: { fileIds: (number | string)[]; attachedFiles: AttachedFile[] }) => {
         e.preventDefault();
         if ((!prompt.trim() && !selectedElement && !fileData?.fileIds.length) || isLoading) return;
 
@@ -792,14 +795,13 @@ export default function Chat({
                                 </Link>
                             </Button>
                             <Button
-                                variant="outline"
-                                size="sm"
-                                className="md:hidden text-xs h-7 px-2 flex items-center gap-1"
+                                variant="ghost"
+                                size="icon"
+                                className="md:hidden text-muted-foreground hover:text-foreground"
                                 onClick={() => setIsChatCollapsed(true)}
                                 title={t('View Preview')}
                             >
-                                <Eye className="h-3.5 w-3.5" />
-                                <span>{t('Preview')}</span>
+                                <Eye className="h-4 w-4" />
                             </Button>
                             <Button
                                 variant="ghost"

@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { LexicalComposer } from '@lexical/react/LexicalComposer';
 import { PlainTextPlugin } from '@lexical/react/LexicalPlainTextPlugin';
 import { ContentEditable } from '@lexical/react/LexicalContentEditable';
@@ -18,7 +18,8 @@ import {
     type LexicalEditor,
 } from 'lexical';
 import { Button } from '@/components/ui/button';
-import { Send, Square, Loader2, X, MousePointerClick, Image, FileText } from 'lucide-react';
+import { Send, Square, Loader2, X, MousePointerClick, Image, FileText, Mic, MicOff } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { ElementMention } from '@/types/inspector';
 import type { AttachedFile } from '@/types/chat';
@@ -29,7 +30,7 @@ import { ChatUploadButton } from './ChatUploadButton';
 import { extractFileMentions } from './utils/extractFileMentions';
 
 interface FileData {
-    fileIds: number[];
+    fileIds: (number | string)[];
     attachedFiles: AttachedFile[];
 }
 
@@ -67,7 +68,7 @@ interface ChatInputWithMentionsProps {
     /** Called when a file is uploaded */
     onFileUploaded?: (file: AttachedFile) => void;
     /** Called to remove an uploaded file badge */
-    onRemoveUploadedFile?: (fileId: number) => void;
+    onRemoveUploadedFile?: (fileId: number | string) => void;
     /** Called when files are dropped onto the input (parent handles upload) */
     onFilesDropped?: (files: File[]) => void;
 }
@@ -252,6 +253,80 @@ export function ChatInputWithMentions({
         nodes: [FileMentionNode],
     }), []);
 
+    // Speech-to-Text / Voice input support
+    const [isListening, setIsListening] = useState(false);
+    const recognitionRef = useRef<any>(null);
+
+    const toggleVoiceInput = useCallback(() => {
+        if (typeof window === 'undefined') return;
+
+        if (isListening) {
+            recognitionRef.current?.stop();
+            setIsListening(false);
+            return;
+        }
+
+        const SpeechRecognition =
+            (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+        if (!SpeechRecognition) {
+            toast.error(t('Voice input is not supported by your current browser.'));
+            return;
+        }
+
+        try {
+            const recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = document.documentElement.lang || 'en-US';
+
+            recognition.onstart = () => {
+                setIsListening(true);
+            };
+
+            recognition.onresult = (event: any) => {
+                let finalTranscript = '';
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript + ' ';
+                    }
+                }
+                if (finalTranscript.trim()) {
+                    onChange(value ? `${value.trim()} ${finalTranscript.trim()}` : finalTranscript.trim());
+                }
+            };
+
+            recognition.onerror = (event: any) => {
+                if (event.error !== 'no-speech') {
+                    toast.error(t('Voice recognition error: :error', { error: event.error }));
+                }
+                setIsListening(false);
+            };
+
+            recognition.onend = () => {
+                setIsListening(false);
+            };
+
+            recognitionRef.current = recognition;
+            recognition.start();
+        } catch {
+            toast.error(t('Could not access microphone.'));
+            setIsListening(false);
+        }
+    }, [isListening, value, onChange, t]);
+
+    // Clean up recognition on unmount
+    useEffect(() => {
+        return () => {
+            if (recognitionRef.current) {
+                try {
+                    recognitionRef.current.stop();
+                } catch {}
+            }
+        };
+    }, []);
+
     return (
         <form onSubmit={handleSubmit}>
             <div
@@ -318,6 +393,27 @@ export function ChatInputWithMentions({
                         <span>{t('to send')}</span>
                     </div>
                     <div className="flex items-center gap-2">
+                        {/* Voice Speech-to-Text Input Button */}
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={toggleVoiceInput}
+                            disabled={disabled || isLoading}
+                            className={`h-8 w-8 p-0 transition-colors ${
+                                isListening
+                                    ? 'text-red-500 bg-red-500/15 animate-pulse hover:bg-red-500/20'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                            title={isListening ? t('Listening... (Click to stop)') : t('Voice input')}
+                        >
+                            {isListening ? (
+                                <MicOff className="h-3.5 w-3.5" />
+                            ) : (
+                                <Mic className="h-3.5 w-3.5" />
+                            )}
+                        </Button>
+
                         {storageEnabled && projectId && maxFileSizeMb && onFileUploaded && (
                             <ChatUploadButton
                                 projectId={projectId}

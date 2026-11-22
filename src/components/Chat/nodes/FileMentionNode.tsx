@@ -13,7 +13,7 @@ import { Image, FileText } from 'lucide-react';
 
 export type SerializedFileMentionNode = Spread<
     {
-        fileId: number;
+        fileId: number | string;
         fileName: string;
         mimeType: string;
         isImage: boolean;
@@ -31,7 +31,7 @@ function FileMentionChip({ fileName, isImage }: { fileName: string; isImage: boo
 }
 
 export class FileMentionNode extends DecoratorNode<JSX.Element> {
-    __fileId: number;
+    __fileId: number | string;
     __fileName: string;
     __mimeType: string;
     __isImage: boolean;
@@ -44,7 +44,7 @@ export class FileMentionNode extends DecoratorNode<JSX.Element> {
         return new FileMentionNode(node.__fileId, node.__fileName, node.__mimeType, node.__isImage, node.__key);
     }
 
-    constructor(fileId: number, fileName: string, mimeType: string, isImage: boolean, key?: NodeKey) {
+    constructor(fileId: number | string, fileName: string, mimeType: string, isImage: boolean, key?: NodeKey) {
         super(key);
         this.__fileId = fileId;
         this.__fileName = fileName;
@@ -95,7 +95,7 @@ export class FileMentionNode extends DecoratorNode<JSX.Element> {
         );
     }
 
-    getFileId(): number {
+    getFileId(): number | string {
         return this.__fileId;
     }
 
@@ -113,7 +113,7 @@ export class FileMentionNode extends DecoratorNode<JSX.Element> {
 }
 
 export function $createFileMentionNode(
-    fileId: number,
+    fileId: number | string,
     fileName: string,
     mimeType: string,
     isImage: boolean,

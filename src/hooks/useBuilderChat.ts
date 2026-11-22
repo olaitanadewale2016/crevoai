@@ -70,7 +70,7 @@ export interface SendMessageOptions {
     /** Element context for element-specific modifications */
     elementContext?: ElementMentionContext;
     /** File IDs to attach to this message */
-    fileIds?: number[];
+    fileIds?: (number | string)[];
     /** Attached file metadata for display in message bubble */
     attachedFiles?: AttachedFile[];
 }

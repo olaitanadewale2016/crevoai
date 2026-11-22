@@ -172,6 +172,15 @@ export async function POST(req: NextRequest) {
           created_at: new Date(),
         });
         await project.save();
+
+        if (project.user_id) {
+          await notifyBuildFailed(
+            String(project.user_id),
+            project._id,
+            project.name,
+            errorMsg
+          );
+        }
       }
       if (!pusherActive) {
         await broadcastEvent(`session.${sessionId}`, 'error', { error: errorMsg });
@@ -261,7 +270,12 @@ export async function POST(req: NextRequest) {
             message: data.build_message || null,
           });
 
-          if (data.build_status === 'completed') {
+          if (
+            data.build_status === 'completed' ||
+            data.build_status === 'success' ||
+            shouldBuildPreview ||
+            !data.build_status
+          ) {
             await notifyBuildComplete(String(project.user_id), project._id, project.name);
           } else if (data.build_status === 'failed') {
             await notifyBuildFailed(

@@ -675,19 +675,26 @@ export async function serveBuiltSiteFromR2(params: {
     relPath.startsWith('storage/') ||
     relPath.startsWith('image-library/') ||
     relPath.startsWith('backgrounds/') ||
-    relPath.startsWith('gallery/')
+    relPath.startsWith('gallery/') ||
+    relPath.includes('bg_') ||
+    relPath.includes('gal_') ||
+    relPath.endsWith('.png') ||
+    relPath.endsWith('.jpg') ||
+    relPath.endsWith('.webp') ||
+    relPath.endsWith('.svg')
   ) {
     try {
       let cleanAssetPath = relPath;
       if (cleanAssetPath.startsWith('storage/')) {
         cleanAssetPath = cleanAssetPath.slice('storage/'.length);
       }
+      const baseName = path.basename(cleanAssetPath);
       const candidates = [
+        path.join(process.cwd(), 'public', 'storage', 'image-library', 'backgrounds', baseName),
+        path.join(process.cwd(), 'public', 'storage', 'image-library', 'gallery', baseName),
         path.join(process.cwd(), 'public', 'storage', cleanAssetPath),
         path.join(process.cwd(), 'public', cleanAssetPath),
         path.join(process.cwd(), 'public', 'storage', 'image-library', cleanAssetPath),
-        path.join(process.cwd(), 'public', 'storage', 'image-library', 'backgrounds', path.basename(cleanAssetPath)),
-        path.join(process.cwd(), 'public', 'storage', 'image-library', 'gallery', path.basename(cleanAssetPath)),
       ];
       for (const localFilePath of candidates) {
         if (fs.existsSync(localFilePath) && fs.statSync(localFilePath).isFile()) {
