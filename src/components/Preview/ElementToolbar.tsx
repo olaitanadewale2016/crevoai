@@ -189,7 +189,7 @@ export function ElementToolbar({
                                 }
                             }}
                             placeholder={t('Describe what to change or ask AI...')}
-                            className="h-8 text-xs flex-1"
+                            className="h-9 md:h-8 text-base md:text-xs flex-1"
                         />
                         <Button
                             type="submit"

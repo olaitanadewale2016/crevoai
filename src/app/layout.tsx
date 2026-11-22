@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import { getSharedAppProps } from '@/services/shared-context';
@@ -13,6 +13,13 @@ const inter = Inter({
 });
 
 export const dynamic = 'force-dynamic';
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  interactiveWidget: 'resizes-content',
+};
 
 export async function generateMetadata(): Promise<Metadata> {
   const shared = await getSharedAppProps();

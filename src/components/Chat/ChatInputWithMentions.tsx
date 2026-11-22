@@ -397,14 +397,14 @@ export function ChatInputWithMentions({
                             contentEditable={
                                 <ContentEditable
                                     className={cn(
-                                        'w-full px-4 py-3 text-sm resize-none border-0 bg-transparent',
+                                        'w-full px-4 py-3 text-base md:text-sm resize-none border-0 bg-transparent',
                                         'focus:outline-none focus:ring-0 min-h-[60px] max-h-[120px] overflow-y-auto',
                                         disabled && 'opacity-50 cursor-not-allowed pointer-events-none'
                                     )}
                                 />
                             }
                             placeholder={
-                                <div className="absolute top-3 start-4 text-sm text-muted-foreground pointer-events-none">
+                                <div className="absolute top-3 start-4 text-base md:text-sm text-muted-foreground pointer-events-none">
                                     {actualPlaceholder}
                                 </div>
                             }

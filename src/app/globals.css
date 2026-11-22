@@ -252,3 +252,13 @@ html[data-impersonating] div:has(> [data-sidebar="sidebar"]) {
 html[data-impersonating] header.sticky {
   top: var(--impersonation-banner-height, 0px) !important;
 }
+
+/* Prevent mobile browsers (e.g. iOS Safari) from auto-zooming on input focus */
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select,
+  [contenteditable="true"] {
+    font-size: 16px !important;
+  }
+}
