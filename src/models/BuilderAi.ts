@@ -38,11 +38,25 @@ export function getBuilderFullUrl(builder: { url: string; port: number }): strin
   if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
     cleanUrl = `https://${cleanUrl}`;
   }
-  const port = Number(builder.port);
-  if (!port || (cleanUrl.startsWith('https://') && port === 443) || (cleanUrl.startsWith('http://') && port === 80)) {
+  try {
+    const parsed = new URL(cleanUrl);
+    if (parsed.port) {
+      return cleanUrl;
+    }
+    const port = Number(builder.port);
+    const isCloudHost =
+      parsed.hostname.includes('.onrender.com') ||
+      parsed.hostname.includes('.railway.app') ||
+      parsed.hostname.includes('.fly.dev') ||
+      parsed.hostname.includes('.vercel.app') ||
+      parsed.hostname.includes('.herokuapp.com');
+    if (!port || port === 443 || port === 80 || isCloudHost || (parsed.protocol === 'https:' && port === 8080)) {
+      return cleanUrl;
+    }
+    return `${cleanUrl}:${port}`;
+  } catch {
     return cleanUrl;
   }
-  return `${cleanUrl}:${port}`;
 }
 
 // 2. AiProvider
