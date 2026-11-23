@@ -119,8 +119,8 @@ export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) 
     effort && ['low', 'medium', 'high'].includes(effort)
       ? effort
       : aiSettings?.preferred_effort && ['low', 'medium', 'high'].includes(aiSettings.preferred_effort)
-      ? aiSettings.preferred_effort
-      : 'medium';
+        ? aiSettings.preferred_effort
+        : 'medium';
 
   if (usingOwnKey) {
     const pType = (aiSettings?.preferred_provider || 'openai') as AiProviderType;
@@ -757,7 +757,7 @@ export async function triggerBuildAndDeployToR2(
 
         // Clean up previous build prefix asynchronously (zero downtime)
         if (oldBuildId && oldBuildId !== newBuildId) {
-          r2DeletePrefix('private', `sites/${project._id}/${oldBuildId}/`).catch(() => {});
+          r2DeletePrefix('private', `sites/${project._id}/${oldBuildId}/`).catch(() => { });
         }
       } catch (uploadErr: any) {
         console.warn(`[R2 Background Sync] Warning for project ${project._id}:`, uploadErr?.message);
@@ -793,7 +793,7 @@ export async function projectPreviewExists(project: IProject): Promise<boolean> 
         Project.updateOne(
           { _id: project._id, active_build_id: null },
           { $set: { active_build_id: candidateBuildId } }
-        ).catch(() => {});
+        ).catch(() => { });
         return true;
       }
     }
@@ -1013,7 +1013,7 @@ export async function serveBuiltSiteFromR2(params: {
           Project.updateOne(
             { _id: project._id, active_build_id: null },
             { $set: { active_build_id: candBuildId } }
-          ).catch(() => {});
+          ).catch(() => { });
           break;
         }
       }

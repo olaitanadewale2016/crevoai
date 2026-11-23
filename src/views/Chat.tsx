@@ -1242,7 +1242,7 @@ export default function Chat({
                                 projectId={project.id}
                                 mode={previewSubMode}
                                 onModeChange={setPreviewSubMode}
-                                previewUrl={progress.previewUrl || `/preview/${project.id}`}
+                                previewUrl={progress.previewUrl}
                                 refreshTrigger={previewRefreshTrigger}
                                 isBuilding={isLoading && !progress.previewUrl}
                                 captureThumbnailTrigger={captureThumbnailTrigger}

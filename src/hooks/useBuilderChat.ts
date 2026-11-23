@@ -51,7 +51,7 @@ export interface UseBuilderChatReturn {
     sendMessage: (content: string, options?: SendMessageOptions) => Promise<void>;
     cancelBuild: () => void;
     clearHistory: () => void;
-    triggerBuild: () => Promise<void>;
+    triggerBuild: (opts?: { silent?: boolean }) => Promise<void>;
     // Reconnection state
     isReconnecting: boolean;
     reconnectAttempt: number;
@@ -100,7 +100,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     }));
     const [isBuildingPreview, setIsBuildingPreview] = useState(false);
     const isBuildingPreviewRef = useRef(false);
-    const triggerBuildRef = useRef<() => Promise<void>>(() => Promise.resolve());
+    const triggerBuildRef = useRef<(opts?: { silent?: boolean }) => Promise<void>>(() => Promise.resolve());
     const pendingMessageRef = useRef<string | null>(null);
     const buildTriggeredRef = useRef(false);
     const lastEventTimeRef = useRef<number>(0);
@@ -196,10 +196,10 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             // Instantly notify completion so preview reloads immediately (0ms delay)
             onBuildComplete?.(finalUrl);
 
-            // Sync to R2 in the background without blocking the live preview
+            // Sync to R2 in the background without blocking the live preview or popping false race toasts
             if (autoBuild && !resolvedPreviewUrl && !buildTriggeredRef.current) {
                 buildTriggeredRef.current = true;
-                void triggerBuildRef.current();
+                void triggerBuildRef.current({ silent: true });
             }
         }
     }, [history, projectId, onBuildComplete, autoBuild, onBuildStart]);
@@ -354,9 +354,9 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         // Auto-trigger background build to persist to R2 asynchronously without blocking the user
         if (autoBuild && hasFiles && !buildTriggeredRef.current) {
             buildTriggeredRef.current = true;
-            void triggerBuildRef.current();
+            void triggerBuildRef.current({ silent: true });
         }
-    }, [history, onComplete, autoBuild, onBuildStart]);
+    }, [history, projectId, onBuildComplete, onComplete, autoBuild]);
 
     const handleSummarizationComplete = useCallback((data: SummarizationCompleteEvent) => {
         // Show completion activity message with results
@@ -653,10 +653,13 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     }, [history, resetProgress]);
 
     // Trigger a preview build (works with or without active session)
-    const triggerBuild = useCallback(async () => {
-        isBuildingPreviewRef.current = true;
-        setIsBuildingPreview(true);
-        onBuildStart?.();
+    const triggerBuild = useCallback(async (opts?: { silent?: boolean }) => {
+        const silent = Boolean(opts?.silent);
+        if (!silent) {
+            isBuildingPreviewRef.current = true;
+            setIsBuildingPreview(true);
+            onBuildStart?.();
+        }
 
         try {
             const response = await axios.post(`/builder/projects/${projectId}/build`);
@@ -670,10 +673,16 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                 : 'Failed to build preview';
             const errorMessage = errorSanitizerRef.current ? errorSanitizerRef.current(rawErrorMessage) : rawErrorMessage;
 
-            onBuildError?.(errorMessage);
+            if (!silent) {
+                onBuildError?.(errorMessage);
+            } else {
+                console.warn('[Background Preview Build]', rawErrorMessage);
+            }
         } finally {
-            isBuildingPreviewRef.current = false;
-            setIsBuildingPreview(false);
+            if (!silent) {
+                isBuildingPreviewRef.current = false;
+                setIsBuildingPreview(false);
+            }
         }
     }, [projectId, onBuildStart, onBuildComplete, onBuildError]);
 
@@ -685,7 +694,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     useEffect(() => {
         if (autoBuild && progress.status === 'completed' && progress.hasFileChanges && !buildTriggeredRef.current) {
             buildTriggeredRef.current = true;
-            void triggerBuild();
+            void triggerBuild({ silent: true });
         }
     }, [autoBuild, progress.status, progress.hasFileChanges, triggerBuild]);
 
