@@ -434,8 +434,8 @@ export default function Chat({
     }, [playSound, fetchSuggestions]);
 
     const errorSanitizer = useCallback(
-        (rawError: string) => sanitizeBuilderError(rawError, t),
-        [t]
+        (rawError: string) => sanitizeBuilderError(rawError, t, _user?.role === 'admin'),
+        [t, _user?.role]
     );
 
     const {
