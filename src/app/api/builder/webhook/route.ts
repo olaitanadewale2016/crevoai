@@ -203,8 +203,19 @@ export async function POST(req: NextRequest) {
             });
           }
         }
-        if (data.build_status) {
-          project.build_status = data.build_status;
+        const agentFailed = Boolean(
+          data.status === 'failed' ||
+          data.build_status === 'failed' ||
+          (!data.files_changed && !data.build_required && data.build_status !== 'completed')
+        );
+        const shouldBuildPreview = Boolean(
+          !agentFailed &&
+          (data.files_changed || data.build_status === 'completed' || data.build_required)
+        );
+
+        if (agentFailed) {
+          project.build_status = 'failed';
+          project.build_completed_at = new Date();
         }
         const rawTokensUsed = Number(data.tokens_used || data.total_tokens || 0);
         const prevBilled = Number(project.last_billed_session_tokens || 0);
@@ -244,18 +255,10 @@ export async function POST(req: NextRequest) {
         }
 
         // 2. Build & deploy preview to R2 synchronously BEFORE announcing preview readiness
-        // (Prevents Vercel serverless freeze/kill from leaving active_build_id null & orphaned build locks)
-        const shouldBuildPreview = Boolean(
-          data.files_changed ||
-          data.build_status === 'completed' ||
-          data.build_required
-        );
-
         let previewReadyUrl: string | undefined;
+        let buildSyncError: string | undefined;
         if (shouldBuildPreview) {
           clearProjectPreviewCache(String(project._id));
-          project.build_status = 'completed';
-          project.build_completed_at = new Date();
 
           const builderDoc =
             (project.builder_id ? await Builder.findById(project.builder_id) : null) ||
@@ -264,53 +267,68 @@ export async function POST(req: NextRequest) {
           if (builderDoc && !project.builder_id) {
             project.builder_id = builderDoc._id;
           }
-          await project.save();
 
           if (builderDoc) {
             try {
               const buildRes = await triggerBuildAndDeployToR2(project, builderDoc);
               if (buildRes.success && buildRes.preview_url) {
                 previewReadyUrl = buildRes.preview_url;
+              } else {
+                buildSyncError = buildRes.error || 'Preview build failed';
               }
-            } catch (err) {
+            } catch (err: any) {
+              buildSyncError = err?.message || 'Error building/syncing preview to R2';
               console.error('Error building/syncing preview to R2 in webhook:', err);
             }
-          }
-
-          if (!previewReadyUrl && shouldBuildPreview) {
-            previewReadyUrl = `/preview/${project._id}`;
+          } else {
+            buildSyncError = 'No active builder available to compile preview';
           }
 
           if (previewReadyUrl) {
+            project.build_status = 'completed';
+            project.build_completed_at = new Date();
+            await project.save();
+
             await broadcastEvent(`session.${sessionId}`, 'status', {
               status: 'completed',
               preview_url: previewReadyUrl,
               message: 'Build completed successfully',
             });
+          } else {
+            project.build_status = 'failed';
+            project.build_completed_at = new Date();
+            await project.save();
+
+            await broadcastEvent(`session.${sessionId}`, 'status', {
+              status: 'failed',
+              message: buildSyncError || 'Preview build failed',
+            });
           }
+        } else if (agentFailed) {
+          await broadcastEvent(`session.${sessionId}`, 'status', {
+            status: 'failed',
+            message: data.build_message || 'Build failed',
+          });
         }
 
         if (project.user_id) {
+          const finalUserStatus =
+            previewReadyUrl ? 'completed' : project.build_status === 'failed' ? 'failed' : 'completed';
           await broadcastToUser(String(project.user_id), 'project.status', {
             project_id: project._id,
-            status: data.build_status || 'completed',
-            message: data.build_message || null,
+            status: finalUserStatus,
+            message: data.build_message || buildSyncError || null,
             ...(previewReadyUrl ? { preview_url: previewReadyUrl } : {}),
           });
 
-          if (
-            data.build_status === 'completed' ||
-            data.build_status === 'success' ||
-            shouldBuildPreview ||
-            !data.build_status
-          ) {
+          if (finalUserStatus === 'completed') {
             await notifyBuildComplete(String(project.user_id), project._id, project.name);
-          } else if (data.build_status === 'failed') {
+          } else {
             await notifyBuildFailed(
               String(project.user_id),
               project._id,
               project.name,
-              data.build_message || 'Build failed'
+              data.build_message || buildSyncError || 'Build failed'
             );
           }
         }

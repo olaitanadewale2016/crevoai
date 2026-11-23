@@ -14,6 +14,7 @@ import {
   buildOptimizedHistoryForBuilder,
   detectRepeatedPrompt,
   getAiConfigForUser,
+  ReasoningEffort,
 } from '@/services/builder';
 
 export const runtime = 'nodejs';
@@ -149,7 +150,10 @@ export async function POST(
       compacted_history: priorCompacted,
     });
 
-    const aiConfig = await getAiConfigForUser(ctx.user);
+    const aiConfig = await getAiConfigForUser(
+      ctx.user,
+      project.reasoning_effort as ReasoningEffort | undefined
+    );
 
     const res = await builderFetch(builder, `/api/chat/${project.build_session_id}`, {
       method: 'POST',

@@ -133,7 +133,8 @@ export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) 
         api_key: apiKey,
         base_url: baseUrl,
         model,
-        max_tokens: 16384,
+        max_tokens: resolveEffortMaxTokens(16384, resolvedEffort),
+        reasoning_effort: resolvedEffort,
         provider_type: pType,
         remaining_build_credits: 0, // 0 = unlimited / own key
       },
@@ -156,6 +157,7 @@ export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) 
   const baseUrl = (provider.config?.base_url || '').trim().replace(/\/+$/, '') || AI_DEFAULT_BASE_URLS[pType];
   const model = (provider.config?.default_model || '').trim() || provider.available_models?.[0] || AI_DEFAULT_MODELS[pType]?.[0];
   const baseMaxTokens = Number(provider.config?.max_tokens || 16384);
+  const effectiveMaxTokens = resolveEffortMaxTokens(baseMaxTokens, resolvedEffort);
   const summTokens = Number(provider.config?.summarizer_max_tokens || 1500);
   const unlimited = user.role === 'admin' || plan?.monthly_build_credits === -1;
 
@@ -164,7 +166,8 @@ export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) 
       api_key: apiKey,
       base_url: baseUrl,
       model,
-      max_tokens: baseMaxTokens,
+      max_tokens: effectiveMaxTokens,
+      reasoning_effort: resolvedEffort,
       provider_type: pType,
       remaining_build_credits: unlimited ? 0 : Math.max(1, user.build_credits ?? 0),
     },
@@ -721,7 +724,7 @@ export async function triggerBuildAndDeployToR2(
     // 2. AWAIT durable Cloudflare R2 uploads BEFORE setting active_build_id in MongoDB.
     // CRITICAL on Vercel Serverless: returning before R2 uploads finish freezes/kills the Lambda,
     // leaving active_build_id pointing to missing R2 keys on other serverless instances!
-    const batchSize = 16;
+    const batchSize = 32;
     let r2Uploaded = true;
     try {
       for (let i = 0; i < uploadTasks.length; i += batchSize) {
@@ -756,9 +759,12 @@ export async function triggerBuildAndDeployToR2(
       }
     );
 
-    // 4. Clean up previous build prefix asynchronously (best-effort)
+    // 4. Clean up previous build prefix bounded cleanly so slow R2 deletes never delay preview readiness
     if (r2Uploaded && oldBuildId && oldBuildId !== newBuildId) {
-      await r2DeletePrefix('private', `sites/${project._id}/${oldBuildId}/`).catch(() => {});
+      await Promise.race([
+        r2DeletePrefix('private', `sites/${project._id}/${oldBuildId}/`).catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, 600)),
+      ]);
     }
 
     return {
@@ -1071,8 +1077,9 @@ export async function serveBuiltSiteFromR2(params: {
     }
   }
 
-  // 3. Fallback to Direct Builder proxy ONLY when RAM cache & R2 both missed and AI is not actively building
-  if (!buf && project.build_status !== 'building') {
+  // 3. Fallback to Direct Builder proxy ONLY when RAM cache & R2 missed and project has a completed build
+  // (never compile or deploy an unbuilt/failed starter workspace into R2!)
+  if (!buf && project.build_status === 'completed') {
     try {
       const builder =
         (project.builder_id ? await Builder.findById(project.builder_id) : null) ||
@@ -1118,7 +1125,12 @@ export async function serveBuiltSiteFromR2(params: {
               }
             }
 
-            if (!rawHtml.includes('/src/main.tsx') && !rawHtml.includes('./src/main.tsx')) {
+            const isUnbuiltStarter =
+              rawHtml.includes('/src/main.tsx') ||
+              rawHtml.includes('./src/main.tsx') ||
+              rawHtml.includes('Welcome to Your Website');
+
+            if (!isUnbuiltStarter) {
               // Self-healing: deploy to R2 in background so subsequent requests hit R2 CDN in 0ms
               if (!project.active_build_id && builder) {
                 triggerBuildAndDeployToR2(project, builder).catch((err: any) => {

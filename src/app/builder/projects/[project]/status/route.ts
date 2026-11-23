@@ -70,8 +70,39 @@ export async function GET(
       let currentStatus = project.build_status;
       if (project.build_status === 'building') {
         const lastEntry = (project.conversation_history || []).at(-1);
+        const lastContent = String(lastEntry?.content || '');
+        const lastLooksLikeFailure =
+          /did not generate any website|build failed|rate limit|quota exceeded|something went wrong|stopped|error:/i.test(
+            lastContent
+          );
+
+        // Check if Go builder actually compiled a customized preview in case R2 sync didn't finish yet
+        let hasCompiledCustomPreview = false;
+        if (!previewExists) {
+          try {
+            const previewProbe = await builderFetch(
+              builder,
+              `/api/preview-asset/${project._id}/index.html`,
+              { timeoutMs: 4000 }
+            );
+            if (previewProbe.ok) {
+              const probeHtml = await previewProbe.text();
+              hasCompiledCustomPreview =
+                !probeHtml.includes('/src/main.tsx') &&
+                !probeHtml.includes('./src/main.tsx') &&
+                !probeHtml.includes('Welcome to Your Website');
+            }
+          } catch {
+            hasCompiledCustomPreview = false;
+          }
+        }
+
         const nextStatus =
-          previewExists || lastEntry?.role === 'assistant' ? 'completed' : 'failed';
+          previewExists ||
+          hasCompiledCustomPreview ||
+          (lastEntry?.role === 'assistant' && !lastLooksLikeFailure && Boolean(project.active_build_id))
+            ? 'completed'
+            : 'failed';
         await Project.updateOne(
           { _id: project._id },
           {
