@@ -115,7 +115,8 @@ export function InspectPreview({
     const [iframeReady, setIframeReady] = useState(false);
     const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop');
 
-    const effectivePreviewUrl = previewUrl || (projectId ? `/preview/${projectId}` : null);
+    // Do not mount the preview iframe while the initial build has not produced a previewUrl yet
+    const effectivePreviewUrl = previewUrl || (!isBuilding && projectId ? `/preview/${projectId}` : null);
     const iframeSrc = effectivePreviewUrl
         ? `${effectivePreviewUrl}${effectivePreviewUrl.includes('?') ? '&' : '?'}t=${refreshTrigger}`
         : undefined;

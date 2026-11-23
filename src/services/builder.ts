@@ -635,10 +635,10 @@ export async function triggerBuildAndDeployToR2(
   // Prevent concurrent builds on the same project workspace
   const lockKey = `build_lock:${project._id}`;
   const prevBuildId = project.active_build_id || null;
-  const acquired = await cacheAdd(lockKey, true, 45);
+  const acquired = await cacheAdd(lockKey, true, 120);
   if (!acquired) {
-    // Wait for the concurrent build to complete (500ms interval, up to 25 seconds)
-    for (let i = 0; i < 50; i++) {
+    // Wait for the concurrent build to complete (500ms interval, up to 90 seconds)
+    for (let i = 0; i < 180; i++) {
       await new Promise((r) => setTimeout(r, 500));
       const fresh = await Project.findById(project._id).select('active_build_id').lean();
       if (fresh?.active_build_id && fresh.active_build_id !== prevBuildId) {
@@ -720,49 +720,48 @@ export async function triggerBuildAndDeployToR2(
       });
     }
 
-    // 2. Immediately update MongoDB so preview routes resolve the new build instantly
+    // 2. AWAIT durable Cloudflare R2 uploads BEFORE setting active_build_id in MongoDB.
+    // CRITICAL on Vercel Serverless: returning before R2 uploads finish freezes/kills the Lambda,
+    // leaving active_build_id pointing to missing R2 keys on other serverless instances!
+    const batchSize = 16;
+    let r2Uploaded = true;
+    try {
+      for (let i = 0; i < uploadTasks.length; i += batchSize) {
+        const slice = uploadTasks.slice(i, i + batchSize);
+        await Promise.all(
+          slice.map((task) =>
+            r2PutObject({
+              visibility: 'private',
+              key: task.key,
+              body: task.body,
+              contentType: task.contentType,
+              cacheControl: task.isHashedAsset ? 'public, max-age=31536000, immutable' : 'no-cache',
+            })
+          )
+        );
+      }
+    } catch (uploadErr: any) {
+      r2Uploaded = false;
+      console.error(`[R2 Sync] Failed uploading build ${newBuildId} for project ${project._id}:`, uploadErr?.message);
+    }
+
+    // 3. Update MongoDB active_build_id once R2 has the build (or builder metadata if R2 is unavailable)
     await connectDB();
     await Project.updateOne(
       { _id: project._id },
       {
         $set: {
-          active_build_id: newBuildId,
+          ...(r2Uploaded ? { active_build_id: newBuildId } : {}),
           builder_id: String(builder._id),
           build_completed_at: new Date(),
         },
       }
     );
 
-    // 3. Release lock early so other operations aren't blocked
-    await cacheForget(lockKey);
-
-    // 4. Run durable Cloudflare R2 backup uploads asynchronously in the background (zero blocking)
-    (async () => {
-      try {
-        const batchSize = 16;
-        for (let i = 0; i < uploadTasks.length; i += batchSize) {
-          const slice = uploadTasks.slice(i, i + batchSize);
-          await Promise.all(
-            slice.map((task) =>
-              r2PutObject({
-                visibility: 'private',
-                key: task.key,
-                body: task.body,
-                contentType: task.contentType,
-                cacheControl: task.isHashedAsset ? 'public, max-age=31536000, immutable' : 'no-cache',
-              })
-            )
-          );
-        }
-
-        // Clean up previous build prefix asynchronously (zero downtime)
-        if (oldBuildId && oldBuildId !== newBuildId) {
-          r2DeletePrefix('private', `sites/${project._id}/${oldBuildId}/`).catch(() => { });
-        }
-      } catch (uploadErr: any) {
-        console.warn(`[R2 Background Sync] Warning for project ${project._id}:`, uploadErr?.message);
-      }
-    })();
+    // 4. Clean up previous build prefix asynchronously (best-effort)
+    if (r2Uploaded && oldBuildId && oldBuildId !== newBuildId) {
+      await r2DeletePrefix('private', `sites/${project._id}/${oldBuildId}/`).catch(() => {});
+    }
 
     return {
       success: true,
@@ -1074,8 +1073,8 @@ export async function serveBuiltSiteFromR2(params: {
     }
   }
 
-  // 3. Fallback to Direct Builder proxy ONLY when RAM cache & R2 both missed (e.g. un-synced live workspace)
-  if (!buf) {
+  // 3. Fallback to Direct Builder proxy ONLY when RAM cache & R2 both missed and AI is not actively building
+  if (!buf && project.build_status !== 'building') {
     try {
       const builder =
         (project.builder_id ? await Builder.findById(project.builder_id) : null) ||
@@ -1084,7 +1083,7 @@ export async function serveBuiltSiteFromR2(params: {
         const streamRes = await builderFetch(
           builder,
           `/api/preview-asset/${project._id}/${relPath}`,
-          { timeoutMs: isHtmlRequest ? 5_000 : 10_000 }
+          { timeoutMs: isHtmlRequest ? 25_000 : 20_000 }
         );
         if (streamRes.ok) {
           const resContentType =
@@ -1173,7 +1172,7 @@ export async function serveBuiltSiteFromR2(params: {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Building Preview...</title>
-  <script>setTimeout(function() { window.location.reload(); }, 2500);</script>
+  <script>setTimeout(function() { window.location.reload(); }, 4000);</script>
   <style>
     body {
       margin: 0;
