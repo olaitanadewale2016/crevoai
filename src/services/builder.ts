@@ -156,7 +156,7 @@ export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) 
   const baseUrl = provider.config?.base_url || AI_DEFAULT_BASE_URLS[pType];
   let model = provider.config?.default_model || provider.available_models?.[0] || AI_DEFAULT_MODELS[pType]?.[0];
   if (pType === 'gemini' && !model) {
-    model = 'gemini-2.5-flash';
+    model = 'gemini-2.5-flash-lite';
   }
   const baseMaxTokens = Number(provider.config?.max_tokens || 16384);
   const summTokens = Number(provider.config?.summarizer_max_tokens || 1500);
