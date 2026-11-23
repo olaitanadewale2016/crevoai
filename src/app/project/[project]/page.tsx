@@ -305,6 +305,7 @@ export default async function ProjectChatPage({
         id: String(project._id),
         name: project.name,
         initial_prompt: project.initial_prompt ?? null,
+        initial_file_ids: (project.initial_file_ids || []).map(String),
         has_history: conversationHistory.length > 0,
         conversation_history: conversationHistory,
         preview_url: previewExists ? `/preview/${String(project._id)}` : null,

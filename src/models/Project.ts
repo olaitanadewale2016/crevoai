@@ -31,6 +31,7 @@ export interface IProject {
   name: string;
   description: string | null;
   initial_prompt: string | null;
+  initial_file_ids?: string[];
   thumbnail: string | null; // Public R2 key: thumbnails/{project_id}.png
   is_public: boolean;
   is_starred: boolean;
@@ -79,6 +80,7 @@ const ProjectSchema = new Schema<IProject>(
     name: { type: String, required: true, maxlength: 255 },
     description: { type: String, default: null },
     initial_prompt: { type: String, default: null },
+    initial_file_ids: { type: [String], default: [] },
     thumbnail: { type: String, default: null },
     is_public: { type: Boolean, default: false },
     is_starred: { type: Boolean, default: false },

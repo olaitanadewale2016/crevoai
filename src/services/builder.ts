@@ -1181,6 +1181,57 @@ export async function serveBuiltSiteFromR2(params: {
   }
 
   if (!buf) {
+    if (isHtmlRequest && mode === 'preview') {
+      const compilingHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Building Preview...</title>
+  <script>setTimeout(function() { window.location.reload(); }, 2500);</script>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: #09090b;
+      color: #f4f4f5;
+    }
+    .box { text-align: center; padding: 2rem; max-width: 420px; }
+    .spinner {
+      display: inline-block;
+      width: 36px;
+      height: 36px;
+      border: 3px solid rgba(255, 255, 255, 0.12);
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spin 0.9s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    h3 { margin: 1.25rem 0 0.5rem; font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; }
+    p { margin: 0; font-size: 0.85rem; color: #a1a1aa; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="spinner"></div>
+    <h3>Building site preview...</h3>
+    <p>Compiling your files. This preview will load automatically in just a moment.</p>
+  </div>
+</body>
+</html>`;
+      return new Response(compilingHtml, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'X-Frame-Options': 'SAMEORIGIN',
+        },
+      });
+    }
     return new Response('Not Found', { status: 404 });
   }
 

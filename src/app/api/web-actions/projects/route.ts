@@ -6,9 +6,10 @@ import {
   isDemoAdminUser,
 } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
-import { generateUuidV7 } from '@/lib/crypto';
+import { generateUuidV7, generateHexToken, sha256Hex } from '@/lib/crypto';
 import { inferThemePresetFromPrompt } from '@/lib/theme-presets';
-import { Project, Template } from '@/models/Project';
+import { Project, Template, ProjectFile } from '@/models/Project';
+import { r2PutObject } from '@/lib/r2';
 import { canPerformBuild } from '@/services/credits';
 
 export const dynamic = 'force-dynamic';
@@ -88,13 +89,81 @@ export async function POST(req: NextRequest) {
       ? body.theme_preset
       : inferThemePresetFromPrompt(prompt);
 
+  const initialFileIds: string[] = [];
+  let totalUploadedBytes = 0;
+
+  // Extract uploaded files from FormData if present
+  const fd = (body as any).formData as FormData | undefined;
+  if (fd) {
+    const uploadedImages = [
+      ...fd.getAll('images'),
+      ...fd.getAll('images[]'),
+      ...fd.getAll('files'),
+      ...fd.getAll('files[]'),
+    ].filter((item): item is File => typeof File !== 'undefined' && item instanceof File && item.size > 0);
+
+    const maxImagesForPlan =
+      user.role === 'admin' || plan?.monthly_build_credits === -1
+        ? 10
+        : plan?.max_images_per_prompt || ((plan?.price ?? 0) > 0 ? 6 : 2);
+
+    for (const file of uploadedImages.slice(0, maxImagesForPlan)) {
+      if (!file.type.startsWith('image/')) continue;
+      const maxFileSizeMb = plan?.max_file_size_mb && plan.max_file_size_mb > 0 ? plan.max_file_size_mb : (user.role === 'admin' ? 100 : 10);
+      if (file.size > maxFileSizeMb * 1024 * 1024) continue;
+
+      try {
+        const arrayBuf = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuf);
+        const checksum = sha256Hex(buffer);
+        const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+        const filename = `${generateHexToken(16)}.${ext}`;
+        const filePath = `project-files/${projectId}/${filename}`;
+
+        await r2PutObject({
+          visibility: 'public',
+          key: filePath,
+          body: buffer,
+          contentType: file.type || 'image/png',
+        });
+
+        const doc = await ProjectFile.create({
+          project_id: projectId,
+          filename,
+          original_filename: file.name,
+          path: filePath,
+          mime_type: file.type || 'image/png',
+          size: file.size,
+          source: 'dashboard',
+          checksum,
+        });
+
+        initialFileIds.push(String(doc._id));
+        totalUploadedBytes += file.size;
+      } catch (err: any) {
+        console.warn('[Project Creation] Image upload error:', err?.message);
+      }
+    }
+  }
+
+  // Also support any existing file IDs passed in body
+  if (Array.isArray((body as any).file_ids)) {
+    for (const fid of (body as any).file_ids) {
+      if (typeof fid === 'string' && fid.trim()) {
+        initialFileIds.push(fid.trim());
+      }
+    }
+  }
+
   const project = await Project.create({
     _id: projectId,
     user_id: user._id,
     name,
     initial_prompt: prompt,
+    initial_file_ids: initialFileIds,
     template_id: templateId,
     theme_preset: resolvedThemePreset,
+    storage_used_bytes: totalUploadedBytes,
     last_viewed_at: new Date(),
     build_status: 'idle',
   });

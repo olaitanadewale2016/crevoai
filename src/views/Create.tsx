@@ -176,20 +176,37 @@ export default function Create({
     const handlePromptSubmit = async (
         prompt: string,
         templateId: string | null,
-        themePreset: string | null
+        themePreset: string | null,
+        images?: File[]
     ) => {
         setIsSubmitting(true);
         try {
-            const res = await axios.post('/api/web-actions/projects', {
-                prompt,
-                template_id: templateId,
-                theme_preset: themePreset,
-            }, {
-                headers: {
-                    'Accept': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-            });
+            let res;
+            if (images && images.length > 0) {
+                const formData = new FormData();
+                formData.append('prompt', prompt);
+                if (templateId) formData.append('template_id', templateId);
+                if (themePreset) formData.append('theme_preset', themePreset);
+                images.forEach((img) => formData.append('images', img));
+                res = await axios.post('/api/web-actions/projects', formData, {
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Content-Type': 'multipart/form-data',
+                    },
+                });
+            } else {
+                res = await axios.post('/api/web-actions/projects', {
+                    prompt,
+                    template_id: templateId,
+                    theme_preset: themePreset,
+                }, {
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                });
+            }
             const data = res.data;
             const target = data.redirect || (data.projectId ? `/project/${data.projectId}` : null);
             if (target && typeof window !== 'undefined') {
@@ -317,6 +334,7 @@ export default function Create({
                                         typingPrompts={typingPrompts}
                                         isLoadingSuggestions={isLoadingAi}
                                         templates={templates ?? []}
+                                        isLoggedIn={true}
                                     />
                                 </div>
                             </div>

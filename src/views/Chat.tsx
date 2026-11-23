@@ -46,6 +46,7 @@ interface Project {
     id: string;
     name: string;
     initial_prompt: string | null;
+    initial_file_ids?: string[];
     has_history: boolean;
     conversation_history: Array<{
         role: 'user' | 'assistant' | 'action';
@@ -616,9 +617,11 @@ export default function Chat({
             playSound('send');
             setThinkingStartTime(Date.now());
             setThinkingDuration(null);
-            sendMessage(project.initial_prompt);
+            sendMessage(project.initial_prompt, {
+                fileIds: project.initial_file_ids || [],
+            });
         }
-    }, [project.initial_prompt, project.has_history, sendMessage, playSound]);
+    }, [project.initial_prompt, project.initial_file_ids, project.has_history, sendMessage, playSound]);
 
     // Auto-rebuild preview for projects with history but no preview
     const autoRebuildTriggered = useRef(false);

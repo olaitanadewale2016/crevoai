@@ -10,7 +10,7 @@ import { usePreviewInspector } from '@/hooks/usePreviewInspector';
 import { usePreviewThemeSync } from '@/hooks/usePreviewThemeSync';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { Button } from '@/components/ui/button';
-import { MousePointerClick, Loader2, Palette, Undo2, Redo2, Bot, Cog, Wrench, Monitor, Tablet, Smartphone } from 'lucide-react';
+import { MousePointerClick, Loader2, Palette, Undo2, Redo2, Bot, Cog, Wrench, Monitor, Tablet, Smartphone, RotateCw } from 'lucide-react';
 import { toast } from 'sonner';
 import type { InspectorElement, ElementMention, PendingEdit } from '@/types/inspector';
 import { formatStyleEditMessage } from '@/lib/style-save';
@@ -114,6 +114,11 @@ export function InspectPreview({
     const [isSaving, setIsSaving] = useState(false);
     const [iframeReady, setIframeReady] = useState(false);
     const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop');
+
+    const effectivePreviewUrl = previewUrl || (projectId ? `/preview/${projectId}` : null);
+    const iframeSrc = effectivePreviewUrl
+        ? `${effectivePreviewUrl}${effectivePreviewUrl.includes('?') ? '&' : '?'}t=${refreshTrigger}`
+        : undefined;
 
     const handleSetDeviceMode = useCallback((newMode: DeviceMode) => {
         setDeviceMode(newMode);
@@ -463,6 +468,19 @@ export function InspectPreview({
                         >
                             {isRedoing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Redo2 className="h-3.5 w-3.5" />}
                         </Button>
+                        <Button
+                            variant="outline"
+                            size="icon"
+                            onClick={() => {
+                                if (iframeRef.current && effectivePreviewUrl) {
+                                    iframeRef.current.src = `${effectivePreviewUrl}${effectivePreviewUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+                                }
+                            }}
+                            className="h-7 w-7"
+                            title={t('Refresh Preview')}
+                        >
+                            <RotateCw className="h-3.5 w-3.5" />
+                        </Button>
                     </div>
                 </div>
 
@@ -494,21 +512,28 @@ export function InspectPreview({
                                     : 'relative w-full h-full'
                             }
                         >
-                            <iframe
-                                ref={iframeRef}
-                                key={refreshTrigger}
-                                src={`${previewUrl}?t=${refreshTrigger}`}
-                                className="w-full h-full border-0"
-                                title="Preview"
-                                sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
-                                onLoad={() => {
-                                    setIframeReady(true);
-                                    iframeRef.current?.contentWindow?.postMessage({
-                                        type: 'inspector-ping',
-                                        mode: mode === 'inspect' ? 'inspect' : 'preview',
-                                    }, '*');
-                                }}
-                            />
+                            {iframeSrc ? (
+                                <iframe
+                                    ref={iframeRef}
+                                    key={refreshTrigger}
+                                    src={iframeSrc}
+                                    className="w-full h-full border-0"
+                                    title="Preview"
+                                    sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+                                    onLoad={() => {
+                                        setIframeReady(true);
+                                        iframeRef.current?.contentWindow?.postMessage({
+                                            type: 'inspector-ping',
+                                            mode: mode === 'inspect' ? 'inspect' : 'preview',
+                                        }, '*');
+                                    }}
+                                />
+                            ) : (
+                                <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground p-8">
+                                    <Bot className="h-12 w-12 text-muted-foreground/40 mb-3 animate-pulse" />
+                                    <p className="text-sm font-medium">{t('Waiting for site generation to begin...')}</p>
+                                </div>
+                            )}
                         </div>
 
                         {/* Confetti canvas */}
