@@ -783,6 +783,7 @@ export async function triggerBuildAndDeployToR2(
 
 export async function projectPreviewExists(project: IProject): Promise<boolean> {
   if (project.active_build_id) return true;
+  if (project.build_status === 'completed') return true;
 
   // 1. Check if a built snapshot exists in Cloudflare R2 and heal missing active_build_id
   try {
@@ -808,7 +809,7 @@ export async function projectPreviewExists(project: IProject): Promise<boolean> 
   }
 
   // 2. Check if project has completed build status and active build
-  if (project.build_status === 'completed' && project.active_build_id) {
+  if (project.active_build_id) {
     return true;
   }
 
