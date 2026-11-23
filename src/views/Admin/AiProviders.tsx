@@ -439,6 +439,7 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
     const [providerToDelete, setProviderToDelete] = useState<AiProvider | null>(null);
     const [isTestingConnection, setIsTestingConnection] = useState<number | null>(null);
     const [isTestingDirect, setIsTestingDirect] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
     const [showApiKey, setShowApiKey] = useState(false);
     const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
@@ -470,23 +471,28 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
 
     const validateForm = (isEdit: boolean) => {
         const errors: Record<string, string> = {};
-        if (!formData.name.trim()) {
+        if (!formData.name?.trim()) {
             errors.name = t('Name is required');
         }
-        if (!isEdit && !formData.api_key.trim()) {
+        if (!isEdit && !formData.api_key?.trim()) {
             errors.api_key = t('API key is required');
         }
-        if (!formData.default_model) {
+        if (!formData.default_model?.trim()) {
             errors.default_model = t('Default model is required');
         }
         setFormErrors(errors);
-        return Object.keys(errors).length === 0;
+        if (Object.keys(errors).length > 0) {
+            toast.error(Object.values(errors)[0]);
+            return false;
+        }
+        return true;
     };
 
     const handleAdd = () => {
         if (!validateForm(false)) {
             return;
         }
+        setIsSaving(true);
         router.post(route('admin.ai-providers.store'), formData, {
             onSuccess: () => {
                 setIsAddDialogOpen(false);
@@ -497,6 +503,9 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
                 setFormErrors(errors as Record<string, string>);
                 toast.error(Object.values(errors)[0] as string);
             },
+            onFinish: () => {
+                setIsSaving(false);
+            },
         });
     };
 
@@ -505,7 +514,9 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
         if (!validateForm(true)) {
             return;
         }
-        router.put(route('admin.ai-providers.update', selectedProvider.id), formData, {
+        const providerId = selectedProvider.id || (selectedProvider as any)._id;
+        setIsSaving(true);
+        router.put(route('admin.ai-providers.update', providerId), formData, {
             onSuccess: () => {
                 setIsEditDialogOpen(false);
                 setSelectedProvider(null);
@@ -515,6 +526,9 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
             onError: (errors) => {
                 setFormErrors(errors as Record<string, string>);
                 toast.error(Object.values(errors)[0] as string);
+            },
+            onFinish: () => {
+                setIsSaving(false);
             },
         });
     };
@@ -761,38 +775,47 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
                                 {t('Add Provider')}
                             </Button>
                         </DialogTrigger>
-                        <DialogContent>
-                            <DialogHeader>
-                                <DialogTitle>{t('Add AI Provider')}</DialogTitle>
-                                <DialogDescription>
-                                    {t('Add a new AI provider configuration')}
-                                </DialogDescription>
-                            </DialogHeader>
-                            <ProviderForm
-                                formData={formData}
-                                setFormData={setFormData}
-                                providerTypes={providerTypes}
-                                defaultModels={defaultModels}
-                                showApiKey={showApiKey}
-                                setShowApiKey={setShowApiKey}
-                                errors={formErrors}
-                                onTestDirect={handleTestDirect}
-                                isTestingDirect={isTestingDirect}
-                            />
-                            {formData.default_model && (
-                                <CostEstimator
-                                    type={formData.type}
-                                    model={formData.default_model}
-                                    modelPricing={modelPricing}
-                                    tokensPerProject={tokensPerProject}
+                        <DialogContent className="sm:max-w-lg max-h-[88vh] flex flex-col p-0 overflow-hidden">
+                            <div className="p-6 pb-3 border-b shrink-0">
+                                <DialogHeader>
+                                    <DialogTitle>{t('Add AI Provider')}</DialogTitle>
+                                    <DialogDescription>
+                                        {t('Add a new AI provider configuration')}
+                                    </DialogDescription>
+                                </DialogHeader>
+                            </div>
+                            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+                                <ProviderForm
+                                    formData={formData}
+                                    setFormData={setFormData}
+                                    providerTypes={providerTypes}
+                                    defaultModels={defaultModels}
+                                    showApiKey={showApiKey}
+                                    setShowApiKey={setShowApiKey}
+                                    errors={formErrors}
+                                    onTestDirect={handleTestDirect}
+                                    isTestingDirect={isTestingDirect}
                                 />
-                            )}
-                            <DialogFooter>
-                                <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
-                                    {t('Cancel')}
-                                </Button>
-                                <Button onClick={handleAdd}>{t('Add Provider')}</Button>
-                            </DialogFooter>
+                                {formData.default_model && (
+                                    <CostEstimator
+                                        type={formData.type}
+                                        model={formData.default_model}
+                                        modelPricing={modelPricing}
+                                        tokensPerProject={tokensPerProject}
+                                    />
+                                )}
+                            </div>
+                            <div className="p-4 px-6 border-t bg-muted/20 shrink-0">
+                                <DialogFooter>
+                                    <Button variant="outline" onClick={() => setIsAddDialogOpen(false)} disabled={isSaving}>
+                                        {t('Cancel')}
+                                    </Button>
+                                    <Button onClick={handleAdd} disabled={isSaving}>
+                                        {isSaving && <RefreshCw className="me-2 h-4 w-4 animate-spin" />}
+                                        {t('Add Provider')}
+                                    </Button>
+                                </DialogFooter>
+                            </div>
                         </DialogContent>
                     </Dialog>
                 }
@@ -821,40 +844,49 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
                     resetForm();
                 }
             }}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>{t('Edit AI Provider')}</DialogTitle>
-                        <DialogDescription>
-                            {t('Update AI provider configuration')}
-                        </DialogDescription>
-                    </DialogHeader>
-                    <ProviderForm
-                        formData={formData}
-                        setFormData={setFormData}
-                        providerTypes={providerTypes}
-                        defaultModels={defaultModels}
-                        showApiKey={showApiKey}
-                        setShowApiKey={setShowApiKey}
-                        isEdit
-                        maskedKey={selectedProvider?.masked_key}
-                        errors={formErrors}
-                        onTestDirect={handleTestDirect}
-                        isTestingDirect={isTestingDirect}
-                    />
-                    {formData.default_model && (
-                        <CostEstimator
-                            type={formData.type}
-                            model={formData.default_model}
-                            modelPricing={modelPricing}
-                            tokensPerProject={tokensPerProject}
+                <DialogContent className="sm:max-w-lg max-h-[88vh] flex flex-col p-0 overflow-hidden">
+                    <div className="p-6 pb-3 border-b shrink-0">
+                        <DialogHeader>
+                            <DialogTitle>{t('Edit AI Provider')}</DialogTitle>
+                            <DialogDescription>
+                                {t('Update AI provider configuration')}
+                            </DialogDescription>
+                        </DialogHeader>
+                    </div>
+                    <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+                        <ProviderForm
+                            formData={formData}
+                            setFormData={setFormData}
+                            providerTypes={providerTypes}
+                            defaultModels={defaultModels}
+                            showApiKey={showApiKey}
+                            setShowApiKey={setShowApiKey}
+                            isEdit
+                            maskedKey={selectedProvider?.masked_key}
+                            errors={formErrors}
+                            onTestDirect={handleTestDirect}
+                            isTestingDirect={isTestingDirect}
                         />
-                    )}
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
-                            {t('Cancel')}
-                        </Button>
-                        <Button onClick={handleEdit}>{t('Save Changes')}</Button>
-                    </DialogFooter>
+                        {formData.default_model && (
+                            <CostEstimator
+                                type={formData.type}
+                                model={formData.default_model}
+                                modelPricing={modelPricing}
+                                tokensPerProject={tokensPerProject}
+                            />
+                        )}
+                    </div>
+                    <div className="p-4 px-6 border-t bg-muted/20 shrink-0">
+                        <DialogFooter>
+                            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>
+                                {t('Cancel')}
+                            </Button>
+                            <Button onClick={handleEdit} disabled={isSaving}>
+                                {isSaving && <RefreshCw className="me-2 h-4 w-4 animate-spin" />}
+                                {t('Save Changes')}
+                            </Button>
+                        </DialogFooter>
+                    </div>
                 </DialogContent>
             </Dialog>
 

@@ -29,8 +29,15 @@ export async function PUT(
   }
 
   await connectDB();
-  const query = isValidObjectId(providerId) ? { _id: providerId } : { name: providerId };
-  const provider = await AiProvider.findOne(query);
+  let provider = null;
+  if (isValidObjectId(providerId)) {
+    provider = await AiProvider.findById(providerId);
+  }
+  if (!provider) {
+    provider = await AiProvider.findOne({
+      $or: [{ _id: providerId }, { name: providerId }],
+    }).catch(() => null);
+  }
 
   if (!provider) {
     return NextResponse.json({ error: 'AI provider not found' }, { status: 404 });
@@ -143,8 +150,15 @@ export async function DELETE(
   }
 
   await connectDB();
-  const query = isValidObjectId(providerId) ? { _id: providerId } : { name: providerId };
-  const provider = await AiProvider.findOne(query);
+  let provider = null;
+  if (isValidObjectId(providerId)) {
+    provider = await AiProvider.findById(providerId);
+  }
+  if (!provider) {
+    provider = await AiProvider.findOne({
+      $or: [{ _id: providerId }, { name: providerId }],
+    }).catch(() => null);
+  }
 
   if (!provider) {
     return NextResponse.json({ error: 'AI provider not found' }, { status: 404 });

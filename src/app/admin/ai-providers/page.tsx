@@ -221,6 +221,7 @@ export default async function AdminAiProvidersPage() {
 
     return {
       id: String(p._id) as any,
+      _id: String(p._id),
       name: p.name,
       type: p.type as any,
       type_label: PROVIDER_TYPES[p.type as keyof typeof PROVIDER_TYPES] || p.type,
