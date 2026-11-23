@@ -524,10 +524,14 @@ async function loadTemplateZipFiles(project: IProject): Promise<Record<string, U
 
   try {
     const unzipped = unzipSync(new Uint8Array(zipBuffer));
-    if (!project.template_id) {
-      CACHED_DEFAULT_TEMPLATE_FILES = unzipped;
+    const normalized: Record<string, Uint8Array> = {};
+    for (const [k, v] of Object.entries(unzipped)) {
+      normalized[k.replace(/\\/g, '/').replace(/^\/+/, '')] = v;
     }
-    return unzipped;
+    if (!project.template_id) {
+      CACHED_DEFAULT_TEMPLATE_FILES = normalized;
+    }
+    return normalized;
   } catch {
     return {};
   }
@@ -700,18 +704,7 @@ export async function triggerBuildAndDeployToR2(
 
     for (const [rawPath, bytes] of entries) {
       const relPath = rawPath.replace(/\\/g, '/').replace(/^\/+/, '');
-      let finalBytes: Uint8Array | Buffer = bytes;
-
-      // CRITICAL PATCH: Patch React Router basename fallback ONCE so /preview, /app, AND / all work!
-      if (relPath.endsWith('.js') || relPath.endsWith('.mjs')) {
-        const text = Buffer.from(bytes).toString('utf8');
-        if (text.includes('||"/preview"') || text.includes("||'/preview'")) {
-          finalBytes = Buffer.from(
-            text.replaceAll('||"/preview"', '||"/"').replaceAll("||'/preview'", "||'/'"),
-            'utf8'
-          );
-        }
-      }
+      const finalBytes: Uint8Array | Buffer = bytes;
 
       const isHashedAsset = relPath.startsWith('assets/');
       const contentType = guessContentType(relPath);
@@ -1148,16 +1141,7 @@ export async function serveBuiltSiteFromR2(params: {
             }
           } else {
             const arrayBuf = await streamRes.arrayBuffer();
-            let streamBuf = Buffer.from(arrayBuf);
-            if (relPath.endsWith('.js') || relPath.endsWith('.mjs')) {
-              const text = streamBuf.toString('utf8');
-              if (text.includes('||"/preview"') || text.includes("||'/preview'")) {
-                streamBuf = Buffer.from(
-                  text.replaceAll('||"/preview"', '||"/"').replaceAll("||'/preview'", "||'/'"),
-                  'utf8'
-                );
-              }
-            }
+            const streamBuf = Buffer.from(arrayBuf);
             if (prefix) {
               cachePreviewAsset(targetKey, streamBuf, resContentType);
             }
