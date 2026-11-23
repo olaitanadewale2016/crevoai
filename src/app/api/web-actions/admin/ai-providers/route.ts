@@ -50,7 +50,8 @@ export async function POST(req: NextRequest) {
   const encryptedCreds = encryptJson({ api_key: apiKey });
 
   const config: Record<string, any> = {};
-  if (body.default_model) config.default_model = body.default_model;
+  const cleanModel = (body.default_model || '').trim();
+  if (cleanModel) config.default_model = cleanModel;
   if (body.max_tokens) config.max_tokens = Number(body.max_tokens);
   if (body.summarizer_max_tokens) config.summarizer_max_tokens = Number(body.summarizer_max_tokens);
   if (body.base_url && body.base_url.trim()) {
@@ -60,8 +61,12 @@ export async function POST(req: NextRequest) {
   }
 
   const availableModels = Array.isArray(body.available_models) && body.available_models.length > 0
-    ? body.available_models
-    : AI_DEFAULT_MODELS[type] || [];
+    ? [...body.available_models]
+    : [...(AI_DEFAULT_MODELS[type] || [])];
+
+  if (cleanModel && !availableModels.includes(cleanModel)) {
+    availableModels.unshift(cleanModel);
+  }
 
   const existingCount = await AiProvider.countDocuments({});
   const shouldBeDefault = Boolean(body.is_default) || existingCount === 0;

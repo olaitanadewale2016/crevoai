@@ -72,8 +72,16 @@ export const AI_DEFAULT_BASE_URLS: Record<AiProviderType, string> = {
 
 export const AI_DEFAULT_MODELS: Record<AiProviderType, string[]> = {
   gemini: [
-    'gemini-2.5-flash-lite',
     'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-pro',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
+    'gemini-1.5-pro',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-8b',
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
   ],
   openrouter: [
     'openrouter/free',
@@ -100,9 +108,16 @@ export const AI_DEFAULT_MODELS: Record<AiProviderType, string[]> = {
     'openai/gpt-4o',
   ],
   abhibots: ['claude-sonnet-5', 'claude-3-5-sonnet', 'claude-opus-4-5'],
-  openai: ['gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'gpt-4o-mini'],
-  anthropic: ['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-3-5-sonnet-20241022'],
-  grok: ['grok-4-1-fast-non-reasoning', 'grok-4', 'grok-3', 'grok-3-mini', 'grok-beta'],
+  openai: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'o1', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-5.1', 'gpt-5.2'],
+  anthropic: [
+    'claude-3-7-sonnet-20250219',
+    'claude-3-5-sonnet-20241022',
+    'claude-3-5-haiku-20241022',
+    'claude-sonnet-4-5',
+    'claude-opus-4-5',
+    'claude-haiku-4-5',
+  ],
+  grok: ['grok-2-latest', 'grok-beta', 'grok-code-fast-1', 'grok-4-1-fast-reasoning', 'grok-3'],
   deepseek: ['deepseek-chat', 'deepseek-reasoner'],
   zhipu: ['glm-4.7', 'glm-4.5', 'glm-4.5-air', 'glm-5'],
 };

@@ -86,6 +86,7 @@ interface ProviderFormProps {
         type: AiProviderType;
         api_key: string;
         default_model: string;
+        base_url: string;
         max_tokens: number;
         summarizer_max_tokens: number;
         is_default: boolean;
@@ -238,21 +239,36 @@ function ProviderForm({
             <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                     <Label htmlFor="default_model">{t('Model')}</Label>
-                    <Select
-                        value={formData.default_model}
-                        onValueChange={(value) => setFormData({ ...formData, default_model: value })}
-                    >
-                        <SelectTrigger className={errors.default_model ? 'border-destructive' : ''}>
-                            <SelectValue placeholder={t('Select model')} />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {(defaultModels[formData.type] || []).map((model) => (
-                                <SelectItem key={model} value={model}>
-                                    {model}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
+                    <div className="space-y-1.5">
+                        <Input
+                            id="default_model"
+                            placeholder={t('Enter model (e.g. gemini-2.5-flash, gpt-4o)...')}
+                            value={formData.default_model}
+                            onChange={(e) => setFormData({ ...formData, default_model: e.target.value })}
+                            className={errors.default_model ? 'border-destructive font-mono text-xs' : 'font-mono text-xs'}
+                        />
+                        {defaultModels[formData.type] && defaultModels[formData.type].length > 0 && (
+                            <Select
+                                value={defaultModels[formData.type].includes(formData.default_model) ? formData.default_model : ''}
+                                onValueChange={(value) => {
+                                    if (value) {
+                                        setFormData({ ...formData, default_model: value });
+                                    }
+                                }}
+                            >
+                                <SelectTrigger className="h-8 text-xs text-muted-foreground bg-muted/40">
+                                    <SelectValue placeholder={t('Pick a suggested model...')} />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-60">
+                                    {defaultModels[formData.type].map((model) => (
+                                        <SelectItem key={model} value={model} className="text-xs font-mono">
+                                            {model}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        )}
+                    </div>
                     {errors.default_model && (
                         <p className="text-sm text-destructive">{t(errors.default_model)}</p>
                     )}
@@ -265,9 +281,23 @@ function ProviderForm({
                         type="number"
                         placeholder="8192"
                         value={formData.max_tokens}
-                        onChange={(e) => setFormData({ ...formData, max_tokens: parseInt(e.target.value) })}
+                        onChange={(e) => setFormData({ ...formData, max_tokens: parseInt(e.target.value) || 0 })}
                     />
                 </div>
+            </div>
+
+            <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                    <Label htmlFor="base_url">{t('API Base URL')}</Label>
+                    <span className="text-xs text-muted-foreground">({t('optional')})</span>
+                </div>
+                <Input
+                    id="base_url"
+                    placeholder={t('Leave empty for official provider endpoint')}
+                    value={formData.base_url || ''}
+                    onChange={(e) => setFormData({ ...formData, base_url: e.target.value })}
+                    className="font-mono text-xs"
+                />
             </div>
 
             <div className="space-y-2">
@@ -355,7 +385,7 @@ function CostEstimator({
             <div className="border rounded-lg p-4 bg-muted/50">
                 <h4 className="font-medium mb-2">{t('Cost Estimator')}</h4>
                 <p className="text-sm text-muted-foreground">
-                    {t('This model is')} <span className="font-semibold">{t('FREE')}</span> {t('to use!')}
+                    {t('Active model:')} <span className="font-semibold font-mono">{model}</span> — {t('usage billed per provider tier / API key.')}
                 </p>
             </div>
         );
@@ -417,6 +447,7 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
         type: 'anthropic' as AiProviderType,
         api_key: '',
         default_model: defaultModels['anthropic']?.[0] || 'claude-3-5-sonnet-20241022',
+        base_url: '',
         max_tokens: 8192,
         summarizer_max_tokens: 500,
         is_default: providers.length === 0,
@@ -428,6 +459,7 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
             type: 'anthropic',
             api_key: '',
             default_model: defaultModels['anthropic']?.[0] || 'claude-3-5-sonnet-20241022',
+            base_url: '',
             max_tokens: 8192,
             summarizer_max_tokens: 500,
             is_default: providers.length === 0,
@@ -550,6 +582,7 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
                 api_key: formData.api_key,
                 type: formData.type,
                 default_model: formData.default_model,
+                base_url: formData.base_url,
             });
             toast.success(response.data.message || t('Connection successful'));
         } catch (error) {
@@ -567,6 +600,7 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
             type: provider.type,
             api_key: '', // Don't expose existing key
             default_model: provider.config?.default_model || '',
+            base_url: provider.config?.base_url || '',
             max_tokens: provider.config?.max_tokens || 8192,
             summarizer_max_tokens: provider.config?.summarizer_max_tokens || 500,
             is_default: Boolean(provider.is_default),

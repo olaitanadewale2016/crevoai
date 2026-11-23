@@ -60,7 +60,13 @@ export async function PUT(
   }
 
   const config: Record<string, any> = { ...(provider.config || {}) };
-  if (body.default_model !== undefined && body.default_model) config.default_model = body.default_model;
+  if (body.default_model !== undefined && body.default_model) {
+    const cleanModel = body.default_model.trim();
+    config.default_model = cleanModel;
+    if (cleanModel && !provider.available_models?.includes(cleanModel)) {
+      provider.available_models = [cleanModel, ...(provider.available_models || [])];
+    }
+  }
   if (body.max_tokens !== undefined) config.max_tokens = body.max_tokens ? Number(body.max_tokens) : undefined;
   if (body.summarizer_max_tokens !== undefined) config.summarizer_max_tokens = body.summarizer_max_tokens ? Number(body.summarizer_max_tokens) : undefined;
   if (body.base_url !== undefined) {
@@ -70,7 +76,11 @@ export async function PUT(
   provider.config = config;
 
   if (Array.isArray(body.available_models) && body.available_models.length > 0) {
-    provider.available_models = body.available_models;
+    const models = [...body.available_models];
+    if (config.default_model && !models.includes(config.default_model)) {
+      models.unshift(config.default_model);
+    }
+    provider.available_models = models;
   }
 
   if (body.is_default !== undefined) {
