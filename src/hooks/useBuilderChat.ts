@@ -186,14 +186,20 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
         if (data.status === 'completed') {
             const finalUrl = resolvedPreviewUrl || `/preview/${projectId}`;
+            setProgress(prev => ({
+                ...prev,
+                status: 'completed',
+                previewUrl: finalUrl,
+                thinkingContent: null,
+                thinkingStartTime: null,
+            }));
+            // Instantly notify completion so preview reloads immediately (0ms delay)
+            onBuildComplete?.(finalUrl);
+
+            // Sync to R2 in the background without blocking the live preview
             if (autoBuild && !resolvedPreviewUrl && !buildTriggeredRef.current) {
                 buildTriggeredRef.current = true;
-                isBuildingPreviewRef.current = true;
-                setIsBuildingPreview(true);
-                onBuildStart?.();
                 void triggerBuildRef.current();
-            } else {
-                onBuildComplete?.(finalUrl);
             }
         }
     }, [history, projectId, onBuildComplete, autoBuild, onBuildStart]);
@@ -314,17 +320,13 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         completedSessionRef.current = true;
 
         const hasFiles = data.files_changed ?? true;
+        const finalUrl = `/preview/${projectId}`;
 
-        if (autoBuild && hasFiles && !buildTriggeredRef.current) {
-            isBuildingPreviewRef.current = true;
-            setIsBuildingPreview(true);
-            onBuildStart?.();
-        }
-
-        // Update progress state — pure, no side effects
+        // Update progress state with resolved preview URL immediately (0ms delay)
         setProgress(prev => ({
             ...prev,
             status: 'completed',
+            previewUrl: prev.previewUrl || finalUrl,
             iterations: data.iterations,
             tokensUsed: data.tokens_used,
             hasFileChanges: hasFiles,
@@ -345,9 +347,11 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             });
         }
 
+        // Notify build complete immediately so preview iframe renders right away
+        onBuildComplete?.(finalUrl);
         onComplete?.(data);
 
-        // Auto-trigger build immediately without waiting for React re-render cycle
+        // Auto-trigger background build to persist to R2 asynchronously without blocking the user
         if (autoBuild && hasFiles && !buildTriggeredRef.current) {
             buildTriggeredRef.current = true;
             void triggerBuildRef.current();

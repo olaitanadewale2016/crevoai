@@ -32,6 +32,7 @@ import {
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import axios from 'axios';
+import confetti from 'canvas-confetti';
 import PublishModal from '@/components/Project/PublishModal';
 import { ProjectSettingsPanel, type CustomDomainSettings } from '@/components/Project/ProjectSettingsPanel';
 import { InspectPreview } from '@/components/Preview/InspectPreview';
@@ -373,6 +374,12 @@ export default function Chat({
 
     const handleComplete = useCallback((event: CompleteEvent) => {
         playSound('complete');
+        confetti({
+            particleCount: 80,
+            spread: 60,
+            origin: { y: 0.7 },
+        });
+        setPreviewRefreshTrigger(Date.now());
         setFileRefreshTrigger(tf => tf + 1);
         if (event.files_changed) {
             toast.success(t('Build complete! Files have been updated.'));
@@ -1235,9 +1242,9 @@ export default function Chat({
                                 projectId={project.id}
                                 mode={previewSubMode}
                                 onModeChange={setPreviewSubMode}
-                                previewUrl={progress.previewUrl}
+                                previewUrl={progress.previewUrl || `/preview/${project.id}`}
                                 refreshTrigger={previewRefreshTrigger}
-                                isBuilding={isBuildingPreview || (isLoading && !progress.previewUrl)}
+                                isBuilding={isLoading && !progress.previewUrl}
                                 captureThumbnailTrigger={captureThumbnailTrigger}
                                 onUndo={handleUndo}
                                 onRedo={handleRedo}

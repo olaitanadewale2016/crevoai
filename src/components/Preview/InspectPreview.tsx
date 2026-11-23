@@ -360,7 +360,7 @@ export function InspectPreview({
         onRemoveEdit?.(id);
     }, [pendingEdits, revertEdits, onRemoveEdit]);
 
-    if (previewUrl) {
+    if (effectivePreviewUrl) {
         return (
             <div ref={containerRef} className="h-full w-full flex flex-col bg-background relative overflow-hidden">
                 <GradientBackground />
