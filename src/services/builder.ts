@@ -155,7 +155,7 @@ export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) 
   const pType = provider.type;
   const baseUrl = provider.config?.base_url || AI_DEFAULT_BASE_URLS[pType];
   let model = provider.config?.default_model || provider.available_models?.[0] || AI_DEFAULT_MODELS[pType]?.[0];
-  if (pType === 'gemini' && !model) {
+  if (pType === 'gemini' && (model === 'gemini-2.5-flash' || !model)) {
     model = 'gemini-2.5-flash-lite';
   }
   const baseMaxTokens = Number(provider.config?.max_tokens || 16384);
@@ -693,42 +693,44 @@ export async function triggerBuildAndDeployToR2(
 
     const entries = Object.entries(extracted).filter(([filePath]) => !filePath.endsWith('/'));
 
-    // Parallel batched uploads to Private R2 (16 concurrent)
-    const batchSize = 16;
-    for (let i = 0; i < entries.length; i += batchSize) {
-      const slice = entries.slice(i, i + batchSize);
-      await Promise.all(
-        slice.map(async ([rawPath, bytes]) => {
-          const relPath = rawPath.replace(/\\/g, '/').replace(/^\/+/, '');
-          let finalBytes: Uint8Array | Buffer = bytes;
+    // 1. Populate in-memory RAM cache instantly (sub-millisecond) for ALL files
+    const uploadTasks: Array<{
+      key: string;
+      body: Uint8Array | Buffer;
+      contentType: string;
+      isHashedAsset: boolean;
+    }> = [];
 
-          // CRITICAL PATCH: Patch React Router basename fallback ONCE so /preview, /app, AND / all work!
-          if (relPath.endsWith('.js') || relPath.endsWith('.mjs')) {
-            const text = Buffer.from(bytes).toString('utf8');
-            if (text.includes('||"/preview"') || text.includes("||'/preview'")) {
-              finalBytes = Buffer.from(
-                text.replaceAll('||"/preview"', '||"/"').replaceAll("||'/preview'", "||'/'"),
-                'utf8'
-              );
-            }
-          }
+    for (const [rawPath, bytes] of entries) {
+      const relPath = rawPath.replace(/\\/g, '/').replace(/^\/+/, '');
+      let finalBytes: Uint8Array | Buffer = bytes;
 
-          const isHashedAsset = relPath.startsWith('assets/');
-          const contentType = guessContentType(relPath);
-          const bufToCache = Buffer.isBuffer(finalBytes) ? finalBytes : Buffer.from(finalBytes);
-          cachePreviewAsset(`sites/${project._id}/${newBuildId}/${relPath}`, bufToCache, contentType);
+      // CRITICAL PATCH: Patch React Router basename fallback ONCE so /preview, /app, AND / all work!
+      if (relPath.endsWith('.js') || relPath.endsWith('.mjs')) {
+        const text = Buffer.from(bytes).toString('utf8');
+        if (text.includes('||"/preview"') || text.includes("||'/preview'")) {
+          finalBytes = Buffer.from(
+            text.replaceAll('||"/preview"', '||"/"').replaceAll("||'/preview'", "||'/'"),
+            'utf8'
+          );
+        }
+      }
 
-          await r2PutObject({
-            visibility: 'private',
-            key: `sites/${project._id}/${newBuildId}/${relPath}`,
-            body: finalBytes,
-            contentType,
-            cacheControl: isHashedAsset ? 'public, max-age=31536000, immutable' : 'no-cache',
-          });
-        })
-      );
+      const isHashedAsset = relPath.startsWith('assets/');
+      const contentType = guessContentType(relPath);
+      const bufToCache = Buffer.isBuffer(finalBytes) ? finalBytes : Buffer.from(finalBytes);
+      const targetKey = `sites/${project._id}/${newBuildId}/${relPath}`;
+      cachePreviewAsset(targetKey, bufToCache, contentType);
+
+      uploadTasks.push({
+        key: targetKey,
+        body: finalBytes,
+        contentType,
+        isHashedAsset,
+      });
     }
 
+    // 2. Immediately update MongoDB so preview routes resolve the new build instantly
     await connectDB();
     await Project.updateOne(
       { _id: project._id },
@@ -741,10 +743,36 @@ export async function triggerBuildAndDeployToR2(
       }
     );
 
-    // Clean up previous build prefix asynchronously (zero downtime)
-    if (oldBuildId && oldBuildId !== newBuildId) {
-      r2DeletePrefix('private', `sites/${project._id}/${oldBuildId}/`).catch(() => {});
-    }
+    // 3. Release lock early so other operations aren't blocked
+    await cacheForget(lockKey);
+
+    // 4. Run durable Cloudflare R2 backup uploads asynchronously in the background (zero blocking)
+    (async () => {
+      try {
+        const batchSize = 16;
+        for (let i = 0; i < uploadTasks.length; i += batchSize) {
+          const slice = uploadTasks.slice(i, i + batchSize);
+          await Promise.all(
+            slice.map((task) =>
+              r2PutObject({
+                visibility: 'private',
+                key: task.key,
+                body: task.body,
+                contentType: task.contentType,
+                cacheControl: task.isHashedAsset ? 'public, max-age=31536000, immutable' : 'no-cache',
+              })
+            )
+          );
+        }
+
+        // Clean up previous build prefix asynchronously (zero downtime)
+        if (oldBuildId && oldBuildId !== newBuildId) {
+          r2DeletePrefix('private', `sites/${project._id}/${oldBuildId}/`).catch(() => {});
+        }
+      } catch (uploadErr: any) {
+        console.warn(`[R2 Background Sync] Warning for project ${project._id}:`, uploadErr?.message);
+      }
+    })();
 
     return {
       success: true,

@@ -73,6 +73,9 @@ export const AI_DEFAULT_BASE_URLS: Record<AiProviderType, string> = {
 export const AI_DEFAULT_MODELS: Record<AiProviderType, string[]> = {
   gemini: [
     'gemini-2.5-flash-lite',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
+    'gemini-1.5-flash',
     'gemini-2.5-flash',
   ],
   openrouter: [

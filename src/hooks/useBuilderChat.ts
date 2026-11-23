@@ -99,6 +99,8 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         previewUrl: initialPreviewUrl ?? null,
     }));
     const [isBuildingPreview, setIsBuildingPreview] = useState(false);
+    const isBuildingPreviewRef = useRef(false);
+    const triggerBuildRef = useRef<() => Promise<void>>(() => Promise.resolve());
     const pendingMessageRef = useRef<string | null>(null);
     const buildTriggeredRef = useRef(false);
     const lastEventTimeRef = useRef<number>(0);
@@ -184,9 +186,17 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
         if (data.status === 'completed') {
             const finalUrl = resolvedPreviewUrl || `/preview/${projectId}`;
-            onBuildComplete?.(finalUrl);
+            if (autoBuild && !resolvedPreviewUrl && !buildTriggeredRef.current) {
+                buildTriggeredRef.current = true;
+                isBuildingPreviewRef.current = true;
+                setIsBuildingPreview(true);
+                onBuildStart?.();
+                void triggerBuildRef.current();
+            } else {
+                onBuildComplete?.(finalUrl);
+            }
         }
-    }, [history, projectId, onBuildComplete]);
+    }, [history, projectId, onBuildComplete, autoBuild, onBuildStart]);
 
     const handleThinking = useCallback((data: ThinkingEvent) => {
         // Dedup: skip exact duplicate thinking content
@@ -305,6 +315,12 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
         const hasFiles = data.files_changed ?? true;
 
+        if (autoBuild && hasFiles && !buildTriggeredRef.current) {
+            isBuildingPreviewRef.current = true;
+            setIsBuildingPreview(true);
+            onBuildStart?.();
+        }
+
         // Update progress state — pure, no side effects
         setProgress(prev => ({
             ...prev,
@@ -330,7 +346,13 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         }
 
         onComplete?.(data);
-    }, [history, onComplete]);
+
+        // Auto-trigger build immediately without waiting for React re-render cycle
+        if (autoBuild && hasFiles && !buildTriggeredRef.current) {
+            buildTriggeredRef.current = true;
+            void triggerBuildRef.current();
+        }
+    }, [history, onComplete, autoBuild, onBuildStart]);
 
     const handleSummarizationComplete = useCallback((data: SummarizationCompleteEvent) => {
         // Show completion activity message with results
@@ -369,14 +391,22 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                     thinkingContent: null,
                     thinkingStartTime: null,
                 }));
-                if (status === 'completed' && previewUrl) {
-                    onBuildComplete?.(previewUrl);
+                if (status === 'completed') {
+                    if (previewUrl) {
+                        onBuildComplete?.(previewUrl);
+                    } else if (autoBuild && !buildTriggeredRef.current) {
+                        buildTriggeredRef.current = true;
+                        isBuildingPreviewRef.current = true;
+                        setIsBuildingPreview(true);
+                        onBuildStart?.();
+                        void triggerBuildRef.current();
+                    }
                 }
             }
         } catch {
             // Silent - regular polling will catch it
         }
-    }, [progress.status, sessionId, projectId]);
+    }, [progress.status, sessionId, projectId, autoBuild, onBuildStart, onBuildComplete]);
 
     const isReverb = pusherConfig.provider === 'reverb';
 
@@ -470,14 +500,22 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                     thinkingContent: null,
                     thinkingStartTime: null,
                 }));
-                if (status === 'completed' && previewUrl) {
-                    onBuildComplete?.(previewUrl);
+                if (status === 'completed') {
+                    if (previewUrl) {
+                        onBuildComplete?.(previewUrl);
+                    } else if (autoBuild && !buildTriggeredRef.current) {
+                        buildTriggeredRef.current = true;
+                        isBuildingPreviewRef.current = true;
+                        setIsBuildingPreview(true);
+                        onBuildStart?.();
+                        void triggerBuildRef.current();
+                    }
                 }
             }
         } catch {
             // Silent - will retry on next interval
         }
-    }, [projectId]);
+    }, [projectId, autoBuild, onBuildStart, onBuildComplete]);
 
     // Safety fallback: poll status if session appears stuck in 'running'
     // This handles the case where the Pusher 'complete' event is lost
@@ -612,8 +650,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
     // Trigger a preview build (works with or without active session)
     const triggerBuild = useCallback(async () => {
-        if (isBuildingPreview) return;
-
+        isBuildingPreviewRef.current = true;
         setIsBuildingPreview(true);
         onBuildStart?.();
 
@@ -631,15 +668,20 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
             onBuildError?.(errorMessage);
         } finally {
+            isBuildingPreviewRef.current = false;
             setIsBuildingPreview(false);
         }
-    }, [projectId, isBuildingPreview, onBuildStart, onBuildComplete, onBuildError]);
+    }, [projectId, onBuildStart, onBuildComplete, onBuildError]);
+
+    useEffect(() => {
+        triggerBuildRef.current = triggerBuild;
+    }, [triggerBuild]);
 
     // Auto-trigger build when agent completes with file changes (only once per session)
     useEffect(() => {
         if (autoBuild && progress.status === 'completed' && progress.hasFileChanges && !buildTriggeredRef.current) {
             buildTriggeredRef.current = true;
-            triggerBuild();
+            void triggerBuild();
         }
     }, [autoBuild, progress.status, progress.hasFileChanges, triggerBuild]);
 
