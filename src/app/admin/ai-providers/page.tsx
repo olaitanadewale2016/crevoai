@@ -4,7 +4,7 @@ import { connectDB } from '@/lib/db';
 import { getSessionContext, serializeUser } from '@/lib/auth';
 import { getSharedAppProps } from '@/services/shared-context';
 import { decryptJson, maskApiKey } from '@/lib/crypto';
-import { AiProvider, Plan } from '@/models';
+import { AiProvider, Plan, AI_DEFAULT_BASE_URLS } from '@/models';
 
 export const dynamic = 'force-dynamic';
 
@@ -215,9 +215,22 @@ export default async function AdminAiProvidersPage() {
     }
 
     const defaultForType = DEFAULT_MODELS[p.type as keyof typeof DEFAULT_MODELS] || [];
-    const mergedModels = p.available_models?.length
-      ? Array.from(new Set([...defaultForType, ...p.available_models]))
-      : defaultForType;
+    const savedModels = Array.isArray(p.available_models)
+      ? p.available_models.map((m) => String(m).trim()).filter(Boolean)
+      : [];
+    const baseList = savedModels.length > 0 ? savedModels : defaultForType;
+    const defaultModel = p.config?.default_model?.trim();
+    const mergedModels = Array.from(
+      new Set([...(defaultModel ? [defaultModel] : []), ...baseList])
+    );
+
+    const officialBase = AI_DEFAULT_BASE_URLS[p.type as keyof typeof AI_DEFAULT_BASE_URLS] || '';
+    const savedBase = (p.config?.base_url || '').trim().replace(/\/+$/, '');
+    const normalizedConfig = {
+      ...(p.config || {}),
+      // Treat saved official default as blank custom URL so admin sees clean placeholder unless customized
+      base_url: savedBase && savedBase !== officialBase.replace(/\/+$/, '') ? savedBase : '',
+    };
 
     return {
       id: String(p._id) as any,
@@ -230,7 +243,7 @@ export default async function AdminAiProvidersPage() {
       has_credentials: Boolean(p.credentials),
       masked_key: maskedKey,
       available_models: mergedModels,
-      config: p.config || {},
+      config: normalizedConfig,
       plans_count: countMap.get(String(p._id)) || 0,
       total_requests: p.total_requests || 0,
       last_used_at: p.last_used_at ? new Date(p.last_used_at).toISOString() : null,
@@ -246,6 +259,7 @@ export default async function AdminAiProvidersPage() {
       providers={serializedProviders as any}
       providerTypes={PROVIDER_TYPES}
       defaultModels={DEFAULT_MODELS}
+      defaultBaseUrls={AI_DEFAULT_BASE_URLS}
       modelPricing={MODEL_PRICING}
       tokensPerProject={TOKENS_PER_PROJECT}
     />

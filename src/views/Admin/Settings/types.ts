@@ -32,6 +32,8 @@ export interface AiProvider {
     id: number;
     name: string;
     type: string;
+    available_models?: string[];
+    default_model?: string;
 }
 
 export interface Builder {

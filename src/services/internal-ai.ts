@@ -4,6 +4,11 @@ import { decryptJson } from '@/lib/crypto';
 import { cacheRemember, cacheForgetPrefix } from '@/lib/cache';
 import { loadNamespaceForLocale } from '@/lib/i18n';
 import { AiProvider, AI_DEFAULT_BASE_URLS } from '@/models/BuilderAi';
+import {
+  usesAnthropicProtocol,
+  resolveAnthropicMessagesEndpoint,
+  resolveOpenAIChatEndpoint,
+} from '@/lib/ai-provider-url';
 
 const CHEAP_MODELS: Record<string, string> = {
   openai: 'gpt-4o-mini',
@@ -68,16 +73,20 @@ async function callInternalAiJsonArray(prompt: string): Promise<string[] | null>
     const apiKey = creds?.api_key;
     if (!apiKey) return null;
 
+    const customBase = (provider.config?.base_url || '').trim().replace(/\/+$/, '');
+    const baseUrl = customBase || AI_DEFAULT_BASE_URLS[provider.type];
     const model =
       integrations.internal_ai_model ||
+      (customBase ? provider.config?.default_model : '') ||
       CHEAP_MODELS[provider.type] ||
       provider.config?.default_model ||
+      provider.available_models?.[0] ||
       'gpt-4o-mini';
-    const baseUrl = (provider.config?.base_url || AI_DEFAULT_BASE_URLS[provider.type]).replace(/\/+$/, '');
 
     let text = '';
-    if (provider.type === 'anthropic' || provider.type === 'zhipu' || provider.type === 'abhibots') {
-      const res = await fetch(`${baseUrl}/v1/messages`, {
+    if (usesAnthropicProtocol(provider.type, baseUrl)) {
+      const endpoint = resolveAnthropicMessagesEndpoint(baseUrl);
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -95,19 +104,26 @@ async function callInternalAiJsonArray(prompt: string): Promise<string[] | null>
       const data = (await res.json()) as { content?: Array<{ text?: string }> };
       text = data.content?.[0]?.text || '';
     } else {
-      const res = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 300,
-          messages: [{ role: 'user', content: prompt }],
-        }),
-        signal: AbortSignal.timeout(15_000),
-      });
+      const { primary, v1Fallback } = resolveOpenAIChatEndpoint(baseUrl);
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      };
+      const sendReq = (url: string) =>
+        fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            model,
+            max_tokens: 300,
+            messages: [{ role: 'user', content: prompt }],
+          }),
+          signal: AbortSignal.timeout(15_000),
+        });
+      let res = await sendReq(primary);
+      if (res.status === 404 && v1Fallback) {
+        res = await sendReq(v1Fallback);
+      }
       if (!res.ok) return null;
       const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
       text = data.choices?.[0]?.message?.content || '';

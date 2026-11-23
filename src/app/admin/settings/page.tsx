@@ -201,6 +201,8 @@ export default async function AdminSettingsPage() {
         id: String(a._id) as any,
         name: a.name,
         type: a.type,
+        available_models: Array.isArray(a.available_models) ? a.available_models : [],
+        default_model: a.config?.default_model || '',
       }))}
       builders={builders.map((b) => ({
         id: String(b._id) as any,

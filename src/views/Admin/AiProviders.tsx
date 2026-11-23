@@ -60,6 +60,9 @@ import {
     EyeOff,
     Star,
     Check,
+    X,
+    Globe,
+    RotateCcw,
 } from 'lucide-react';
 import { User } from '@/types';
 import { AiProvider, AiProviderType } from '@/types/admin';
@@ -76,6 +79,7 @@ interface AiProvidersProps {
     providers: AiProvider[];
     providerTypes: Record<string, string>;
     defaultModels: Record<string, string[]>;
+    defaultBaseUrls?: Record<string, string>;
     modelPricing: Record<string, Record<string, ModelPricing>>;
     tokensPerProject: number;
 }
@@ -86,6 +90,7 @@ interface ProviderFormProps {
         type: AiProviderType;
         api_key: string;
         default_model: string;
+        available_models: string[];
         base_url: string;
         max_tokens: number;
         summarizer_max_tokens: number;
@@ -94,6 +99,7 @@ interface ProviderFormProps {
     setFormData: (data: ProviderFormProps['formData']) => void;
     providerTypes: Record<string, string>;
     defaultModels: Record<string, string[]>;
+    defaultBaseUrls?: Record<string, string>;
     showApiKey: boolean;
     setShowApiKey: (show: boolean) => void;
     isEdit?: boolean;
@@ -108,6 +114,7 @@ function ProviderForm({
     setFormData,
     providerTypes,
     defaultModels,
+    defaultBaseUrls = {},
     showApiKey,
     setShowApiKey,
     isEdit = false,
@@ -118,9 +125,59 @@ function ProviderForm({
 }: ProviderFormProps) {
     const { t } = useTranslation();
     const [isFieldActive, setIsFieldActive] = useState(false);
+    const [newModelInput, setNewModelInput] = useState('');
+
+    const modelOptions = Array.from(
+        new Set([
+            ...(formData.default_model?.trim() ? [formData.default_model.trim()] : []),
+            ...(formData.available_models || []),
+        ])
+    ).filter(Boolean);
+
+    const handleAddCustomModel = () => {
+        const clean = newModelInput.trim();
+        if (!clean) return;
+        const alreadyExists = modelOptions.includes(clean);
+        const updatedList = alreadyExists ? modelOptions : [clean, ...modelOptions];
+        setFormData({
+            ...formData,
+            default_model: clean,
+            available_models: updatedList,
+        });
+        setNewModelInput('');
+        toast.success(
+            alreadyExists
+                ? t('Selected model "{{model}}"', { model: clean })
+                : t('Added "{{model}}" to model list', { model: clean })
+        );
+    };
+
+    const handleRemoveModel = (modelToRemove: string) => {
+        const nextList = modelOptions.filter((m) => m !== modelToRemove);
+        const nextDefault =
+            formData.default_model === modelToRemove ? nextList[0] || '' : formData.default_model;
+        setFormData({
+            ...formData,
+            available_models: nextList,
+            default_model: nextDefault,
+        });
+    };
+
+    const handleRestoreDefaultModels = () => {
+        const defaults = defaultModels[formData.type] || [];
+        const merged = Array.from(new Set([...modelOptions, ...defaults]));
+        setFormData({
+            ...formData,
+            available_models: merged,
+            default_model: formData.default_model || merged[0] || '',
+        });
+        toast.success(t('Default models restored'));
+    };
+
+    const officialBaseUrl = defaultBaseUrls[formData.type] || '';
 
     return (
-        <div className="space-y-4 py-4">
+        <div className="space-y-4 py-2">
             <div className="space-y-2">
                 <Label htmlFor="name">{t('Name')}</Label>
                 <Input
@@ -140,11 +197,15 @@ function ProviderForm({
                     <Label htmlFor="type">{t('Provider')}</Label>
                     <Select
                         value={formData.type}
-                        onValueChange={(value: AiProviderType) => setFormData({
-                            ...formData,
-                            type: value,
-                            default_model: defaultModels[value]?.[0] || '',
-                        })}
+                        onValueChange={(value: AiProviderType) => {
+                            const nextDefaults = defaultModels[value] || [];
+                            setFormData({
+                                ...formData,
+                                type: value,
+                                default_model: nextDefaults[0] || '',
+                                available_models: [...nextDefaults],
+                            });
+                        }}
                     >
                         <SelectTrigger>
                             <SelectValue />
@@ -213,43 +274,57 @@ function ProviderForm({
                 {errors.api_key && (
                     <p className="text-sm text-destructive">{t(errors.api_key)}</p>
                 )}
-                {onTestDirect && (
-                    <div className="pt-1">
-                        <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            className="w-full gap-2 text-xs"
-                            onClick={onTestDirect}
-                            disabled={isTestingDirect || (!isEdit && !formData.api_key.trim())}
-                        >
-                            {isTestingDirect ? (
-                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                                <Zap className="h-3.5 w-3.5" />
-                            )}
-                            {isEdit && !formData.api_key.trim()
-                                ? t('Test Active Key Connection')
-                                : t('Test Connection Live')}
-                        </Button>
+            </div>
+
+            <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                    <Label htmlFor="base_url">{t('API Base URL')}</Label>
+                    <div className="flex items-center gap-2">
+                        {formData.base_url?.trim() ? (
+                            <button
+                                type="button"
+                                onClick={() => setFormData({ ...formData, base_url: '' })}
+                                className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 transition-colors"
+                            >
+                                <RotateCcw className="h-3 w-3" />
+                                {t('Use default')}
+                            </button>
+                        ) : (
+                            <span className="text-xs text-muted-foreground">({t('optional')})</span>
+                        )}
                     </div>
+                </div>
+                <Input
+                    id="base_url"
+                    type="url"
+                    placeholder={officialBaseUrl || t('https://api.example.com/v1')}
+                    value={formData.base_url || ''}
+                    onChange={(e) => setFormData({ ...formData, base_url: e.target.value })}
+                    className={errors.base_url ? 'border-destructive font-mono text-xs' : 'font-mono text-xs'}
+                />
+                {errors.base_url ? (
+                    <p className="text-sm text-destructive">{t(errors.base_url)}</p>
+                ) : (
+                    <p className="text-xs text-muted-foreground">
+                        {t('Optional. Enter any custom or proxy base URL (e.g. OpenAI-compatible gateway, LiteLLM, or custom relay). Leave empty for official endpoint.')}
+                    </p>
                 )}
             </div>
 
             <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                    <Label htmlFor="default_model">{t('Model')}</Label>
+                    <Label htmlFor="default_model">{t('Active Model')}</Label>
                     <div className="space-y-1.5">
                         <Input
                             id="default_model"
-                            placeholder={t('Enter model (e.g. gemini-2.5-flash, gpt-4o)...')}
+                            placeholder={t('Enter model ID (e.g. gpt-4o)...')}
                             value={formData.default_model}
                             onChange={(e) => setFormData({ ...formData, default_model: e.target.value })}
                             className={errors.default_model ? 'border-destructive font-mono text-xs' : 'font-mono text-xs'}
                         />
-                        {defaultModels[formData.type] && defaultModels[formData.type].length > 0 && (
+                        {modelOptions.length > 0 && (
                             <Select
-                                value={defaultModels[formData.type].includes(formData.default_model) ? formData.default_model : ''}
+                                value={modelOptions.includes(formData.default_model) ? formData.default_model : ''}
                                 onValueChange={(value) => {
                                     if (value) {
                                         setFormData({ ...formData, default_model: value });
@@ -257,10 +332,10 @@ function ProviderForm({
                                 }}
                             >
                                 <SelectTrigger className="h-8 text-xs text-muted-foreground bg-muted/40">
-                                    <SelectValue placeholder={t('Pick a suggested model...')} />
+                                    <SelectValue placeholder={t('Select from model list...')} />
                                 </SelectTrigger>
                                 <SelectContent className="max-h-60">
-                                    {defaultModels[formData.type].map((model) => (
+                                    {modelOptions.map((model) => (
                                         <SelectItem key={model} value={model} className="text-xs font-mono">
                                             {model}
                                         </SelectItem>
@@ -286,19 +361,104 @@ function ProviderForm({
                 </div>
             </div>
 
-            <div className="space-y-2">
+            {/* Manual Model List Management */}
+            <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
                 <div className="flex items-center justify-between">
-                    <Label htmlFor="base_url">{t('API Base URL')}</Label>
-                    <span className="text-xs text-muted-foreground">({t('optional')})</span>
+                    <Label htmlFor="add_custom_model" className="text-xs font-medium">
+                        {t('Available Models')} ({modelOptions.length})
+                    </Label>
+                    {(defaultModels[formData.type]?.length || 0) > 0 && (
+                        <button
+                            type="button"
+                            onClick={handleRestoreDefaultModels}
+                            className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1 transition-colors"
+                        >
+                            <RotateCcw className="h-3 w-3" />
+                            {t('Restore defaults')}
+                        </button>
+                    )}
                 </div>
-                <Input
-                    id="base_url"
-                    placeholder={t('Leave empty for official provider endpoint')}
-                    value={formData.base_url || ''}
-                    onChange={(e) => setFormData({ ...formData, base_url: e.target.value })}
-                    className="font-mono text-xs"
-                />
+                <div className="flex gap-2">
+                    <Input
+                        id="add_custom_model"
+                        placeholder={t('Add custom model ID (e.g. gpt-4.1-nano, qwen-2.5-coder)...')}
+                        value={newModelInput}
+                        onChange={(e) => setNewModelInput(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleAddCustomModel();
+                            }
+                        }}
+                        className="h-8 font-mono text-xs bg-background"
+                    />
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 shrink-0 gap-1 text-xs"
+                        onClick={handleAddCustomModel}
+                        disabled={!newModelInput.trim()}
+                    >
+                        <Plus className="h-3.5 w-3.5" />
+                        {t('Add')}
+                    </Button>
+                </div>
+                {modelOptions.length > 0 && (
+                    <div className="max-h-28 overflow-y-auto flex flex-wrap gap-1.5 pt-1">
+                        {modelOptions.map((model) => {
+                            const isSelected = formData.default_model === model;
+                            return (
+                                <Badge
+                                    key={model}
+                                    variant={isSelected ? 'default' : 'secondary'}
+                                    className="font-mono text-[11px] gap-1 pe-1 cursor-pointer select-none"
+                                    onClick={() => setFormData({ ...formData, default_model: model })}
+                                    title={t('Click to set as active model')}
+                                >
+                                    {isSelected && <Check className="h-3 w-3 shrink-0" />}
+                                    <span className="max-w-[200px] truncate">{model}</span>
+                                    {modelOptions.length > 1 && (
+                                        <button
+                                            type="button"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleRemoveModel(model);
+                                            }}
+                                            className="ms-0.5 rounded-full p-0.5 hover:bg-background/20 transition-colors"
+                                            aria-label={t('Remove model')}
+                                        >
+                                            <X className="h-3 w-3" />
+                                        </button>
+                                    )}
+                                </Badge>
+                            );
+                        })}
+                    </div>
+                )}
             </div>
+
+            {onTestDirect && (
+                <div>
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="w-full gap-2 text-xs"
+                        onClick={onTestDirect}
+                        disabled={isTestingDirect || (!isEdit && !formData.api_key.trim())}
+                    >
+                        {isTestingDirect ? (
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                            <Zap className="h-3.5 w-3.5" />
+                        )}
+                        {isEdit && !formData.api_key.trim()
+                            ? t('Test Active Key & Model Connection')
+                            : t('Test Connection Live')}
+                    </Button>
+                </div>
+            )}
 
             <div className="space-y-2">
                 <Label htmlFor="summarizer_max_tokens">{t('Summarizer Max Tokens')}</Label>
@@ -429,7 +589,7 @@ const skeletonColumns: TableColumnConfig[] = [
     { type: 'actions', width: 'w-12' },       // Actions
 ];
 
-export default function AiProviders({ user, providers, providerTypes, defaultModels, modelPricing, tokensPerProject }: AiProvidersProps) {
+export default function AiProviders({ user, providers, providerTypes, defaultModels, defaultBaseUrls = {}, modelPricing, tokensPerProject }: AiProvidersProps) {
     const { t } = useTranslation();
     const { isLoading } = useAdminLoading();
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -448,6 +608,7 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
         type: 'anthropic' as AiProviderType,
         api_key: '',
         default_model: defaultModels['anthropic']?.[0] || 'claude-3-5-sonnet-20241022',
+        available_models: [...(defaultModels['anthropic'] || ['claude-3-5-sonnet-20241022'])],
         base_url: '',
         max_tokens: 8192,
         summarizer_max_tokens: 500,
@@ -460,6 +621,7 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
             type: 'anthropic',
             api_key: '',
             default_model: defaultModels['anthropic']?.[0] || 'claude-3-5-sonnet-20241022',
+            available_models: [...(defaultModels['anthropic'] || ['claude-3-5-sonnet-20241022'])],
             base_url: '',
             max_tokens: 8192,
             summarizer_max_tokens: 500,
@@ -480,6 +642,10 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
         if (!formData.default_model?.trim()) {
             errors.default_model = t('Default model is required');
         }
+        const trimmedUrl = (formData.base_url || '').trim();
+        if (trimmedUrl && !/^https?:\/\//i.test(trimmedUrl)) {
+            errors.base_url = t('API Base URL must start with http:// or https://');
+        }
         setFormErrors(errors);
         if (Object.keys(errors).length > 0) {
             toast.error(Object.values(errors)[0]);
@@ -488,12 +654,28 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
         return true;
     };
 
+    const buildSubmitPayload = () => {
+        const cleanDefault = formData.default_model.trim();
+        const models = Array.from(
+            new Set([
+                ...(cleanDefault ? [cleanDefault] : []),
+                ...(formData.available_models || []).map((m) => m.trim()).filter(Boolean),
+            ])
+        );
+        return {
+            ...formData,
+            default_model: cleanDefault,
+            base_url: (formData.base_url || '').trim(),
+            available_models: models,
+        };
+    };
+
     const handleAdd = () => {
         if (!validateForm(false)) {
             return;
         }
         setIsSaving(true);
-        router.post(route('admin.ai-providers.store'), formData, {
+        router.post(route('admin.ai-providers.store'), buildSubmitPayload(), {
             onSuccess: () => {
                 setIsAddDialogOpen(false);
                 resetForm();
@@ -516,7 +698,7 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
         }
         const providerId = selectedProvider.id || (selectedProvider as any)._id;
         setIsSaving(true);
-        router.put(route('admin.ai-providers.update', providerId), formData, {
+        router.put(route('admin.ai-providers.update', providerId), buildSubmitPayload(), {
             onSuccess: () => {
                 setIsEditDialogOpen(false);
                 setSelectedProvider(null);
@@ -608,18 +790,29 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
     };
 
     const openEditDialog = (provider: AiProvider) => {
+        const providerDefaultModel = provider.config?.default_model || provider.available_models?.[0] || '';
+        const providerModels = Array.from(
+            new Set([
+                ...(providerDefaultModel ? [providerDefaultModel] : []),
+                ...(provider.available_models?.length
+                    ? provider.available_models
+                    : defaultModels[provider.type] || []),
+            ])
+        );
         setSelectedProvider(provider);
         setFormData({
             name: provider.name,
             type: provider.type,
             api_key: '', // Don't expose existing key
-            default_model: provider.config?.default_model || '',
+            default_model: providerDefaultModel,
+            available_models: providerModels,
             base_url: provider.config?.base_url || '',
             max_tokens: provider.config?.max_tokens || 8192,
             summarizer_max_tokens: provider.config?.summarizer_max_tokens || 500,
             is_default: Boolean(provider.is_default),
         });
         setShowApiKey(false);
+        setFormErrors({});
         setIsEditDialogOpen(true);
     };
 
@@ -631,11 +824,29 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
             ),
             cell: ({ row }) => {
                 const provider = row.original;
+                const customBaseUrl = provider.config?.base_url?.trim();
+                let customHost = '';
+                if (customBaseUrl) {
+                    try {
+                        customHost = new URL(customBaseUrl).host;
+                    } catch {
+                        customHost = customBaseUrl;
+                    }
+                }
                 return (
                     <div>
                         <span className="font-medium">{provider.name}</span>
-                        <div>
+                        <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-xs text-muted-foreground">{provider.type_label}</span>
+                            {customHost && (
+                                <span
+                                    className="inline-flex items-center gap-1 text-[11px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded"
+                                    title={customBaseUrl}
+                                >
+                                    <Globe className="h-2.5 w-2.5" />
+                                    {customHost}
+                                </span>
+                            )}
                         </div>
                     </div>
                 );
@@ -790,6 +1001,7 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
                                     setFormData={setFormData}
                                     providerTypes={providerTypes}
                                     defaultModels={defaultModels}
+                                    defaultBaseUrls={defaultBaseUrls}
                                     showApiKey={showApiKey}
                                     setShowApiKey={setShowApiKey}
                                     errors={formErrors}
@@ -859,6 +1071,7 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
                             setFormData={setFormData}
                             providerTypes={providerTypes}
                             defaultModels={defaultModels}
+                            defaultBaseUrls={defaultBaseUrls}
                             showApiKey={showApiKey}
                             setShowApiKey={setShowApiKey}
                             isEdit

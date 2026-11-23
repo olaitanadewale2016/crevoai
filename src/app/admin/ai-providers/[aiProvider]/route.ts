@@ -8,6 +8,7 @@ import { Plan } from '@/models/Billing';
 import { setSetting, removeSetting, clearSettingsCache } from '@/lib/settings';
 import { clearAdminStatsCache } from '@/services/admin-stats';
 import { cacheForgetPrefix } from '@/lib/cache';
+import { validateCustomBaseUrl, sanitizeModelList } from '@/lib/ai-provider-url';
 
 export const dynamic = 'force-dynamic';
 
@@ -77,17 +78,22 @@ export async function PUT(
   if (body.max_tokens !== undefined) config.max_tokens = body.max_tokens ? Number(body.max_tokens) : undefined;
   if (body.summarizer_max_tokens !== undefined) config.summarizer_max_tokens = body.summarizer_max_tokens ? Number(body.summarizer_max_tokens) : undefined;
   if (body.base_url !== undefined) {
-    if (body.base_url.trim()) config.base_url = body.base_url.trim();
+    const urlCheck = validateCustomBaseUrl(body.base_url);
+    if (!urlCheck.valid) {
+      return NextResponse.json({ errors: { base_url: urlCheck.error } }, { status: 422 });
+    }
+    if (urlCheck.normalized) config.base_url = urlCheck.normalized;
     else delete config.base_url;
   }
   provider.config = config;
+  provider.markModified('config');
 
-  if (Array.isArray(body.available_models) && body.available_models.length > 0) {
-    const models = [...body.available_models];
-    if (config.default_model && !models.includes(config.default_model)) {
-      models.unshift(config.default_model);
+  if (Array.isArray(body.available_models)) {
+    const sanitized = sanitizeModelList(body.available_models, config.default_model);
+    if (sanitized.length > 0) {
+      provider.available_models = sanitized;
+      provider.markModified('available_models');
     }
-    provider.available_models = models;
   }
 
   if (body.is_default !== undefined) {

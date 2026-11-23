@@ -7,10 +7,236 @@ import {
   AiProvider,
   AI_DEFAULT_BASE_URLS,
   AI_DEFAULT_MODELS,
+  AI_PROVIDER_TYPES,
   AiProviderType,
 } from '@/models/BuilderAi';
+import {
+  validateCustomBaseUrl,
+  usesAnthropicProtocol,
+  resolveOpenAIChatEndpoint,
+  resolveAnthropicMessagesEndpoint,
+} from '@/lib/ai-provider-url';
 
 export const dynamic = 'force-dynamic';
+
+const TEST_UA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36';
+
+function isHtmlPayload(text: string): boolean {
+  const lower = text.trim().toLowerCase();
+  return lower.startsWith('<!doctype') || lower.startsWith('<html');
+}
+
+function extractUpstreamError(rawText: string, status: number): string {
+  if (isHtmlPayload(rawText)) {
+    return `Endpoint returned HTML instead of JSON (HTTP ${status}). Verify your API Base URL.`;
+  }
+  try {
+    const data = JSON.parse(rawText);
+    const msg =
+      data?.error?.message ||
+      (typeof data?.error === 'string' ? data.error : '') ||
+      data?.message ||
+      data?.detail ||
+      '';
+    if (msg) return String(msg);
+  } catch {
+    // Plain text error body
+  }
+  const trimmed = rawText.trim();
+  return trimmed ? trimmed.slice(0, 260) : `Connection failed (HTTP ${status})`;
+}
+
+async function testOpenAICompatible(params: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  label: string;
+}): Promise<NextResponse> {
+  const { baseUrl, apiKey, model, label } = params;
+  const { primary, v1Fallback } = resolveOpenAIChatEndpoint(baseUrl);
+  const isOfficialOpenAI = baseUrl.toLowerCase().includes('api.openai.com');
+  const lowerModel = model.toLowerCase();
+  const preferMaxCompletionTokens =
+    isOfficialOpenAI &&
+    (lowerModel.startsWith('o1') ||
+      lowerModel.startsWith('o3') ||
+      lowerModel.startsWith('o4') ||
+      lowerModel.startsWith('gpt-5'));
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+    'User-Agent': TEST_UA,
+  };
+  if (baseUrl.toLowerCase().includes('openrouter.ai')) {
+    headers['HTTP-Referer'] = 'https://crevoai.com';
+    headers['X-Title'] = 'Crevo';
+  }
+
+  const sendProbe = async (
+    endpoint: string,
+    tokenMode: 'max_tokens' | 'max_completion_tokens' | 'none'
+  ) => {
+    const payload: Record<string, unknown> = {
+      model,
+      messages: [{ role: 'user', content: 'Hi' }],
+    };
+    if (tokenMode === 'max_completion_tokens') {
+      payload.max_completion_tokens = 16;
+    } else if (tokenMode === 'max_tokens') {
+      payload.max_tokens = 16;
+    }
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000),
+    });
+    const rawText = await res.text().catch(() => '');
+    return { res, rawText };
+  };
+
+  let endpoint = primary;
+  let tokenMode: 'max_tokens' | 'max_completion_tokens' | 'none' = preferMaxCompletionTokens
+    ? 'max_completion_tokens'
+    : 'max_tokens';
+
+  let { res, rawText } = await sendProbe(endpoint, tokenMode);
+
+  // If bare custom host returned 404 or HTML, automatically retry /v1/chat/completions (matches Go Builder)
+  if ((res.status === 404 || (res.ok && isHtmlPayload(rawText))) && v1Fallback) {
+    endpoint = v1Fallback;
+    ({ res, rawText } = await sendProbe(endpoint, tokenMode));
+  }
+
+  // Automatic parameter negotiation on HTTP 400/422 (matches Go Builder self-healing)
+  if (res.status === 400 || res.status === 422) {
+    const lowerErr = rawText.toLowerCase();
+    if (tokenMode === 'max_tokens' && lowerErr.includes('max_completion_tokens')) {
+      tokenMode = 'max_completion_tokens';
+      ({ res, rawText } = await sendProbe(endpoint, tokenMode));
+    } else if (
+      tokenMode === 'max_completion_tokens' &&
+      (lowerErr.includes('max_completion_tokens') ||
+        lowerErr.includes('unrecognized') ||
+        lowerErr.includes('unknown') ||
+        lowerErr.includes('extra_forbidden'))
+    ) {
+      tokenMode = 'max_tokens';
+      ({ res, rawText } = await sendProbe(endpoint, tokenMode));
+    } else if (
+      lowerErr.includes('max_tokens') ||
+      lowerErr.includes('max_completion_tokens')
+    ) {
+      tokenMode = 'none';
+      ({ res, rawText } = await sendProbe(endpoint, tokenMode));
+    }
+  }
+
+  if (res.ok) {
+    if (isHtmlPayload(rawText)) {
+      return NextResponse.json(
+        {
+          message: `Invalid API Base URL (${endpoint}): endpoint returned HTML instead of JSON.`,
+        },
+        { status: 422 }
+      );
+    }
+    try {
+      const parsed = JSON.parse(rawText);
+      if (parsed?.error) {
+        return NextResponse.json(
+          { message: extractUpstreamError(rawText, res.status) },
+          { status: 422 }
+        );
+      }
+      if (Array.isArray(parsed?.choices)) {
+        return NextResponse.json({
+          message: `Connection successful! ${label} responded using model "${model}".`,
+        });
+      }
+    } catch {
+      return NextResponse.json(
+        { message: `Invalid JSON response from ${endpoint}. Check your API Base URL.` },
+        { status: 422 }
+      );
+    }
+    return NextResponse.json({
+      message: `Connection successful! ${label} is active.`,
+    });
+  }
+
+  const errMsg = extractUpstreamError(rawText, res.status);
+  if (res.status === 429) {
+    return NextResponse.json({
+      message: `Connection verified! ${label} key & model "${model}" are valid (currently rate limited: ${errMsg}).`,
+    });
+  }
+
+  return NextResponse.json(
+    { message: `${label} test failed (${res.status}): ${errMsg}` },
+    { status: 422 }
+  );
+}
+
+async function testAnthropicCompatible(params: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  label: string;
+}): Promise<NextResponse> {
+  const { baseUrl, apiKey, model, label } = params;
+  const endpoint = resolveAnthropicMessagesEndpoint(baseUrl);
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'User-Agent': TEST_UA,
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 10,
+      messages: [{ role: 'user', content: 'Hi' }],
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+
+  const rawText = await res.text().catch(() => '');
+
+  if (res.ok) {
+    if (isHtmlPayload(rawText)) {
+      return NextResponse.json(
+        { message: `Invalid API Base URL (${endpoint}): endpoint returned HTML instead of JSON.` },
+        { status: 422 }
+      );
+    }
+    return NextResponse.json({
+      message: `Connection successful! ${label} responded using model "${model}".`,
+    });
+  }
+
+  const errMsg = extractUpstreamError(rawText, res.status);
+  if (res.status === 401) {
+    return NextResponse.json({ message: `Invalid ${label} API key.` }, { status: 422 });
+  }
+  if (res.status === 429) {
+    return NextResponse.json({
+      message: `Connection verified! ${label} API key is valid (${errMsg || 'rate limited'}).`,
+    });
+  }
+
+  return NextResponse.json(
+    { message: `${label} test failed (${res.status}): ${errMsg}` },
+    { status: 422 }
+  );
+}
 
 export async function POST(
   req: NextRequest,
@@ -40,7 +266,7 @@ export async function POST(
 
   let apiKey: string = (body.api_key || '').trim();
   let type: AiProviderType = body.type || 'openai';
-  let baseUrl: string = (body.base_url || '').trim();
+  let rawBaseUrl: string | undefined = body.base_url !== undefined ? String(body.base_url) : undefined;
   let model: string = (body.default_model || '').trim();
 
   if (providerId !== 'test' && providerId !== 'direct') {
@@ -57,8 +283,8 @@ export async function POST(
     }
 
     type = (provider.type as AiProviderType) || type;
-    if (!baseUrl) {
-      baseUrl = provider.config?.base_url || AI_DEFAULT_BASE_URLS[type] || 'https://api.openai.com/v1';
+    if (rawBaseUrl === undefined) {
+      rawBaseUrl = provider.config?.base_url || '';
     }
     if (!model) {
       model = provider.config?.default_model || provider.available_models?.[0] || AI_DEFAULT_MODELS[type]?.[0] || '';
@@ -69,263 +295,24 @@ export async function POST(
     return NextResponse.json({ message: 'No API key provided to test' }, { status: 422 });
   }
 
-  if (!baseUrl) {
-    baseUrl = AI_DEFAULT_BASE_URLS[type] || 'https://api.openai.com/v1';
+  const urlCheck = validateCustomBaseUrl(rawBaseUrl);
+  if (!urlCheck.valid) {
+    return NextResponse.json({ message: urlCheck.error }, { status: 422 });
   }
 
+  const baseUrl = urlCheck.normalized || AI_DEFAULT_BASE_URLS[type] || 'https://api.openai.com/v1';
+  const testModel = model || AI_DEFAULT_MODELS[type]?.[0] || 'gpt-4o-mini';
+  const label = AI_PROVIDER_TYPES[type] || type;
+
   try {
-    if (type === 'openai') {
-      // 1. Try /models listing
-      const res = await fetch(`${baseUrl}/models`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        signal: AbortSignal.timeout(10000),
-      });
-
-      if (res.ok) {
-        return NextResponse.json({ message: 'Connection successful! OpenAI API key is active.' });
-      }
-
-      // If /models returned 403 (common with restricted project keys), fallback to test completion
-      if (res.status === 403) {
-        const testModel = model || 'gpt-4o-mini';
-        const compRes = await fetch(`${baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: testModel,
-            max_tokens: 1,
-            messages: [{ role: 'user', content: 'Hi' }],
-          }),
-          signal: AbortSignal.timeout(10000),
-        });
-
-        if (compRes.ok) {
-          return NextResponse.json({ message: 'Connection successful! OpenAI API key is active.' });
-        }
-        const compData = await compRes.json().catch(() => ({}));
-        return NextResponse.json(
-          { message: compData.error?.message || 'OpenAI verification failed' },
-          { status: 422 }
-        );
-      }
-
-      const data = await res.json().catch(() => ({}));
-      return NextResponse.json(
-        { message: data.error?.message || `OpenAI connection failed (HTTP ${res.status})` },
-        { status: 422 }
-      );
-    } else if (type === 'anthropic' || type === 'abhibots') {
-      const defaultTestModel = type === 'abhibots' ? 'claude-sonnet-5' : 'claude-3-5-sonnet-20241022';
-      const testModel = model || defaultTestModel;
-      const res = await fetch(`${baseUrl}/v1/messages`, {
-        method: 'POST',
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: testModel,
-          max_tokens: 10,
-          messages: [{ role: 'user', content: 'Hello!' }],
-        }),
-        signal: AbortSignal.timeout(12000),
-      });
-
-      if (res.ok) {
-        const label = type === 'abhibots' ? 'Abhibots (Opus / Claude 5)' : 'Anthropic';
-        return NextResponse.json({ message: `Connection successful! ${label} is active.` });
-      }
-
-      const data = await res.json().catch(() => ({}));
-      const errMsg = data.error?.message || '';
-
-      // If model not found but authenticated, test with claude-3-haiku fallback
-      if (res.status === 400 && errMsg.toLowerCase().includes('not_found')) {
-        const fallbackRes = await fetch(`${baseUrl}/v1/messages`, {
-          method: 'POST',
-          headers: {
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'claude-3-haiku-20240307',
-            max_tokens: 5,
-            messages: [{ role: 'user', content: 'Hi' }],
-          }),
-          signal: AbortSignal.timeout(10000),
-        });
-
-        if (fallbackRes.ok) {
-          return NextResponse.json({
-            message: `Connection successful! API key is valid. (Tip: select a supported model such as claude-3-5-sonnet-20241022)`,
-          });
-        }
-      }
-
-      if (res.status === 401) {
-        const label = type === 'abhibots' ? 'Abhibots' : 'Anthropic';
-        return NextResponse.json({ message: `Invalid ${label} API key.` }, { status: 422 });
-      }
-
-      if (res.status === 429) {
-        const label = type === 'abhibots' ? 'Abhibots (Opus / Claude 5)' : 'Anthropic';
-        return NextResponse.json({
-          message: `Connection verified! ${label} API key is valid. (${errMsg || 'Service busy / rate limit'})`,
-        });
-      }
-
-      const label = type === 'abhibots' ? 'Abhibots' : 'Anthropic';
-      return NextResponse.json({ message: errMsg || `${label} connection failed (HTTP ${res.status})` }, { status: 422 });
-    } else if (type === 'deepseek') {
-      const testModel = model || 'deepseek-chat';
-      const res = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: testModel,
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'Hi' }],
-        }),
-        signal: AbortSignal.timeout(10000),
-      });
-
-      if (res.ok) {
-        return NextResponse.json({ message: 'Connection successful! DeepSeek API key is active.' });
-      }
-
-      const data = await res.json().catch(() => ({}));
-      return NextResponse.json(
-        { message: data.error?.message || `DeepSeek connection failed (HTTP ${res.status})` },
-        { status: 422 }
-      );
-    } else if (type === 'grok') {
-      const testModel = model || 'grok-2-latest';
-      const res = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: testModel,
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'Hi' }],
-        }),
-        signal: AbortSignal.timeout(10000),
-      });
-
-      if (res.ok) {
-        return NextResponse.json({ message: 'Connection successful! xAI Grok API key is active.' });
-      }
-
-      const data = await res.json().catch(() => ({}));
-      return NextResponse.json(
-        { message: data.error?.message || `xAI Grok connection failed (HTTP ${res.status})` },
-        { status: 422 }
-      );
-    } else if (type === 'gemini') {
-      const testModel = model || 'gemini-2.0-flash';
-      const res = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: testModel,
-          max_tokens: 5,
-          messages: [{ role: 'user', content: 'Hi' }],
-        }),
-        signal: AbortSignal.timeout(12000),
-      });
-
-      if (res.ok) {
-        return NextResponse.json({ message: 'Connection successful! Google Gemini API key is active.' });
-      }
-
-      const data = await res.json().catch(() => ({}));
-      return NextResponse.json(
-        { message: data.error?.message || `Google Gemini connection failed (HTTP ${res.status})` },
-        { status: 422 }
-      );
-    } else if (type === 'openrouter') {
-      const testModel = model || 'openrouter/free';
-      const res = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'HTTP-Referer': 'https://crevoai.com',
-          'X-Title': 'Crevo',
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: testModel,
-          max_tokens: 5,
-          messages: [{ role: 'user', content: 'Hi' }],
-        }),
-        signal: AbortSignal.timeout(12000),
-      });
-
-      if (res.ok) {
-        return NextResponse.json({ message: 'Connection successful! OpenRouter API key is active.' });
-      }
-
-      const data = await res.json().catch(() => ({}));
-      return NextResponse.json(
-        { message: data.error?.message || `OpenRouter connection failed (HTTP ${res.status})` },
-        { status: 422 }
-      );
-    } else {
-      // Zhipu or generic
-      const isAnthropicFormat = baseUrl.includes('anthropic');
-      if (isAnthropicFormat) {
-        const res = await fetch(`${baseUrl}/v1/messages`, {
-          method: 'POST',
-          headers: {
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: model || 'glm-4.7',
-            max_tokens: 5,
-            messages: [{ role: 'user', content: 'Hi' }],
-          }),
-          signal: AbortSignal.timeout(10000),
-        });
-
-        if (res.ok) return NextResponse.json({ message: 'Connection successful! ZhipuAI is active.' });
-        const data = await res.json().catch(() => ({}));
-        return NextResponse.json({ message: data.error?.message || 'ZhipuAI connection failed' }, { status: 422 });
-      } else {
-        const res = await fetch(`${baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: model || 'glm-4.7',
-            max_tokens: 1,
-            messages: [{ role: 'user', content: 'Hi' }],
-          }),
-          signal: AbortSignal.timeout(10000),
-        });
-
-        if (res.ok) return NextResponse.json({ message: 'Connection successful!' });
-        const data = await res.json().catch(() => ({}));
-        return NextResponse.json({ message: data.error?.message || 'Connection failed' }, { status: 422 });
-      }
+    if (usesAnthropicProtocol(type, baseUrl)) {
+      return await testAnthropicCompatible({ baseUrl, apiKey, model: testModel, label });
     }
+    return await testOpenAICompatible({ baseUrl, apiKey, model: testModel, label });
   } catch (err: any) {
-    return NextResponse.json({ message: err?.message || 'Connection timeout or network failure' }, { status: 422 });
+    return NextResponse.json(
+      { message: err?.message || 'Connection timeout or network failure' },
+      { status: 422 }
+    );
   }
 }

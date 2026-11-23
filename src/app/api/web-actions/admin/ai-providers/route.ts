@@ -3,10 +3,11 @@ import { connectDB } from '@/lib/db';
 import { getSessionContext, isDemoAdminUser } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { encryptJson } from '@/lib/crypto';
-import { AiProvider, AI_DEFAULT_MODELS, AI_DEFAULT_BASE_URLS, AiProviderType } from '@/models/BuilderAi';
+import { AiProvider, AI_DEFAULT_MODELS, AiProviderType } from '@/models/BuilderAi';
 import { clearAdminStatsCache } from '@/services/admin-stats';
 import { setSetting, clearSettingsCache } from '@/lib/settings';
 import { cacheForgetPrefix } from '@/lib/cache';
+import { validateCustomBaseUrl, sanitizeModelList } from '@/lib/ai-provider-url';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,6 +48,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const urlCheck = validateCustomBaseUrl(body.base_url);
+  if (!urlCheck.valid) {
+    return NextResponse.json(
+      { errors: { base_url: urlCheck.error } },
+      { status: 422 }
+    );
+  }
+
   const encryptedCreds = encryptJson({ api_key: apiKey });
 
   const config: Record<string, any> = {};
@@ -54,19 +63,15 @@ export async function POST(req: NextRequest) {
   if (cleanModel) config.default_model = cleanModel;
   if (body.max_tokens) config.max_tokens = Number(body.max_tokens);
   if (body.summarizer_max_tokens) config.summarizer_max_tokens = Number(body.summarizer_max_tokens);
-  if (body.base_url && body.base_url.trim()) {
-    config.base_url = body.base_url.trim();
-  } else if (AI_DEFAULT_BASE_URLS[type]) {
-    config.base_url = AI_DEFAULT_BASE_URLS[type];
+  if (urlCheck.normalized) {
+    config.base_url = urlCheck.normalized;
   }
 
-  const availableModels = Array.isArray(body.available_models) && body.available_models.length > 0
-    ? [...body.available_models]
-    : [...(AI_DEFAULT_MODELS[type] || [])];
-
-  if (cleanModel && !availableModels.includes(cleanModel)) {
-    availableModels.unshift(cleanModel);
-  }
+  const baseModels =
+    Array.isArray(body.available_models) && body.available_models.length > 0
+      ? body.available_models
+      : AI_DEFAULT_MODELS[type] || [];
+  const availableModels = sanitizeModelList(baseModels, cleanModel);
 
   const existingCount = await AiProvider.countDocuments({});
   const shouldBeDefault = Boolean(body.is_default) || existingCount === 0;

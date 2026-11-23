@@ -115,9 +115,30 @@ export default function IntegrationSettingsTab({ settings, aiProviders }: Props)
         return aiProviders.find(p => p.id.toString() === data.internal_ai_provider_id) || null;
     }, [data.internal_ai_provider_id, aiProviders]);
 
+    const getModelsForProvider = (provider: AiProvider | null) => {
+        if (!provider) return [];
+        const recommended = RECOMMENDED_MODELS[provider.type] || [];
+        const map = new Map<string, { value: string; label: string }>();
+        if (provider.default_model?.trim()) {
+            const m = provider.default_model.trim();
+            map.set(m, { value: m, label: `${m} (Default)` });
+        }
+        for (const m of provider.available_models || []) {
+            const clean = m.trim();
+            if (clean && !map.has(clean)) {
+                map.set(clean, { value: clean, label: clean });
+            }
+        }
+        for (const rec of recommended) {
+            if (!map.has(rec.value)) {
+                map.set(rec.value, rec);
+            }
+        }
+        return Array.from(map.values());
+    };
+
     const availableModels = useMemo(() => {
-        if (!selectedProvider) return [];
-        return RECOMMENDED_MODELS[selectedProvider.type] || [];
+        return getModelsForProvider(selectedProvider);
     }, [selectedProvider]);
 
     const submit: FormEventHandler = (e) => {
@@ -131,8 +152,8 @@ export default function IntegrationSettingsTab({ settings, aiProviders }: Props)
 
     const handleProviderChange = (value: string) => {
         const providerId = value === 'none' ? '' : value;
-        const provider = aiProviders.find(p => p.id.toString() === providerId);
-        const models = provider ? (RECOMMENDED_MODELS[provider.type] || []) : [];
+        const provider = aiProviders.find(p => p.id.toString() === providerId) || null;
+        const models = getModelsForProvider(provider);
 
         setData(prev => ({
             ...prev,
