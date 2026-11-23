@@ -167,7 +167,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
         // Check if this is a terminal status that should clear thinking state
         const isTerminalStatus = ['cancelled', 'completed', 'failed'].includes(data.status);
-        const resolvedPreviewUrl = (data as any).preview_url;
+        const resolvedPreviewUrl = (data as any).preview_url || null;
 
         if (resolvedPreviewUrl) {
             buildTriggeredRef.current = true;
@@ -176,7 +176,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         setProgress(prev => ({
             ...prev,
             status: data.status as BuildProgress['status'],
-            previewUrl: resolvedPreviewUrl || prev.previewUrl,
+            ...(resolvedPreviewUrl ? { previewUrl: resolvedPreviewUrl } : {}),
             // Clear thinking state for terminal statuses
             ...(isTerminalStatus && {
                 thinkingContent: null,
@@ -184,25 +184,10 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             }),
         }));
 
-        if (data.status === 'completed') {
-            const finalUrl = resolvedPreviewUrl || `/preview/${projectId}`;
-            setProgress(prev => ({
-                ...prev,
-                status: 'completed',
-                previewUrl: finalUrl,
-                thinkingContent: null,
-                thinkingStartTime: null,
-            }));
-            // Instantly notify completion so preview reloads immediately (0ms delay)
-            onBuildComplete?.(finalUrl);
-
-            // Sync to R2 in the background without blocking the live preview or popping false race toasts
-            if (autoBuild && !resolvedPreviewUrl && !buildTriggeredRef.current) {
-                buildTriggeredRef.current = true;
-                void triggerBuildRef.current({ silent: true });
-            }
+        if (data.status === 'completed' && resolvedPreviewUrl) {
+            onBuildComplete?.(resolvedPreviewUrl);
         }
-    }, [history, projectId, onBuildComplete, autoBuild, onBuildStart]);
+    }, [history, onBuildComplete]);
 
     const handleThinking = useCallback((data: ThinkingEvent) => {
         // Dedup: skip exact duplicate thinking content
@@ -320,13 +305,17 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         completedSessionRef.current = true;
 
         const hasFiles = data.files_changed ?? true;
-        const finalUrl = `/preview/${projectId}`;
+        const resolvedPreviewUrl = (data as any).preview_url || null;
 
-        // Update progress state with resolved preview URL immediately (0ms delay)
+        if (resolvedPreviewUrl) {
+            buildTriggeredRef.current = true;
+        }
+
+        // Update progress state; previewUrl is only set once a verified preview artifact exists
         setProgress(prev => ({
             ...prev,
             status: 'completed',
-            previewUrl: prev.previewUrl || finalUrl,
+            ...(resolvedPreviewUrl ? { previewUrl: resolvedPreviewUrl } : {}),
             iterations: data.iterations,
             tokensUsed: data.tokens_used,
             hasFileChanges: hasFiles,
@@ -347,16 +336,21 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             });
         }
 
-        // Notify build complete immediately so preview iframe renders right away
-        onBuildComplete?.(finalUrl);
-        onComplete?.(data);
-
-        // Auto-trigger background build to persist to R2 asynchronously without blocking the user
-        if (autoBuild && hasFiles && !buildTriggeredRef.current) {
-            buildTriggeredRef.current = true;
-            void triggerBuildRef.current({ silent: true });
+        if (resolvedPreviewUrl) {
+            onBuildComplete?.(resolvedPreviewUrl);
+        } else if (!hasFiles && !buildTriggeredRef.current) {
+            axios
+                .get(`/preview/${projectId}/exists`)
+                .then((res) => {
+                    if (res.data?.exists && res.data?.url) {
+                        setProgress(prev => ({ ...prev, previewUrl: prev.previewUrl || res.data.url }));
+                        onBuildComplete?.(res.data.url);
+                    }
+                })
+                .catch(() => {});
         }
-    }, [history, projectId, onBuildComplete, onComplete, autoBuild]);
+        onComplete?.(data);
+    }, [history, projectId, onBuildComplete, onComplete]);
 
     const handleSummarizationComplete = useCallback((data: SummarizationCompleteEvent) => {
         // Show completion activity message with results
@@ -400,9 +394,6 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                         onBuildComplete?.(previewUrl);
                     } else if (autoBuild && !buildTriggeredRef.current) {
                         buildTriggeredRef.current = true;
-                        isBuildingPreviewRef.current = true;
-                        setIsBuildingPreview(true);
-                        onBuildStart?.();
                         void triggerBuildRef.current();
                     }
                 }
@@ -509,9 +500,6 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                         onBuildComplete?.(previewUrl);
                     } else if (autoBuild && !buildTriggeredRef.current) {
                         buildTriggeredRef.current = true;
-                        isBuildingPreviewRef.current = true;
-                        setIsBuildingPreview(true);
-                        onBuildStart?.();
                         void triggerBuildRef.current();
                     }
                 }
@@ -519,7 +507,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         } catch {
             // Silent - will retry on next interval
         }
-    }, [projectId, autoBuild, onBuildStart, onBuildComplete]);
+    }, [projectId, autoBuild, onBuildComplete]);
 
     // Safety fallback: poll status if session appears stuck in 'running'
     // This handles the case where the Pusher 'complete' event is lost
@@ -654,9 +642,10 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
     // Trigger a preview build (works with or without active session)
     const triggerBuild = useCallback(async (opts?: { silent?: boolean }) => {
+        if (isBuildingPreviewRef.current) return;
         const silent = Boolean(opts?.silent);
+        isBuildingPreviewRef.current = true;
         if (!silent) {
-            isBuildingPreviewRef.current = true;
             setIsBuildingPreview(true);
             onBuildStart?.();
         }
@@ -679,8 +668,8 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                 console.warn('[Background Preview Build]', rawErrorMessage);
             }
         } finally {
+            isBuildingPreviewRef.current = false;
             if (!silent) {
-                isBuildingPreviewRef.current = false;
                 setIsBuildingPreview(false);
             }
         }
@@ -690,11 +679,11 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         triggerBuildRef.current = triggerBuild;
     }, [triggerBuild]);
 
-    // Auto-trigger build when agent completes with file changes (only once per session)
+    // Auto-trigger build when agent completes with file changes (only once per session, matching PHP)
     useEffect(() => {
         if (autoBuild && progress.status === 'completed' && progress.hasFileChanges && !buildTriggeredRef.current) {
             buildTriggeredRef.current = true;
-            void triggerBuild({ silent: true });
+            void triggerBuild();
         }
     }, [autoBuild, progress.status, progress.hasFileChanges, triggerBuild]);
 

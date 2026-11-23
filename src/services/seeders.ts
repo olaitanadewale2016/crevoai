@@ -165,13 +165,15 @@ export async function seedTemplates() {
   await Template.updateOne(
     { slug: 'default' },
     {
+      $set: {
+        zip_path: r2Key,
+        ...(metadata ? { metadata } : {}),
+      },
       $setOnInsert: {
         slug: 'default',
         name: 'Default',
         description: 'Default React + Vite + Tailwind CSS + shadcn/ui starter template',
         category: 'system',
-        zip_path: r2Key,
-        metadata,
         version: '1.0.0',
         is_system: true,
         plan_ids: [],

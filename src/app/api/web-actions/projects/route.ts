@@ -7,8 +7,7 @@ import {
 } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { generateUuidV7, generateHexToken, sha256Hex } from '@/lib/crypto';
-import { inferThemePresetFromPrompt } from '@/lib/theme-presets';
-import { Project, Template, ProjectFile } from '@/models/Project';
+import { Project, ProjectFile } from '@/models/Project';
 import { r2PutObject } from '@/lib/r2';
 import { canPerformBuild } from '@/services/credits';
 
@@ -74,20 +73,12 @@ export async function POST(req: NextRequest) {
   const name = prompt.length > 50 ? `${prompt.slice(0, 50)}...` : prompt;
   const projectId = generateUuidV7();
 
-  let templateId = body.template_id || null;
-  if (!templateId) {
-    const defaultTemplate = await Template.findOne({
-      $or: [{ is_system: true }, { slug: 'default' }],
-    }).lean();
-    if (defaultTemplate) {
-      templateId = String(defaultTemplate._id);
-    }
-  }
+  const templateId = body.template_id || null;
 
   const resolvedThemePreset =
     body.theme_preset && body.theme_preset !== 'automatic'
       ? body.theme_preset
-      : inferThemePresetFromPrompt(prompt);
+      : null;
 
   const initialFileIds: string[] = [];
   let totalUploadedBytes = 0;

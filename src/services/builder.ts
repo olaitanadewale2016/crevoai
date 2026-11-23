@@ -306,7 +306,7 @@ export async function startBuilderSession(params: {
     (rawAppUrl && !rawAppUrl.includes('crevoai.vercel.app') ? rawAppUrl : '') ||
     'https://crevoai-web.vercel.app'
   ).replace(/\/+$/, '');
-  const aiConfig = await getAiConfigForUser(user);
+  const aiConfig = await getAiConfigForUser(user, params.effort);
   if (!aiConfig) throw new Error('No active AI provider configured.');
 
   const pusher = await getPusherConfigForBuilder();
@@ -332,9 +332,7 @@ export async function startBuilderSession(params: {
     (project.conversation_history || []).length === 0 &&
     !(project.compacted_history && project.compacted_history.length > 0);
   let enrichedGoal = goal;
-  if (isFirstPrompt) {
-    enrichedGoal += `\n\n[First-Build Execution, Design & Media Requirements]\n1. WRITE CODE IMMEDIATELY ON TURN 1: Do NOT waste initial turns reading template.json/Home.tsx or calling updateSiteMemory alone. On your VERY FIRST turn, call createFile in parallel to write \`src/custom.css\` (domain-matched color palette & typography) and \`src/pages/Home.tsx\` (complete agency-grade website for the prompt).\n2. COMPLETE NAVBAR & FOOTER: You MUST visibly render a complete responsive sticky Navbar (<header>/<nav> with brand logo, desktop navigation links, primary CTA button, and working mobile menu toggle) AND a rich multi-column Footer (<footer> with brand summary, quick links, contact/hours or newsletter, and copyright) on the home page '/' immediately. Because '/' defaults to layout: 'bare' in src/routes.tsx, either build and render the Navbar & Footer directly inside src/pages/Home.tsx OR set '/' to layout: 'default' and customize src/components/Navigation.tsx and src/components/Layout.tsx.\n3. UNIQUE PHOTOGRAPHY: NEVER reuse the same image URL across multiple cards, hero, gallery items, or testimonials/avatars. Every single <img> and background image slot MUST use a unique image URL or distinct /api/images/stock?q=<specific-subject>&type=gallery&index=<0,1,2...> query with a different subject and incrementing index.\n4. VERIFY ONCE AT THE END: After writing all website files, call verifyBuild once to compile and verify the live preview.`;
-  } else {
+  if (!isFirstPrompt) {
     enrichedGoal += `\n\n[Follow-Up Edit Mode — Preserve Existing Website & Design System]\nAn existing website is ALREADY built in this workspace.\n1. Do NOT call fetchTemplates or useTemplate.\n2. Do NOT redesign, wipe, or rebuild the entire app unless the user explicitly asks to start over or create a completely new site from scratch.\n3. Call readSiteMemory/readDesignIntelligence and readFile on the specific existing file(s) relevant to the request (e.g. src/pages/Home.tsx, src/custom.css, src/routes.tsx, or the mentioned component/page), then make surgical editFile changes that preserve the existing brand, layout, palette, and typography.`;
   }
   if (supabaseEnabled) {
@@ -386,7 +384,7 @@ export async function startBuilderSession(params: {
       url: templateUrl || undefined,
     };
   }
-  if (themeObj) {
+  if (themeObj && themeObj.id !== 'default') {
     payload.theme_preset = {
       id: themeObj.id,
       name: themeObj.name,

@@ -115,8 +115,8 @@ export function InspectPreview({
     const [iframeReady, setIframeReady] = useState(false);
     const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop');
 
-    // Do not mount the preview iframe while the initial build has not produced a previewUrl yet
-    const effectivePreviewUrl = previewUrl || (!isBuilding && projectId ? `/preview/${projectId}` : null);
+    // Match PHP InspectPreview: only mount the preview iframe once a built previewUrl actually exists
+    const effectivePreviewUrl = previewUrl || null;
     const iframeSrc = effectivePreviewUrl
         ? `${effectivePreviewUrl}${effectivePreviewUrl.includes('?') ? '&' : '?'}t=${refreshTrigger}`
         : undefined;
@@ -361,7 +361,7 @@ export function InspectPreview({
         onRemoveEdit?.(id);
     }, [pendingEdits, revertEdits, onRemoveEdit]);
 
-    if (previewUrl) {
+    if (effectivePreviewUrl) {
         return (
             <div ref={containerRef} className="h-full w-full flex flex-col bg-background relative overflow-hidden">
                 <GradientBackground />

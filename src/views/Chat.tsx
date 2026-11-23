@@ -1244,7 +1244,7 @@ export default function Chat({
                                 onModeChange={setPreviewSubMode}
                                 previewUrl={progress.previewUrl}
                                 refreshTrigger={previewRefreshTrigger}
-                                isBuilding={isLoading && !progress.previewUrl}
+                                isBuilding={isBuildingPreview || (isLoading && !progress.previewUrl)}
                                 captureThumbnailTrigger={captureThumbnailTrigger}
                                 onUndo={handleUndo}
                                 onRedo={handleRedo}

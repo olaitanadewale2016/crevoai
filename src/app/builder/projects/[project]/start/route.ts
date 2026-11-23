@@ -198,16 +198,20 @@ export async function POST(
       ? body.template_id.trim()
       : null;
 
-  // On first build (empty history), auto-use the template chosen during project creation or default
+  // On first build (empty history), use the project's chosen template; if none was chosen and multiple
+  // templates exist, leave null so the AI can choose via fetchTemplates/useTemplate (matching PHP).
   if (!templateId && (!project.conversation_history || project.conversation_history.length === 0)) {
     if (project.template_id) {
       templateId = String(project.template_id);
     } else {
-      const defaultTemplate = await Template.findOne({
-        $or: [{ is_system: true }, { slug: 'default' }],
-      }).lean();
-      if (defaultTemplate) {
-        templateId = String(defaultTemplate._id);
+      const totalTemplates = await Template.countDocuments({});
+      if (totalTemplates <= 1) {
+        const defaultTemplate = await Template.findOne({
+          $or: [{ is_system: true }, { slug: 'default' }],
+        }).lean();
+        if (defaultTemplate) {
+          templateId = String(defaultTemplate._id);
+        }
       }
     }
   }
