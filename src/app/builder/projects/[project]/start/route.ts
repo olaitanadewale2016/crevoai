@@ -197,20 +197,85 @@ export async function POST(
     typeof body.template_id === 'string' && body.template_id.trim()
       ? body.template_id.trim()
       : null;
+  let templateName: string | null = null;
+  let autoMatchedTemplateId: string | null = null;
 
-  // On first build (empty history), use the project's chosen template; if none was chosen and multiple
-  // templates exist, leave null so the AI can choose via fetchTemplates/useTemplate (matching PHP).
+  const isTemplateAvailableForPlan = (tpl: {
+    is_system?: boolean;
+    plan_ids?: unknown[] | null;
+  }) =>
+    Boolean(tpl.is_system) ||
+    !tpl.plan_ids ||
+    tpl.plan_ids.length === 0 ||
+    Boolean(plan && tpl.plan_ids.some((pid) => String(pid) === String(plan._id)));
+
+  // On first build (empty history), use the template chosen at creation or auto-match the best
+  // specialized template available to the user's plan (falling back to default starter template).
   if (!templateId && (!project.conversation_history || project.conversation_history.length === 0)) {
     if (project.template_id) {
       templateId = String(project.template_id);
     } else {
-      const totalTemplates = await Template.countDocuments({});
-      if (totalTemplates <= 1) {
-        const defaultTemplate = await Template.findOne({
-          $or: [{ is_system: true }, { slug: 'default' }],
-        }).lean();
+      const allTemplates = await Template.find({}).lean();
+      const availableTemplates = allTemplates.filter(isTemplateAvailableForPlan);
+      const specialized = availableTemplates.filter(
+        (t) => !t.is_system && t.slug !== 'default'
+      );
+
+      if (specialized.length > 0) {
+        const promptLower = rawPrompt.toLowerCase();
+        const promptWords = new Set(promptLower.split(/[^a-z0-9]+/).filter((w) => w.length >= 3));
+
+        let bestMatch: (typeof specialized)[number] | null = null;
+        let bestScore = 0;
+
+        for (const tpl of specialized) {
+          let score = 0;
+          const keywords = Array.isArray(tpl.keywords) ? tpl.keywords : [];
+          for (const kw of keywords) {
+            const k = String(kw || '').toLowerCase().trim();
+            if (!k) continue;
+            if (k.includes(' ')) {
+              if (promptLower.includes(k)) score += 4;
+            } else if (promptWords.has(k)) {
+              score += 3;
+            }
+          }
+          const cat = String(tpl.category || '').toLowerCase().trim();
+          if (cat && (promptWords.has(cat) || promptLower.includes(cat))) {
+            score += 3;
+          }
+          const slug = String(tpl.slug || '').toLowerCase().trim();
+          if (slug && promptWords.has(slug)) {
+            score += 3;
+          }
+          const nameWords = String(tpl.name || '')
+            .toLowerCase()
+            .split(/[^a-z0-9]+/)
+            .filter((w) => w.length >= 4);
+          for (const nw of nameWords) {
+            if (promptWords.has(nw)) score += 2;
+          }
+
+          if (score > bestScore) {
+            bestScore = score;
+            bestMatch = tpl;
+          }
+        }
+
+        if (bestMatch && bestScore >= 3) {
+          templateId = String(bestMatch._id);
+          templateName = bestMatch.name || null;
+          autoMatchedTemplateId = templateId;
+        }
+      }
+
+      if (!templateId) {
+        const defaultTemplate = availableTemplates.find(
+          (t) => t.is_system || t.slug === 'default'
+        );
         if (defaultTemplate) {
           templateId = String(defaultTemplate._id);
+          templateName = defaultTemplate.name || 'Default';
         }
       }
     }
@@ -221,19 +286,13 @@ export async function POST(
       ? await Template.findById(templateId).lean()
       : await Template.findOne({ slug: templateId }).lean();
     if (template) {
-      const available =
-        template.is_system ||
-        !template.plan_ids ||
-        template.plan_ids.length === 0 ||
-        Boolean(
-          plan && (template.plan_ids || []).some((pid) => String(pid) === String(plan._id))
-        );
-      if (!available) {
+      if (!isTemplateAvailableForPlan(template)) {
         return NextResponse.json(
           { error: 'The selected template is not available for your plan.' },
           { status: 403 }
         );
       }
+      templateName = template.name || templateName;
     }
   }
 
@@ -326,6 +385,7 @@ export async function POST(
       builder,
       goal: promptToSend,
       templateId,
+      templateName,
       templateUrl,
       effort,
       appUrl,
@@ -355,6 +415,7 @@ export async function POST(
       builder_id: builder._id,
       build_session_id: sessionData.session_id,
       build_completed_at: null,
+      ...(autoMatchedTemplateId ? { template_id: autoMatchedTemplateId } : {}),
     };
     if (!isReused) {
       sessionUpdate.last_billed_session_tokens = 0;

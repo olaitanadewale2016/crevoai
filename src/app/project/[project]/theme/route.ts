@@ -5,7 +5,7 @@ import { parseRequestBody } from '@/lib/http';
 import { Project } from '@/models/Project';
 import { Builder } from '@/models/BuilderAi';
 import { THEME_PRESETS } from '@/lib/theme-presets';
-import { applyThemePresetToWorkspace } from '@/services/builder';
+import { applyThemePresetToWorkspace, triggerBuildAndDeployToR2 } from '@/services/builder';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,7 +49,19 @@ export async function PUT(
     const applied = await applyThemePresetToWorkspace(project, builder, theme);
     if (!applied.ok) {
       warning = applied.warning;
+    } else {
+      // Rebuild dist/ and sync to R2 so the updated theme renders cleanly (matching PHP updateTheme)
+      try {
+        const buildRes = await triggerBuildAndDeployToR2(project, builder);
+        if (!buildRes.success) {
+          warning = `Theme applied to source files but preview rebuild failed: ${buildRes.error || 'Build error'}`;
+        }
+      } catch (err: any) {
+        warning = `Theme applied to source files but preview rebuild failed: ${err?.message || 'Build error'}`;
+      }
     }
+  } else {
+    warning = 'Theme saved but could not apply to workspace. No builder available.';
   }
 
   return NextResponse.json({

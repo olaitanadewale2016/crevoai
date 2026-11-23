@@ -299,11 +299,12 @@ export async function startBuilderSession(params: {
   builder: IBuilder;
   goal: string;
   templateId?: string | null;
+  templateName?: string | null;
   templateUrl?: string | null;
   effort?: ReasoningEffort;
   appUrl?: string;
 }) {
-  const { project, user, builder, goal, templateId, templateUrl } = params;
+  const { project, user, builder, goal, templateId, templateName, templateUrl } = params;
   const rawAppUrl = params.appUrl || process.env.APP_URL || '';
   const appUrl = (
     (rawAppUrl && !rawAppUrl.includes('crevoai.vercel.app') ? rawAppUrl : '') ||
@@ -384,6 +385,7 @@ export async function startBuilderSession(params: {
   if (templateId || templateUrl) {
     payload.template = {
       template_id: templateId || undefined,
+      template_name: templateName || undefined,
       url: templateUrl || undefined,
     };
   }
@@ -889,14 +891,10 @@ export async function buildDynamicHtml(
   const safeConfigJson = JSON.stringify(appConfig).replace(/</g, '\\u003c');
   metaParts.push(`<script>window.__APP_CONFIG__ = ${safeConfigJson};</script>`);
 
-  // Inject Theme Preset CSS Variables on-the-fly (instant 0ms theme changes without rebuilding)
-  const themePresetId = project.theme_preset || 'default';
-  const themePreset = THEME_PRESETS.find((p) => p.id === themePresetId);
-  if (themePreset) {
-    const lightCss = Object.entries(themePreset.light).map(([k, v]) => `    --${k}: ${v};`).join('\n');
-    const darkCss = Object.entries(themePreset.dark).map(([k, v]) => `    --${k}: ${v};`).join('\n');
-    metaParts.push(`<style id="theme-preset-vars">\n  :root {\n${lightCss}\n  }\n  .dark {\n${darkCss}\n  }\n</style>`);
-  }
+  // Note: Do NOT inject <style id="theme-preset-vars"> after Vite's compiled stylesheet —
+  // doing so overrides every custom color variable the AI defines in src/custom.css!
+  // Theme presets are applied directly to workspace src/index.css by Go Builder (matching PHP),
+  // and Theme Designer updates rebuild dist/ via PUT /project/[project]/theme.
 
   if (/<\/head>/i.test(html)) {
     html = html.replace(/<\/head>/i, () => `    ${metaParts.join('\n    ')}\n</head>`);
