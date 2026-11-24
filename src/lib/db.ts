@@ -1,9 +1,17 @@
 import dns from 'dns';
+import dnsPromises from 'dns/promises';
 import mongoose from 'mongoose';
 
-// Ensure SRV DNS records (mongodb+srv://) resolve properly across Windows and various networks
+// Ensure SRV DNS records (mongodb+srv://) resolve properly when local DNS defaults to loopback (e.g. Windows)
 try {
-  dns.setServers(['8.8.8.8', '1.1.1.1']);
+  const isLoopback = (servers: string[]) =>
+    servers.length === 0 || servers.every((s) => s === '127.0.0.1' || s === '::1');
+  if (isLoopback(dns.getServers())) {
+    dns.setServers(['8.8.8.8', '1.1.1.1']);
+  }
+  if (isLoopback(dnsPromises.getServers())) {
+    dnsPromises.setServers(['8.8.8.8', '1.1.1.1']);
+  }
 } catch {
   // Ignore in non-configurable environments
 }

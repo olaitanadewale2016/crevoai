@@ -253,8 +253,8 @@ function ContentEditor({ section, sectionType, locale, onUpdate, t }: ContentEdi
     const getFieldLabel = (field: string): string => {
         // Try to get translation for the field key directly
         const translated = t(field);
-        // If translation exists and is different from the key, use it
-        if (translated !== field) {
+        // If translation exists and is a non-empty string different from the key, use it
+        if (typeof translated === 'string' && translated !== field) {
             return translated;
         }
         // Fallback: capitalize and replace underscores
@@ -790,7 +790,7 @@ export default function Index({
     const { t } = useTranslation();
     const [sections, setSections] = useState<Section[]>(initialSections);
     const [selectedSection, setSelectedSection] = useState<Section | null>(
-        initialSections[0] || null
+        () => initialSections.find((s) => Boolean(sectionTypes[s.type])) || null
     );
     const [selectedLocale, setSelectedLocale] = useState(defaultLanguage);
     const [activeTab, setActiveTab] = useState<'settings' | 'preview'>('settings');
@@ -1276,17 +1276,17 @@ export default function Index({
                         <GradientBackground />
 
                         {/* Settings Tab */}
-                        {activeTab === 'settings' && selectedSection && (
+                        {activeTab === 'settings' && selectedSection && sectionTypes[selectedSection.type] && (
                             <ScrollArea className="h-full relative z-10 bg-background">
                                 <div className="p-6 max-w-2xl">
                                     {/* Section Header with Enabled Toggle */}
                                     <div className="flex items-start justify-between gap-4 mb-6 p-4 border rounded-lg bg-muted/30">
                                         <div className="flex-1">
                                             <h3 className="text-lg font-semibold">
-                                                {t(sectionTypes[selectedSection.type].name)}
+                                                {t(sectionTypes[selectedSection.type]?.name || selectedSection.type)}
                                             </h3>
                                             <p className="text-sm text-muted-foreground">
-                                                {t(sectionTypes[selectedSection.type].description)}
+                                                {t(sectionTypes[selectedSection.type]?.description || '')}
                                             </p>
                                         </div>
                                         <div className="flex items-center gap-2 shrink-0">
@@ -1498,7 +1498,7 @@ export default function Index({
                             </ScrollArea>
                         )}
 
-                        {activeTab === 'settings' && !selectedSection && (
+                        {activeTab === 'settings' && (!selectedSection || !sectionTypes[selectedSection.type]) && (
                             <div className="h-full flex items-center justify-center text-muted-foreground relative z-10 bg-background">
                                 {t('Select a section to edit')}
                             </div>

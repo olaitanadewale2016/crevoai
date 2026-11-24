@@ -36,11 +36,18 @@ export function loadTranslationsForLocale(locale: string): Record<string, string
   if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
     const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')).sort();
     for (const file of files) {
+      // internal_ai.json stores nested objects accessed via loadNamespaceForLocale()
+      // Merging it flatly overwrites flat string labels like "suggestions" & "typing_prompts"
+      if (file === 'internal_ai.json') continue;
       try {
         const raw = fs.readFileSync(path.join(dir, file), 'utf8');
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
-          merged = { ...merged, ...parsed };
+          for (const [k, v] of Object.entries(parsed)) {
+            if (typeof v === 'string') {
+              merged[k] = v;
+            }
+          }
         }
       } catch {
         // skip malformed json
@@ -50,7 +57,14 @@ export function loadTranslationsForLocale(locale: string): Record<string, string
     const single = path.join(getLangBaseDir(), `${clean}.json`);
     if (fs.existsSync(single)) {
       try {
-        merged = JSON.parse(fs.readFileSync(single, 'utf8'));
+        const parsed = JSON.parse(fs.readFileSync(single, 'utf8'));
+        if (parsed && typeof parsed === 'object') {
+          for (const [k, v] of Object.entries(parsed)) {
+            if (typeof v === 'string') {
+              merged[k] = v;
+            }
+          }
+        }
       } catch {
         // ignore
       }

@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import {
     createContext,
@@ -91,7 +91,8 @@ export function LanguageProvider({ children }: LanguageProviderProps) {
             key: string,
             replacements?: Record<string, string | number>
         ): string => {
-            let translation = translations?.[key] ?? key;
+            const raw = translations?.[key];
+            let translation = typeof raw === 'string' ? raw : key;
 
             if (replacements) {
                 Object.entries(replacements).forEach(([k, v]) => {

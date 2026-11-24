@@ -1,6 +1,6 @@
-﻿'use client';
+'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -32,6 +32,11 @@ export function ProductShowcase({ content, items, settings }: ProductShowcasePro
     const { resolvedTheme } = useTheme();
     const { t } = useTranslation();
     const [activeView, setActiveView] = useState<string>('preview');
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     // Get content with defaults - DB content takes priority
     const title = (content?.title as string) || t('See it in action');
@@ -63,9 +68,9 @@ export function ProductShowcase({ content, items, settings }: ProductShowcasePro
         setActiveView(initialTab);
     }
 
-    // Get screenshot URL for a tab
+    // Get screenshot URL for a tab (use 'light' until mounted to avoid SSR/client hydration mismatch)
     const getScreenshotUrl = (tab: ShowcaseTab) => {
-        const isDark = resolvedTheme === 'dark';
+        const isDark = mounted && resolvedTheme === 'dark';
         // Use custom screenshots if provided, otherwise fall back to default paths
         if (isDark && tab.screenshot_dark) {
             return tab.screenshot_dark;
