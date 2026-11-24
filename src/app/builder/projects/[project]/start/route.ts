@@ -7,10 +7,14 @@ import {
   getUserCurrentPlan,
 } from '@/lib/auth';
 import { withLock } from '@/lib/cache';
-import { parseRequestBody, validationError, formatHumanFileSize } from '@/lib/http';
-import { Project, ProjectFile, Template, IConversationEntry } from '@/models/Project';
+import { parseRequestBody, validationError } from '@/lib/http';
+import { Project, Template, IConversationEntry } from '@/models/Project';
 import { Builder, IBuilder } from '@/models/BuilderAi';
 import { resolvePlanBuilder } from '@/services/credits';
+import {
+  buildAttachedFilesPromptSection,
+  resolveAttachedProjectFiles,
+} from '@/services/attached-images';
 import {
   resolveBlockingBuild,
   detectRepeatedPrompt,
@@ -64,7 +68,8 @@ export async function POST(
 
   const { body } = await parseRequestBody(req);
   const rawPrompt = typeof body.prompt === 'string' ? body.prompt : '';
-  if (!rawPrompt.trim()) {
+  const hasRawFileIds = Array.isArray(body.file_ids) && body.file_ids.length > 0;
+  if (!rawPrompt.trim() && !hasRawFileIds) {
     await clearInitialPromptOnEarlyExit();
     return validationError({ prompt: 'The prompt field is required.' });
   }
@@ -174,51 +179,13 @@ export async function POST(
       return { builder: resolved };
     })(),
 
-    (async () => {
-      const attachedFiles: Array<{
-        filename: string;
-        api_url: string;
-        mime_type: string;
-        size: number;
-        human_size: string;
-      }> = [];
-      let fileRefs: NonNullable<IConversationEntry['files']> | undefined;
-
-      if (fileIds.length > 0) {
-        const maxImagesForPlan =
-          ctx.user.role === 'admin' || plan?.monthly_build_credits === -1
-            ? 10
-            : plan?.max_images_per_prompt || ((plan?.price ?? 0) > 0 ? 6 : 2);
-
-        const validFileIds = fileIds.filter(isValidObjectId).slice(0, maxImagesForPlan);
-        if (validFileIds.length > 0) {
-          const files = await ProjectFile.find({
-            _id: { $in: validFileIds },
-            project_id: project._id,
-          }).lean();
-
-          const imageFiles = files.filter((f) => (f.mime_type || '').startsWith('image/'));
-
-          for (const f of imageFiles) {
-            attachedFiles.push({
-              filename: f.original_filename,
-              api_url: `${appUrl}/api/files/${project._id}/${f.filename}`,
-              mime_type: f.mime_type,
-              size: f.size,
-              human_size: formatHumanFileSize(f.size),
-            });
-          }
-          if (imageFiles.length > 0) {
-            fileRefs = imageFiles.map((f) => ({
-              id: String(f._id),
-              filename: f.original_filename,
-              mime_type: f.mime_type,
-            }));
-          }
-        }
-      }
-      return { attachedFiles, fileRefs };
-    })(),
+    resolveAttachedProjectFiles({
+      projectId: String(project._id),
+      user: ctx.user,
+      plan,
+      fileIds,
+      appUrl,
+    }),
 
     (async () => {
       let templateId = requestedTemplateId;
@@ -393,19 +360,26 @@ export async function POST(
     );
   }
 
-  const { attachedFiles, fileRefs } = filesResult;
+  const { attachedFiles, fileRefs, attachedImages } = filesResult;
+  if (!rawPrompt.trim() && attachedFiles.length === 0) {
+    await clearInitialPromptOnEarlyExit();
+    return validationError({ prompt: 'The prompt field is required.' });
+  }
   const { templateId, templateName, autoMatchedTemplateId } = templateResult;
 
   const priorHistory = project.conversation_history || [];
   const priorCompacted = project.compacted_history || null;
+  const isFirstPrompt =
+    priorHistory.length === 0 && !(priorCompacted && priorCompacted.length > 0);
+  const trimmedPrompt = rawPrompt.trim();
 
   const userEntry: IConversationEntry = {
     role: 'user',
-    content: rawPrompt,
+    content: trimmedPrompt ? rawPrompt : 'Attached file(s)',
     timestamp: new Date().toISOString(),
-    ...(fileRefs && fileRefs.length > 0 ? { files: fileRefs } : {}),
+    ...(fileRefs.length > 0 ? { files: fileRefs } : {}),
   };
-  const addedTokens = Math.ceil(rawPrompt.length / 4);
+  const addedTokens = Math.ceil(userEntry.content.length / 4);
 
   // Atomically claim the per-user build slot, consume initial_prompt, and push user prompt in 1 write
   let raceConflict = false;
@@ -455,18 +429,22 @@ export async function POST(
   }
 
   try {
-    let promptToSend = rawPrompt;
-    if (detectRepeatedPrompt(priorHistory, rawPrompt)) {
+    let promptToSend =
+      trimmedPrompt ||
+      (isFirstPrompt
+        ? 'Analyze the attached image(s)/file(s) and build the website cleanly according to their visual content (UI/design screenshot for design/clone, or logo/photo assets placed appropriately).'
+        : 'Analyze the attached image(s)/file(s) and apply them only to the requested area of the existing website without changing unrelated pages or styles.');
+    if (trimmedPrompt && detectRepeatedPrompt(priorHistory, rawPrompt)) {
       promptToSend +=
         '\n\nNOTE: The user has asked about this issue multiple times before. Previous attempts may not have fully resolved it. Try a fundamentally different approach.';
     }
 
-    // Enrich goal sent to Go Builder with attached image URLs and dual-mode instructions
+    // Enrich goal sent to Go Builder with attached file roles, scope rules, and vision pixels
     if (attachedFiles.length > 0) {
-      const fileLines = attachedFiles.map(
-        (f, idx) => `${idx + 1}. "${f.filename}" (${f.mime_type}, ${f.human_size}) -> URL: ${f.api_url}`
-      );
-      promptToSend += `\n\n[Attached Images (${attachedFiles.length})]\n${fileLines.join('\n')}\n\nHOW TO USE ATTACHED IMAGES:\n1. DIRECT PLACEMENT: If the user asks to place, use, or display an attached image in a section (e.g. "use this as the logo", "put the first image in the hero section", "use these as product photos" or by filename), embed its exact URL above in \`<img src="..." />\` or CSS \`backgroundImage\` in that exact location.\n2. UI/UX DESIGN INSPIRATION: If the user asks to draw inspiration from, replicate, clone, or match the design/layout of an attached image/screenshot/mockup (e.g. "build a site inspired by this image", "match this UI design"), replicate the visual hierarchy, navbar/hero/section structure, card layout, spacing, typography, and color palette in \`src/custom.css\` and the page components.`;
+      promptToSend += buildAttachedFilesPromptSection({
+        attachedFiles,
+        isFirstPrompt,
+      });
     }
 
     // Pass prior history (without duplicating the current prompt already sent in `goal`)
@@ -489,6 +467,7 @@ export async function POST(
       appUrl,
       aiConfig,
       plan,
+      attachedImages,
     });
 
     if (result.status === 409) {

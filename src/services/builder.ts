@@ -22,6 +22,7 @@ import { resolvePlanAiProvider, resolvePlanBuilder } from './credits';
 import { Project, Template, IProject, IConversationEntry } from '@/models/Project';
 import { UserAiSettings, IUser } from '@/models/User';
 import type { IPlan } from '@/models/Billing';
+import type { AttachedImageVisionPayload } from '@/services/attached-images';
 import {
   Builder,
   IBuilder,
@@ -325,8 +326,9 @@ export async function startBuilderSession(params: {
   appUrl?: string;
   aiConfig?: ResolvedAiConfig | null;
   plan?: IPlan | null;
+  attachedImages?: AttachedImageVisionPayload[];
 }) {
-  const { project, user, builder, goal, templateId, templateName, templateUrl } = params;
+  const { project, user, builder, goal, templateId, templateName, templateUrl, attachedImages } = params;
   const rawAppUrl = params.appUrl || process.env.APP_URL || '';
   const appUrl = (
     (rawAppUrl && !rawAppUrl.includes('crevoai.vercel.app') ? rawAppUrl : '') ||
@@ -409,6 +411,9 @@ export async function startBuilderSession(params: {
   };
 
   if (pusher) payload.pusher = pusher;
+  if (attachedImages && attachedImages.length > 0) {
+    payload.attached_images = attachedImages;
+  }
   if (templateId || templateUrl) {
     payload.template = {
       template_id: templateId || undefined,

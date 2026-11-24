@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectDB, isValidObjectId } from '@/lib/db';
+import { connectDB } from '@/lib/db';
 import {
   requireVerified,
   canUpdateProject,
   isDemoAdminUser,
   getUserCurrentPlan,
 } from '@/lib/auth';
-import { parseRequestBody, validationError, formatHumanFileSize } from '@/lib/http';
-import { Project, ProjectFile, IConversationEntry } from '@/models/Project';
+import { parseRequestBody, validationError } from '@/lib/http';
+import { Project, IConversationEntry } from '@/models/Project';
 import { Builder } from '@/models/BuilderAi';
+import {
+  buildAttachedFilesPromptSection,
+  resolveAttachedProjectFiles,
+} from '@/services/attached-images';
 import {
   builderFetch,
   buildOptimizedHistoryForBuilder,
@@ -50,7 +54,10 @@ export async function POST(
 
   const { body } = await parseRequestBody(req);
   const rawMessage = typeof body.message === 'string' ? body.message : '';
-  if (!rawMessage.trim()) {
+  const fileIds: string[] = Array.isArray(body.file_ids)
+    ? body.file_ids.map((id: unknown) => String(id).trim()).filter(Boolean)
+    : [];
+  if (!rawMessage.trim() && fileIds.length === 0) {
     return validationError({ message: 'The message field is required.' });
   }
   if (rawMessage.length > 10000) {
@@ -62,70 +69,42 @@ export async function POST(
     return NextResponse.json({ error: 'No active build session' }, { status: 404 });
   }
 
-  const fileIds: string[] = Array.isArray(body.file_ids)
-    ? body.file_ids.map((id: unknown) => String(id).trim()).filter(Boolean)
-    : [];
-
   const appUrl = (process.env.APP_URL || req.nextUrl.origin || 'http://localhost:3000').replace(
     /\/+$/,
     ''
   );
-  const attachedFiles: Array<{
-    filename: string;
-    api_url: string;
-    mime_type: string;
-    size: number;
-    human_size: string;
-  }> = [];
-  let fileRefs: NonNullable<IConversationEntry['files']> | undefined;
+  const plan = fileIds.length > 0 ? await getUserCurrentPlan(ctx.user) : null;
+  const { attachedFiles, fileRefs, attachedImages } = await resolveAttachedProjectFiles({
+    projectId: String(project._id),
+    user: ctx.user,
+    plan,
+    fileIds,
+    appUrl,
+  });
 
-  if (fileIds.length > 0) {
-    const plan = await getUserCurrentPlan(ctx.user);
-    const maxImagesForPlan =
-      ctx.user.role === 'admin' || plan?.monthly_build_credits === -1
-        ? 10
-        : plan?.max_images_per_prompt || ((plan?.price ?? 0) > 0 ? 6 : 2);
-    const validIds = fileIds.filter(isValidObjectId).slice(0, maxImagesForPlan);
-    if (validIds.length > 0) {
-      const files = await ProjectFile.find({
-        _id: { $in: validIds },
-        project_id: project._id,
-      }).lean();
-      for (const f of files) {
-        attachedFiles.push({
-          filename: f.original_filename,
-          api_url: `${appUrl}/api/files/${project._id}/${f.filename}`,
-          mime_type: f.mime_type,
-          size: f.size,
-          human_size: formatHumanFileSize(f.size),
-        });
-      }
-      if (files.length > 0) {
-        fileRefs = files.map((f) => ({
-          id: String(f._id),
-          filename: f.original_filename,
-          mime_type: f.mime_type,
-        }));
-      }
-    }
+  if (!rawMessage.trim() && attachedFiles.length === 0) {
+    return validationError({ message: 'The message field is required.' });
   }
 
   try {
-    let messageToSend = rawMessage;
-    if (detectRepeatedPrompt(project.conversation_history || [], rawMessage)) {
+    const trimmedMessage = rawMessage.trim();
+    let messageToSend =
+      trimmedMessage ||
+      'Analyze the attached file(s)/image(s) and apply them only to the requested area of the existing site without changing unrelated pages or global styles.';
+    if (trimmedMessage && detectRepeatedPrompt(project.conversation_history || [], rawMessage)) {
       messageToSend +=
         '\n\nNOTE: The user has asked about this issue multiple times before. Previous attempts may not have fully resolved it. Try a fundamentally different approach.';
     }
 
     const userEntry: IConversationEntry = {
       role: 'user',
-      content: rawMessage,
+      content: trimmedMessage ? rawMessage : 'Attached file(s)',
       timestamp: new Date().toISOString(),
-      ...(fileRefs && fileRefs.length > 0 ? { files: fileRefs } : {}),
+      ...(fileRefs.length > 0 ? { files: fileRefs } : {}),
     };
     const priorHistory = project.conversation_history || [];
     const priorCompacted = project.compacted_history || null;
-    const addedTokens = Math.ceil(rawMessage.length / 4);
+    const addedTokens = Math.ceil(userEntry.content.length / 4);
 
     await Project.updateOne(
       { _id: project._id },
@@ -137,10 +116,10 @@ export async function POST(
     );
 
     if (attachedFiles.length > 0) {
-      const fileLines = attachedFiles.map(
-        (f) => `- ${f.filename} (${f.mime_type}, ${f.human_size}): ${f.api_url}`
-      );
-      messageToSend += `\n\n[Attached Files]\n${fileLines.join('\n')}\nUse these URLs directly in img src, href, or background-image attributes in the generated code.`;
+      messageToSend += buildAttachedFilesPromptSection({
+        attachedFiles,
+        isFirstPrompt: false,
+      });
     }
 
     // Pass prior history only so the current message isn't duplicated inside history
@@ -161,6 +140,7 @@ export async function POST(
         message: messageToSend,
         history,
         is_compacted: isCompacted,
+        ...(attachedImages.length > 0 ? { attached_images: attachedImages } : {}),
         ...(aiConfig
           ? {
               config: {

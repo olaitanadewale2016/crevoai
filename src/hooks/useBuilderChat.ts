@@ -608,13 +608,14 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     }, [clearFallbackBuildTimer]);
 
     const sendMessage = useCallback(async (content: string, sendOptions?: SendMessageOptions) => {
-        if (!content.trim()) return;
+        const hasFiles = Boolean(sendOptions?.fileIds && sendOptions.fileIds.length > 0);
+        if (!content.trim() && !hasFiles) return;
 
         // Format prompt with element context if provided
         let finalPrompt = content.trim();
         if (sendOptions?.elementContext) {
             const el = sendOptions.elementContext;
-            finalPrompt += `\n\n[Selected Element]\n<${el.tagName}${el.selector ? ` (${el.selector})` : ''}>${el.textPreview ? ` containing "${el.textPreview}"` : ''}\nSelector: ${el.selector}`;
+            finalPrompt += `${finalPrompt ? '\n\n' : ''}[Selected Element]\n<${el.tagName}${el.selector ? ` (${el.selector})` : ''}>${el.textPreview ? ` containing "${el.textPreview}"` : ''}\nSelector: ${el.selector}`;
         }
 
         // Add user message to history

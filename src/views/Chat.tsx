@@ -620,8 +620,9 @@ export default function Chat({
     // Send initial message from project prompt ONLY for brand-new projects arriving with ?autostart=1.
     // Opening an existing/recent project must never auto-resend the first prompt.
     useEffect(() => {
+        const hasInitialFiles = Boolean(project.initial_file_ids && project.initial_file_ids.length > 0);
         if (
-            !project.initial_prompt ||
+            (!project.initial_prompt && !hasInitialFiles) ||
             initialSent.current ||
             project.has_history ||
             project.preview_url ||
@@ -654,8 +655,13 @@ export default function Chat({
         playSound('send');
         setThinkingStartTime(Date.now());
         setThinkingDuration(null);
-        sendMessage(project.initial_prompt, {
-            fileIds: project.initial_file_ids || [],
+        const initialIds = project.initial_file_ids || [];
+        const initialAttachedFiles = initialIds
+            .map((id) => localProjectFiles.find((f) => String(f.id) === String(id)))
+            .filter((f): f is NonNullable<typeof f> => Boolean(f));
+        sendMessage(project.initial_prompt || '', {
+            fileIds: initialIds,
+            ...(initialAttachedFiles.length > 0 ? { attachedFiles: initialAttachedFiles } : {}),
         });
     }, [
         project.id,
