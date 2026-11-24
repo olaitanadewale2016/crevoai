@@ -26,7 +26,7 @@ export async function GET(
     return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
-  // Quick mode: fast DB-only status check for frontend polling
+  // Quick mode: fast DB-only status check for frontend polling & live streaming fallback
   const quickParam = req.nextUrl.searchParams.get('quick');
   if (quickParam === '1' || quickParam === 'true') {
     const previewExists = await projectPreviewExists(project);
@@ -35,9 +35,22 @@ export async function GET(
       preview_url: previewExists ? `/preview/${project._id}` : null,
       has_preview: previewExists,
       tokens_used: project.estimated_tokens || 0,
+      build_started_at: project.build_started_at
+        ? new Date(project.build_started_at).toISOString()
+        : null,
     };
-    if (project.build_status === 'completed' || project.build_status === 'failed') {
-      data.recent_messages = (project.conversation_history || []).slice(-15);
+    if (
+      project.build_status === 'building' ||
+      project.build_status === 'completed' ||
+      project.build_status === 'failed' ||
+      project.build_status === 'cancelled'
+    ) {
+      data.recent_messages = (project.conversation_history || []).slice(-30).map((entry: any) => ({
+        role: entry.role,
+        content: String(entry.content ?? ''),
+        category: entry.category || undefined,
+        timestamp: entry.timestamp || entry.created_at || new Date().toISOString(),
+      }));
     }
     return NextResponse.json(data);
   }

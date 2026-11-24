@@ -108,8 +108,9 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     // Ref-based dedup: tracks content of assistant messages already added to history.
     // Using a ref avoids stale closure issues with history.messages state.
     const addedMessagesRef = useRef(new Set<string>());
-    // Dedup for action events (Go builder + Laravel broadcast can send duplicates)
+    // Dedup for action events (Go builder + Laravel broadcast + HTTP poll fallback)
     const addedActionsRef = useRef(new Set<string>());
+    const seenActionTextsRef = useRef(new Set<string>());
     // Dedup for error events (separate namespace from messages to avoid collisions)
     const addedErrorsRef = useRef(new Set<string>());
     // Dedup: prevent duplicate complete events from firing onComplete twice
@@ -214,14 +215,17 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         const cleanAct = (data.action || '').trim().toLowerCase();
         const cleanTgt = (data.target || '').trim().toLowerCase();
         const actionKey = `${cleanCat}:${cleanAct}:${cleanTgt}`;
-        if (addedActionsRef.current.has(actionKey)) return;
+        const actionText = `${data.action} ${data.target}`.trim();
+        const actionTextKey = actionText.toLowerCase();
+        if (addedActionsRef.current.has(actionKey) || (actionTextKey && seenActionTextsRef.current.has(actionTextKey))) return;
         addedActionsRef.current.add(actionKey);
+        if (actionTextKey) seenActionTextsRef.current.add(actionTextKey);
 
         // Add action as activity message (stacks in chat like prototype)
         const activityMessage: ChatMessage = {
             id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             type: 'activity',
-            content: `${data.action} ${data.target}`.trim(),
+            content: actionText,
             timestamp: new Date(),
             activityType: data.category || data.action.toLowerCase(),
         };
@@ -458,7 +462,8 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         };
     }, [projectId]);
 
-    // Shared poll logic with debounce to prevent redundant requests
+    // Shared poll logic with debounce to prevent redundant requests.
+    // Also acts as a live HTTP streaming fallback if Pusher WebSocket events are delayed or unavailable.
     const pollStatus = useCallback(async () => {
         const now = Date.now();
         if (now - lastPollTimeRef.current < 2000) return;
@@ -467,22 +472,65 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         try {
             const response = await axios.get(`/builder/projects/${projectId}/status?quick=1`);
             const status = response.data.status;
-            if (status === 'completed' || status === 'failed') {
-                // Hydrate any missed messages from polling response
-                const recentMessages = response.data.recent_messages;
-                if (recentMessages?.length) {
-                    for (const msg of recentMessages) {
-                        if (msg.role === 'assistant' && !addedMessagesRef.current.has(msg.content)) {
-                            addedMessagesRef.current.add(msg.content);
-                            historyAddMessageRef.current({
-                                id: `assistant-poll-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-                                type: 'assistant',
-                                content: msg.content,
-                                timestamp: new Date(msg.timestamp),
-                            });
-                        }
-                    }
+            const recentMessages: Array<{
+                role: string;
+                content: string;
+                category?: string;
+                timestamp?: string;
+            }> = Array.isArray(response.data.recent_messages) ? response.data.recent_messages : [];
+
+            // Only hydrate entries belonging to the current turn (everything after the last user message)
+            let lastUserIdx = -1;
+            for (let i = recentMessages.length - 1; i >= 0; i--) {
+                if (recentMessages[i]?.role === 'user') {
+                    lastUserIdx = i;
+                    break;
                 }
+            }
+            const currentTurnEntries = lastUserIdx >= 0 ? recentMessages.slice(lastUserIdx + 1) : [];
+
+            const newlyPolledActions: ActionEvent[] = [];
+            for (const msg of currentTurnEntries) {
+                const content = String(msg?.content || '').trim();
+                if (!content) continue;
+
+                if (msg.role === 'action') {
+                    const key = content.toLowerCase();
+                    if (!seenActionTextsRef.current.has(key)) {
+                        seenActionTextsRef.current.add(key);
+                        historyAddMessageRef.current({
+                            id: `activity-poll-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                            type: 'activity',
+                            content,
+                            timestamp: new Date(msg.timestamp || Date.now()),
+                            activityType: msg.category || 'building',
+                        });
+                        newlyPolledActions.push({
+                            action: content,
+                            target: '',
+                            details: '',
+                            category: msg.category || 'building',
+                        });
+                    }
+                } else if (msg.role === 'assistant' && !addedMessagesRef.current.has(content)) {
+                    addedMessagesRef.current.add(content);
+                    historyAddMessageRef.current({
+                        id: `assistant-poll-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                        type: 'assistant',
+                        content,
+                        timestamp: new Date(msg.timestamp || Date.now()),
+                    });
+                }
+            }
+
+            if (newlyPolledActions.length > 0) {
+                setProgress(prev => ({
+                    ...prev,
+                    actions: [...prev.actions, ...newlyPolledActions],
+                }));
+            }
+
+            if (status === 'completed' || status === 'failed' || status === 'cancelled') {
                 const previewUrl = response.data.preview_url || undefined;
                 if (previewUrl) {
                     buildTriggeredRef.current = true;
@@ -509,28 +557,18 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         }
     }, [projectId, autoBuild, onBuildComplete]);
 
-    // Safety fallback: poll status if session appears stuck in 'running'
-    // This handles the case where the Pusher 'complete' event is lost
-    useEffect(() => {
-        if (progress.status !== 'running' || !sessionId) return;
-
-        const intervalId = setInterval(pollStatus, 5000);
-
-        return () => clearInterval(intervalId);
-    }, [progress.status, sessionId, pollStatus]);
-
-    // Activity timeout: if events were flowing but stopped for 3s while still 'running',
-    // immediately check status (the 'complete' event may have been lost)
+    // Safety & streaming fallback: poll status while running whenever Pusher hasn't delivered an event recently.
+    // Keeps UI streaming live actions/messages even if Pusher is disconnected, blocked, or misconfigured.
     useEffect(() => {
         if (progress.status !== 'running' || !sessionId) return;
 
         const intervalId = setInterval(() => {
             const lastEvent = lastEventTimeRef.current;
-            // Only trigger if we received at least one event and it's been >3s since the last
-            if (lastEvent > 0 && Date.now() - lastEvent >= 3000) {
-                pollStatus();
+            // Poll every ~2.5s if no Pusher events have arrived yet or >2.5s since last WS event
+            if (lastEvent === 0 || Date.now() - lastEvent >= 2500) {
+                void pollStatus();
             }
-        }, 1000);
+        }, 2500);
 
         return () => clearInterval(intervalId);
     }, [progress.status, sessionId, pollStatus]);
@@ -539,10 +577,12 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     const resetProgress = useCallback(() => {
         addedMessagesRef.current.clear();
         addedActionsRef.current.clear();
+        seenActionTextsRef.current.clear();
         addedErrorsRef.current.clear();
         completedSessionRef.current = false;
         lastStatusRef.current = null;
         lastThinkingContentRef.current = null;
+        lastEventTimeRef.current = 0;
         lastPollTimeRef.current = 0;
         thinkingStartTimeRef.current = null;
         setProgress(prev => ({

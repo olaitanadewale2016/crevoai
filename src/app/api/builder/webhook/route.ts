@@ -34,7 +34,9 @@ export async function POST(req: NextRequest) {
   const sessionId = body.session_id;
   const eventType = body.event_type;
   const data = body.data || {};
-  const pusherActive = Boolean(body.pusher_active) || Boolean(process.env.PUSHER_APP_KEY);
+  // Trust only the Go Builder's explicit flag — if Go Builder's Pusher check failed and it
+  // fell back to webhook-only (pusher_active=false), Next.js must still relay to Pusher.
+  const pusherActive = Boolean(body.pusher_active);
 
   if (!sessionId || !eventType) {
     return NextResponse.json({ error: 'session_id and event_type are required' }, { status: 400 });

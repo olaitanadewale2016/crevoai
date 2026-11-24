@@ -3,6 +3,7 @@ import { getSessionContext, isDemoAdminUser } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { setSettingsMany, setSetting, removeSetting } from '@/lib/settings';
 import { cacheForgetPrefix } from '@/lib/cache';
+import { clearBroadcastHealthCache } from '@/lib/broadcast';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,11 +28,11 @@ export async function PUT(req: NextRequest) {
 
   const cleanSettings: Record<string, any> = {};
 
-  if (body.broadcast_driver !== undefined) cleanSettings.broadcast_driver = body.broadcast_driver;
-  if (body.pusher_app_id !== undefined) cleanSettings.pusher_app_id = body.pusher_app_id;
-  if (body.pusher_key) cleanSettings.pusher_key = body.pusher_key;
-  if (body.pusher_secret) cleanSettings.pusher_secret = body.pusher_secret;
-  if (body.pusher_cluster !== undefined) cleanSettings.pusher_cluster = body.pusher_cluster;
+  if (body.broadcast_driver !== undefined) cleanSettings.broadcast_driver = String(body.broadcast_driver).trim();
+  if (body.pusher_app_id !== undefined) cleanSettings.pusher_app_id = String(body.pusher_app_id).trim();
+  if (body.pusher_key && String(body.pusher_key).trim()) cleanSettings.pusher_key = String(body.pusher_key).trim();
+  if (body.pusher_secret && String(body.pusher_secret).trim()) cleanSettings.pusher_secret = String(body.pusher_secret).trim();
+  if (body.pusher_cluster !== undefined) cleanSettings.pusher_cluster = String(body.pusher_cluster).trim() || 'mt1';
 
   if (body.reverb_host !== undefined) cleanSettings.reverb_host = body.reverb_host;
   if (body.reverb_port !== undefined) cleanSettings.reverb_port = Number(body.reverb_port) || 8080;
@@ -65,6 +66,7 @@ export async function PUT(req: NextRequest) {
   }
 
   await cacheForgetPrefix('internal_ai:');
+  await clearBroadcastHealthCache();
 
   if (req.headers.get('x-inertia')) {
     return NextResponse.redirect(new URL('/admin/settings', req.url), 303);
