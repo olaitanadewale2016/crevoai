@@ -204,6 +204,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
                                                                     <div key={project.id} className="px-2">
                                                                         <Link
                                                                             href={`/project/${project.id}`}
+                                                                            prefetch={false}
                                                                             className="flex items-center h-8 px-2 text-sm text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors overflow-hidden"
                                                                             title={project.name}
                                                                         >
@@ -223,7 +224,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
                                                     asChild
                                                     isActive={isActive(item.href)}
                                                 >
-                                                    <Link href={item.href}>
+                                                    <Link href={item.href} prefetch={false}>
                                                         <item.icon className="h-4 w-4" />
                                                         <span>{t(item.titleKey)}</span>
                                                     </Link>

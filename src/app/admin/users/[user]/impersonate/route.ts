@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB, isValidObjectId } from '@/lib/db';
-import { getSessionContext, updateSessionPayload, isDemoMode } from '@/lib/auth';
+import { getSessionContext, isDemoMode } from '@/lib/auth';
+import { SessionModel } from '@/models/Counter';
 import { User } from '@/models/User';
 
 export const dynamic = 'force-dynamic';
@@ -31,9 +32,18 @@ export async function POST(
   }
 
   // Update session to impersonate targetUser
-  await updateSessionPayload(ctx.sessionId, {
-    impersonating_from: String(ctx.user._id),
-  });
+  await SessionModel.updateOne(
+    { _id: ctx.sessionId },
+    {
+      $set: {
+        user_id: String(targetUser._id),
+        payload: {
+          ...(ctx.session.payload || {}),
+          impersonating_from: String(ctx.user._id),
+        },
+      },
+    }
+  );
 
   return NextResponse.redirect(new URL('/create', req.url), 303);
 }

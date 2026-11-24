@@ -54,6 +54,7 @@ export async function PUT(
   project.published_title = title || project.name;
   project.published_description = desc;
   project.published_visibility = visibility;
+  project.is_public = visibility === 'public';
   await project.save();
 
   if (req.headers.get('x-inertia')) {

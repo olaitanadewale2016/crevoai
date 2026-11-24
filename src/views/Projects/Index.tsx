@@ -272,6 +272,10 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
     // Credits state
     const [credits, setCredits] = useState<UserCredits | null>(userCredits);
 
+    useEffect(() => {
+        setCredits(userCredits);
+    }, [userCredits]);
+
     // Local optimistic state for instant real-time updates
     const [projectItems, setProjectItems] = useState<Project[]>(projects.data);
     const [tabCounts, setTabCounts] = useState(counts);
@@ -326,9 +330,11 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
             });
         },
         onProjectStatus: (status: ProjectStatusEvent) => {
+            const nextStatus = ((status as any).build_status || (status as any).status) as Project['build_status'];
+            if (!nextStatus) return;
             setProjectStatuses(prev => ({
                 ...prev,
-                [status.project_id]: status.build_status as Project['build_status'],
+                [status.project_id]: nextStatus,
             }));
         },
     });
@@ -346,6 +352,18 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
 
     const [searchValue, setSearchValue] = useState(filters.search || '');
     const searchTimeout = useRef<NodeJS.Timeout | null>(null);
+
+    useEffect(() => {
+        setSearchValue(filters.search || '');
+    }, [filters.search]);
+
+    useEffect(() => {
+        return () => {
+            if (searchTimeout.current) {
+                clearTimeout(searchTimeout.current);
+            }
+        };
+    }, []);
     const [viewMode, setViewMode] = useState<ViewMode>(() => {
         if (typeof window !== 'undefined') {
             return (localStorage.getItem('projects-view') as ViewMode) || 'grid';
@@ -448,6 +466,10 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
     };
 
     const handleTabChange = (tab: string) => {
+        if (searchTimeout.current) {
+            clearTimeout(searchTimeout.current);
+            searchTimeout.current = null;
+        }
         setSelectedIds(new Set());
         if (tab === 'trash') {
             router.visit('/projects/trash');
@@ -574,6 +596,8 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
                         ? t('Project moved to trash')
                         : t(':count projects moved to trash', { count: ids.length })
                 );
+
+                router.reload({ preserveScroll: true, preserveState: true });
             } catch (err: any) {
                 setProjectItems(prevItems);
                 setTabCounts(prevCounts);
@@ -677,6 +701,8 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
                         ? t('Project restored')
                         : t(':count projects restored', { count: ids.length })
                 );
+
+                router.reload({ preserveScroll: true, preserveState: true });
             } catch (err: any) {
                 setProjectItems(prevItems);
                 setTabCounts(prevCounts);
@@ -765,6 +791,8 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
                     ? t('Project permanently deleted')
                     : t(':count projects permanently deleted', { count: ids.length })
             );
+
+            router.reload({ preserveScroll: true, preserveState: true });
         } catch (err: any) {
             setProjectItems(prevItems);
             setTabCounts(prevCounts);

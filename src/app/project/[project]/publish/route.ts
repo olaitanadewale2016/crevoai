@@ -76,6 +76,7 @@ export async function POST(
   project.subdomain = subdomain;
   project.published_title = project.published_title || project.name;
   project.published_visibility = visibility;
+  project.is_public = visibility === 'public';
   project.published_at = project.published_at || new Date();
   await project.save();
 

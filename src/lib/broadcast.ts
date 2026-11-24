@@ -1,5 +1,5 @@
 import Pusher from 'pusher';
-import { getSettingGroup } from './settings';
+import { getSettingGroup, ensureFreshSettingsCache } from './settings';
 import { cacheRemember, cacheForget } from './cache';
 import { hmacSha256Hex } from './crypto';
 
@@ -34,10 +34,18 @@ export async function getPusherServerClient(): Promise<Pusher | null> {
     });
   }
 
-  const appId = integrations.pusher_app_id || process.env.PUSHER_APP_ID;
-  const key = integrations.pusher_key || process.env.NEXT_PUBLIC_PUSHER_KEY || process.env.PUSHER_KEY;
-  const secret = integrations.pusher_secret || process.env.PUSHER_SECRET;
-  const cluster = integrations.pusher_cluster || process.env.NEXT_PUBLIC_PUSHER_CLUSTER || process.env.PUSHER_CLUSTER || 'mt1';
+  const appId = String(integrations.pusher_app_id || process.env.PUSHER_APP_ID || '').trim();
+  const key = String(
+    integrations.pusher_key || process.env.NEXT_PUBLIC_PUSHER_KEY || process.env.PUSHER_KEY || ''
+  ).trim();
+  const secret = String(integrations.pusher_secret || process.env.PUSHER_SECRET || '').trim();
+  const cluster =
+    String(
+      integrations.pusher_cluster ||
+        process.env.NEXT_PUBLIC_PUSHER_CLUSTER ||
+        process.env.PUSHER_CLUSTER ||
+        'mt1'
+    ).trim() || 'mt1';
   if (!appId || !key || !secret) return null;
   return new Pusher({
     appId,
@@ -67,10 +75,18 @@ export async function getPusherConfigForBuilder(): Promise<BuilderPusherPayload 
     };
   }
 
-  const appId = integrations.pusher_app_id || process.env.PUSHER_APP_ID;
-  const key = integrations.pusher_key || process.env.NEXT_PUBLIC_PUSHER_KEY || process.env.PUSHER_KEY;
-  const secret = integrations.pusher_secret || process.env.PUSHER_SECRET;
-  const cluster = integrations.pusher_cluster || process.env.NEXT_PUBLIC_PUSHER_CLUSTER || process.env.PUSHER_CLUSTER || 'mt1';
+  const appId = String(integrations.pusher_app_id || process.env.PUSHER_APP_ID || '').trim();
+  const key = String(
+    integrations.pusher_key || process.env.NEXT_PUBLIC_PUSHER_KEY || process.env.PUSHER_KEY || ''
+  ).trim();
+  const secret = String(integrations.pusher_secret || process.env.PUSHER_SECRET || '').trim();
+  const cluster =
+    String(
+      integrations.pusher_cluster ||
+        process.env.NEXT_PUBLIC_PUSHER_CLUSTER ||
+        process.env.PUSHER_CLUSTER ||
+        'mt1'
+    ).trim() || 'mt1';
 
   if (!appId || !key || !secret) {
     return null;
@@ -120,6 +136,7 @@ export async function isBroadcastConfigured(): Promise<boolean> {
 }
 
 export async function checkBroadcastHealth(): Promise<{ ok: boolean; error?: string }> {
+  await ensureFreshSettingsCache();
   return cacheRemember('broadcast:health_status', 120, async () => {
     const integrations = await getSettingGroup('integrations');
     const driver = integrations.broadcast_driver || 'pusher';
@@ -130,10 +147,10 @@ export async function checkBroadcastHealth(): Promise<{ ok: boolean; error?: str
     let baseUrl = '';
 
     if (driver === 'reverb') {
-      appId = integrations.reverb_app_id || '';
-      key = integrations.reverb_key || '';
-      secret = integrations.reverb_secret || '';
-      const host = integrations.reverb_server_host || integrations.reverb_host || '';
+      appId = String(integrations.reverb_app_id || '').trim();
+      key = String(integrations.reverb_key || '').trim();
+      secret = String(integrations.reverb_secret || '').trim();
+      const host = String(integrations.reverb_server_host || integrations.reverb_host || '').trim();
       const port = integrations.reverb_server_port || integrations.reverb_port || 8892;
       const scheme = integrations.reverb_server_host ? 'http' : integrations.reverb_scheme || 'http';
       if (!appId || !key || !secret || !host) {
@@ -141,10 +158,18 @@ export async function checkBroadcastHealth(): Promise<{ ok: boolean; error?: str
       }
       baseUrl = `${scheme}://${host}:${port}`;
     } else {
-      appId = integrations.pusher_app_id || '';
-      key = integrations.pusher_key || '';
-      secret = integrations.pusher_secret || '';
-      const cluster = integrations.pusher_cluster || 'mt1';
+      appId = String(integrations.pusher_app_id || process.env.PUSHER_APP_ID || '').trim();
+      key = String(
+        integrations.pusher_key || process.env.NEXT_PUBLIC_PUSHER_KEY || process.env.PUSHER_KEY || ''
+      ).trim();
+      secret = String(integrations.pusher_secret || process.env.PUSHER_SECRET || '').trim();
+      const cluster =
+        String(
+          integrations.pusher_cluster ||
+            process.env.NEXT_PUBLIC_PUSHER_CLUSTER ||
+            process.env.PUSHER_CLUSTER ||
+            'mt1'
+        ).trim() || 'mt1';
       if (!appId || !key || !secret) {
         return { ok: false, error: 'Real-time broadcasting (Pusher) is not configured.' };
       }

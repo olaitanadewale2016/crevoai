@@ -42,7 +42,7 @@ export async function POST(
   }
 
   const plan = await getUserCurrentPlan(ctx.user);
-  if (plan && plan.max_projects !== null) {
+  if (ctx.user.role !== 'admin' && plan && plan.max_projects !== null && plan.max_projects !== -1) {
     const currentCount = await Project.countDocuments({ user_id: ctx.user._id, deleted_at: null });
     if (currentCount >= plan.max_projects) {
       return NextResponse.json(

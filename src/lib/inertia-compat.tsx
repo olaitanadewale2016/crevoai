@@ -222,6 +222,7 @@ async function performRequest(
           if (globalNextRouter) {
             await globalRefreshShared?.();
             globalNextRouter.push(targetPath, { scroll: !options.preserveScroll });
+            globalNextRouter.refresh();
           } else {
             window.location.href = targetPath;
           }
@@ -286,7 +287,9 @@ async function performRequest(
       }
       emitNavEvent('start', json.redirect, 'get');
       if (globalNextRouter) {
+        await globalRefreshShared?.();
         globalNextRouter.push(json.redirect, { scroll: !options.preserveScroll });
+        globalNextRouter.refresh();
       } else {
         window.location.href = json.redirect;
       }
@@ -328,11 +331,15 @@ export const router = {
   },
   reload(options: VisitOptions = {}) {
     options.onStart?.();
-    emitNavEvent('start');
+    if (!options.preserveState) {
+      emitNavEvent('start');
+    }
     Promise.resolve(globalRefreshShared?.()).finally(() => {
       globalNextRouter?.refresh();
       options.onSuccess?.({ props: {} });
-      emitNavEvent('finish');
+      if (!options.preserveState) {
+        emitNavEvent('finish');
+      }
       options.onFinish?.();
     });
   },
@@ -448,6 +455,15 @@ export function AppPageProvider({
       if (globalNextRouter === nextRouter) globalNextRouter = null;
     };
   }, [nextRouter, setFlash, refreshShared]);
+
+  // Refresh shared context (recentProjects, credits, notifications) on client-side route transitions
+  const prevPathnameRef = useRef<string>(pathname);
+  useEffect(() => {
+    if (prevPathnameRef.current !== pathname) {
+      prevPathnameRef.current = pathname;
+      void refreshShared();
+    }
+  }, [pathname, refreshShared]);
 
   // Real-time synchronization of theme, title, and metadata to DOM when sharedProps change
   useEffect(() => {
@@ -575,6 +591,7 @@ export function Link({
   preserveScroll,
   preserveState,
   replace,
+  prefetch,
   onClick,
   children,
   className,
@@ -618,7 +635,7 @@ export function Link({
   return (
     <NextLink
       href={href as LinkProps['href']}
-      prefetch={rest.prefetch ?? true}
+      prefetch={prefetch ?? false}
       replace={replace}
       scroll={!preserveScroll}
       onClick={onClick}

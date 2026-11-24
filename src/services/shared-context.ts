@@ -4,7 +4,7 @@ import { connectDB } from '@/lib/db';
 import { getSessionContext, isDemoMode, LOCALE_COOKIE_NAME, serializeUser, getUserCurrentPlan } from '@/lib/auth';
 import { getSharedAppSettings, getBroadcastConfig, ensureFreshSettingsCache } from '@/lib/settings';
 import { loadTranslationsForLocale, resolveLocale } from '@/lib/i18n';
-import { Project } from '@/models/Project';
+import { Project, ProjectShare } from '@/models/Project';
 import { Plan } from '@/models/Billing';
 import { UserAiSettings, UserNotification, IUser } from '@/models/User';
 import { generateHexToken } from '@/lib/crypto';
@@ -92,42 +92,57 @@ export const getSharedAppProps = cache(async function getSharedAppProps(): Promi
   let unreadNotificationCount = 0;
 
   if (user) {
-    try {
-      const [recents, currentPlan, credits, unreadCount] = await Promise.all([
-        Project.find({ user_id: user._id, deleted_at: null })
-          .sort({ last_viewed_at: -1, updated_at: -1 })
-          .limit(5)
-          .select('name description thumbnail is_public is_starred published_at build_status last_viewed_at updated_at subdomain custom_domain')
-          .lean(),
-        getUserCurrentPlan(user),
-        getUserCreditsSnapshot(user),
-        UserNotification.countDocuments({
-          user_id: user._id,
-          read_at: null,
-        }),
-      ]);
+    const fetchRecentProjects = async () => {
+      await connectDB();
+      const shares = await ProjectShare.find({ user_id: user._id })
+        .select('project_id')
+        .lean()
+        .catch(() => []);
+      const sharedIds = shares.map((s) => s.project_id).filter(Boolean);
+      const ownershipFilter =
+        sharedIds.length > 0
+          ? { $or: [{ user_id: user._id }, { _id: { $in: sharedIds } }] }
+          : { user_id: user._id };
 
-      recentProjects = recents.map((p) => ({
+      const recents = await Project.find({ ...ownershipFilter, deleted_at: null })
+        .sort({ updated_at: -1, last_viewed_at: -1 })
+        .limit(5)
+        .select('name updated_at last_viewed_at')
+        .lean();
+
+      return recents.map((p) => ({
         id: String(p._id),
         name: p.name,
-        description: p.description,
-        thumbnail: p.thumbnail,
-        is_public: p.is_public,
-        is_starred: p.is_starred,
-        status: p.published_at ? 'published' : 'draft',
-        build_status: p.build_status || 'idle',
         last_viewed_at: p.last_viewed_at ? new Date(p.last_viewed_at).toISOString() : null,
         updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : new Date().toISOString(),
-        subdomain: p.subdomain,
-        custom_domain: p.custom_domain,
       }));
+    };
 
-      const currentPrice = Number(currentPlan?.price ?? 0);
+    const [recentsRes, planRes, creditsRes, unreadRes] = await Promise.allSettled([
+      fetchRecentProjects(),
+      getUserCurrentPlan(user),
+      getUserCreditsSnapshot(user),
+      UserNotification.countDocuments({
+        user_id: user._id,
+        read_at: null,
+      }),
+    ]);
+
+    if (recentsRes.status === 'fulfilled') {
+      recentProjects = recentsRes.value;
+    }
+
+    if (planRes.status === 'fulfilled') {
+      const currentPrice = Number(planRes.value?.price ?? 0);
       hasUpgradablePlans = maxPlanPrice > currentPrice;
-      userCredits = credits;
-      unreadNotificationCount = unreadCount;
-    } catch {
-      // DB might not be installed yet
+    }
+
+    if (creditsRes.status === 'fulfilled') {
+      userCredits = creditsRes.value;
+    }
+
+    if (unreadRes.status === 'fulfilled') {
+      unreadNotificationCount = unreadRes.value;
     }
   }
 

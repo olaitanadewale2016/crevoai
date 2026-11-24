@@ -146,6 +146,7 @@ ProjectSchema.index(
   { unique: true, partialFilterExpression: { custom_domain: { $type: 'string' } } }
 );
 ProjectSchema.index({ user_id: 1, deleted_at: 1, last_viewed_at: -1 });
+ProjectSchema.index({ user_id: 1, deleted_at: 1, updated_at: -1 });
 ProjectSchema.index({ user_id: 1, build_status: 1 });
 
 export const Project: Model<IProject> =

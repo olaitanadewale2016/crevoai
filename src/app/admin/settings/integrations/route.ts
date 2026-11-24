@@ -34,12 +34,12 @@ export async function PUT(req: NextRequest) {
   if (body.pusher_secret && String(body.pusher_secret).trim()) cleanSettings.pusher_secret = String(body.pusher_secret).trim();
   if (body.pusher_cluster !== undefined) cleanSettings.pusher_cluster = String(body.pusher_cluster).trim() || 'mt1';
 
-  if (body.reverb_host !== undefined) cleanSettings.reverb_host = body.reverb_host;
+  if (body.reverb_host !== undefined) cleanSettings.reverb_host = String(body.reverb_host).trim();
   if (body.reverb_port !== undefined) cleanSettings.reverb_port = Number(body.reverb_port) || 8080;
-  if (body.reverb_scheme !== undefined) cleanSettings.reverb_scheme = body.reverb_scheme;
-  if (body.reverb_app_id !== undefined) cleanSettings.reverb_app_id = body.reverb_app_id;
-  if (body.reverb_key) cleanSettings.reverb_key = body.reverb_key;
-  if (body.reverb_secret) cleanSettings.reverb_secret = body.reverb_secret;
+  if (body.reverb_scheme !== undefined) cleanSettings.reverb_scheme = String(body.reverb_scheme).trim() || 'https';
+  if (body.reverb_app_id !== undefined) cleanSettings.reverb_app_id = String(body.reverb_app_id).trim();
+  if (body.reverb_key && String(body.reverb_key).trim()) cleanSettings.reverb_key = String(body.reverb_key).trim();
+  if (body.reverb_secret && String(body.reverb_secret).trim()) cleanSettings.reverb_secret = String(body.reverb_secret).trim();
 
   // Firebase web settings
   if (body.firebase_system_project_id !== undefined) cleanSettings.firebase_system_project_id = body.firebase_system_project_id;

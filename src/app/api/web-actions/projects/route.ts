@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectDB } from '@/lib/db';
+import { connectDB, isValidObjectId } from '@/lib/db';
 import {
   getSessionContext,
   getUserCurrentPlan,
@@ -7,7 +7,7 @@ import {
 } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { generateUuidV7, generateHexToken, sha256Hex } from '@/lib/crypto';
-import { Project, ProjectFile } from '@/models/Project';
+import { Project, ProjectFile, Template } from '@/models/Project';
 import { r2PutObject } from '@/lib/r2';
 import { canPerformBuild } from '@/services/credits';
 
@@ -76,8 +76,13 @@ export async function POST(req: NextRequest) {
   // Match PHP ProjectController::store — keep template_id and theme_preset null when user
   // leaves them on "Automatic" so start/route.ts can auto-match specialized templates and
   // the AI can design a bespoke domain palette in src/custom.css on a crisp neutral canvas.
-  const templateId =
-    body.template_id && body.template_id !== 'automatic' ? String(body.template_id).trim() : null;
+  const rawTemplateId =
+    body.template_id && body.template_id !== 'automatic' ? String(body.template_id).trim() : '';
+  let templateId: string | null = rawTemplateId || null;
+  if (templateId && !isValidObjectId(templateId)) {
+    const tpl = await Template.findOne({ slug: templateId }).select('_id').lean();
+    templateId = tpl ? String(tpl._id) : null;
+  }
 
   const resolvedThemePreset =
     body.theme_preset && body.theme_preset !== 'automatic'

@@ -154,16 +154,28 @@ export default async function AdminSettingsPage() {
     },
     integrations: {
       broadcast_driver: integrations.broadcast_driver || 'pusher',
-      pusher_app_id: integrations.pusher_app_id || '',
-      pusher_has_key: Boolean(integrations.pusher_app_key),
-      pusher_has_secret: Boolean(integrations.pusher_app_secret),
-      pusher_cluster: integrations.pusher_cluster || 'mt1',
+      pusher_app_id: String(integrations.pusher_app_id || process.env.PUSHER_APP_ID || '').trim(),
+      pusher_has_key: Boolean(
+        String(
+          integrations.pusher_key || process.env.NEXT_PUBLIC_PUSHER_KEY || process.env.PUSHER_KEY || ''
+        ).trim()
+      ),
+      pusher_has_secret: Boolean(
+        String(integrations.pusher_secret || process.env.PUSHER_SECRET || '').trim()
+      ),
+      pusher_cluster:
+        String(
+          integrations.pusher_cluster ||
+            process.env.NEXT_PUBLIC_PUSHER_CLUSTER ||
+            process.env.PUSHER_CLUSTER ||
+            'mt1'
+        ).trim() || 'mt1',
       reverb_host: integrations.reverb_host || '',
       reverb_port: Number(integrations.reverb_port || 8080),
       reverb_scheme: integrations.reverb_scheme || 'https',
       reverb_app_id: integrations.reverb_app_id || '',
-      reverb_has_key: Boolean(integrations.reverb_app_key),
-      reverb_has_secret: Boolean(integrations.reverb_app_secret),
+      reverb_has_key: Boolean(String(integrations.reverb_key || '').trim()),
+      reverb_has_secret: Boolean(String(integrations.reverb_secret || '').trim()),
       internal_ai_provider_id: integrations.internal_ai_provider_id
         ? String(integrations.internal_ai_provider_id)
         : null,

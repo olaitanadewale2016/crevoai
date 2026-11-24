@@ -42,6 +42,7 @@ export async function ensureFreshSettingsCache(): Promise<void> {
         clearMemoryCacheByPrefix('settings.group.');
         clearMemoryCacheByPrefix('landing_page:config:');
         clearMemoryCacheByPrefix('internal_ai:');
+        clearMemoryCacheByPrefix('broadcast:');
         try {
           const { invalidateSharedContextCache } = await import('@/services/shared-context');
           invalidateSharedContextCache();
@@ -133,6 +134,7 @@ export async function invalidateAllSettingsCaches(group?: string): Promise<void>
     await clearSettingsCache();
     await cacheForgetPrefix('landing_page:config:');
     await cacheForgetPrefix('internal_ai:');
+    await cacheForgetPrefix('broadcast:');
     const nextVersion = Date.now();
     await setCacheEntryDirect(SETTINGS_VERSION_KEY, nextVersion, 365 * 86400);
     localSettingsVersion = nextVersion;

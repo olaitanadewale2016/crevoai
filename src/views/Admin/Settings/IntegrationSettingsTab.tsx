@@ -145,7 +145,17 @@ export default function IntegrationSettingsTab({ settings, aiProviders }: Props)
         e.preventDefault();
         put(route('admin.settings.integrations'), {
             preserveScroll: true,
-            onSuccess: () => toast.success(t('Integration settings updated')),
+            onSuccess: () => {
+                setData(prev => ({
+                    ...prev,
+                    pusher_key: '',
+                    pusher_secret: '',
+                    reverb_key: '',
+                    reverb_secret: '',
+                    firebase_system_api_key: '',
+                }));
+                toast.success(t('Integration settings updated'));
+            },
             onError: () => toast.error(t('Failed to update settings')),
         });
     };
@@ -168,19 +178,19 @@ export default function IntegrationSettingsTab({ settings, aiProviders }: Props)
             const payload = data.broadcast_driver === 'reverb'
                 ? {
                     driver: 'reverb',
-                    app_id: data.reverb_app_id,
-                    key: data.reverb_key || '[existing]',
-                    secret: data.reverb_secret || '[existing]',
-                    host: data.reverb_host,
-                    port: parseInt(data.reverb_port),
+                    app_id: data.reverb_app_id.trim(),
+                    key: data.reverb_key.trim() || '[existing]',
+                    secret: data.reverb_secret.trim() || '[existing]',
+                    host: data.reverb_host.trim(),
+                    port: parseInt(data.reverb_port, 10),
                     scheme: data.reverb_scheme,
                 }
                 : {
                     driver: 'pusher',
-                    app_id: data.pusher_app_id,
-                    key: data.pusher_key || '[existing]',
-                    secret: data.pusher_secret || '[existing]',
-                    cluster: data.pusher_cluster,
+                    app_id: data.pusher_app_id.trim(),
+                    key: data.pusher_key.trim() || '[existing]',
+                    secret: data.pusher_secret.trim() || '[existing]',
+                    cluster: data.pusher_cluster.trim(),
                 };
 
             await axios.post(route('admin.settings.broadcast.test'), payload);
