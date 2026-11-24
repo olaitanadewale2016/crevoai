@@ -73,11 +73,15 @@ export async function POST(req: NextRequest) {
   const name = prompt.length > 50 ? `${prompt.slice(0, 50)}...` : prompt;
   const projectId = generateUuidV7();
 
-  const templateId = body.template_id || null;
+  // Match PHP ProjectController::store — keep template_id and theme_preset null when user
+  // leaves them on "Automatic" so start/route.ts can auto-match specialized templates and
+  // the AI can design a bespoke domain palette in src/custom.css on a crisp neutral canvas.
+  const templateId =
+    body.template_id && body.template_id !== 'automatic' ? String(body.template_id).trim() : null;
 
   const resolvedThemePreset =
     body.theme_preset && body.theme_preset !== 'automatic'
-      ? body.theme_preset
+      ? String(body.theme_preset).trim()
       : null;
 
   const initialFileIds: string[] = [];

@@ -44,22 +44,40 @@ export async function PUT(
 
   const locale = (body.locale || 'en').trim();
   const items = Array.isArray(body.items) ? body.items : [];
+  const existingKeys = items.map((it) => String(it.key || '').trim()).filter(Boolean);
 
-  const updates = items.map((it) =>
-    LandingItem.updateOne(
-      { section_id: section._id, locale, item_key: it.key },
-      {
-        $set: {
-          sort_order: Number(it.sort_order) || 0,
-          is_enabled: it.is_enabled !== undefined ? Boolean(it.is_enabled) : true,
-          data: it.data || {},
+  const updates = items
+    .filter((it) => Boolean(it.key))
+    .map((it, idx) =>
+      LandingItem.updateOne(
+        { section_id: section._id, locale, item_key: String(it.key) },
+        {
+          $set: {
+            sort_order: Number(it.sort_order ?? idx) || 0,
+            is_enabled: it.is_enabled !== undefined ? Boolean(it.is_enabled) : true,
+            data: it.data || {},
+          },
         },
-      },
-      { upsert: true }
-    )
-  );
+        { upsert: true }
+      )
+    );
 
   await Promise.all(updates);
+
+  // Match PHP LandingPageService::updateItems — delete items removed by admin for this section + locale
+  if (existingKeys.length > 0) {
+    await LandingItem.deleteMany({
+      section_id: section._id,
+      locale,
+      item_key: { $nin: existingKeys },
+    });
+  } else {
+    await LandingItem.deleteMany({
+      section_id: section._id,
+      locale,
+    });
+  }
+
   await invalidateLandingCache();
 
   if (req.headers.get('x-inertia')) {

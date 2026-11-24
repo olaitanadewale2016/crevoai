@@ -38,7 +38,10 @@ export async function PUT(
   }>(req);
 
   if (body.is_enabled !== undefined) section.is_enabled = Boolean(body.is_enabled);
-  if (body.settings !== undefined) section.settings = body.settings;
+  if (body.settings !== undefined) {
+    section.settings = body.settings;
+    section.markModified('settings');
+  }
 
   await section.save();
   await invalidateLandingCache();

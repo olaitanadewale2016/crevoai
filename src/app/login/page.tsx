@@ -17,7 +17,10 @@ export default async function LoginPage({
   }
 
   const sp = await searchParams;
-  const status = sp.status || sp.message || undefined;
+  const status =
+    sp.status === 'verified'
+      ? 'Your email address has been verified! You can now sign in.'
+      : sp.status || sp.message || undefined;
   const demoCredentials = isDemoMode()
     ? { email: 'admin@crevo.ai', password: 'password' }
     : null;

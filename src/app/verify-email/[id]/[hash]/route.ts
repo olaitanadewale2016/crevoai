@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
+import { getSessionContext } from '@/lib/auth';
 import { User } from '@/models/User';
 import { hmacSha256, timingSafeEqualString } from '@/lib/crypto';
+import { sendUserEmailNotification } from '@/lib/email';
+import { getSetting } from '@/lib/settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,7 +38,19 @@ export async function GET(
   if (!user.email_verified_at) {
     user.email_verified_at = new Date();
     await user.save();
+    // Send welcome email after email verification succeeds
+    try {
+      await sendUserEmailNotification(user, 'welcome', {
+        user_name: user.name,
+        site_name: await getSetting<string>('site_name', 'Crevo'),
+      });
+    } catch {}
   }
 
-  return NextResponse.redirect(new URL('/create?verified=1', req.url));
+  const sessionCtx = await getSessionContext(req);
+  if (sessionCtx && String(sessionCtx.user._id) === String(user._id)) {
+    return NextResponse.redirect(new URL('/create?verified=1', req.url));
+  }
+
+  return NextResponse.redirect(new URL('/login?status=verified', req.url));
 }

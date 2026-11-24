@@ -11,7 +11,13 @@ import { getSetting } from '@/lib/settings';
 import { User, UserAiSettings } from '@/models/User';
 import { Plan } from '@/models/Billing';
 import { parseRequestBody } from '@/lib/http';
-import { sendUserEmailNotification, sendAdminEventEmail } from '@/lib/email';
+import {
+  buildVerificationUrl,
+  sendVerificationEmail,
+  sendUserEmailNotification,
+  sendAdminEventEmail,
+} from '@/lib/email';
+import { resolveRequestOrigin } from '@/lib/kinde';
 import { resolveReferralCode, recordReferralSignup } from '@/services/referrals';
 
 export const dynamic = 'force-dynamic';
@@ -86,7 +92,7 @@ export async function POST(req: NextRequest) {
     defaultPlan = await Plan.findOne({ is_active: true, price: 0 }).lean();
   }
 
-  const requireVerify = await getSetting<boolean>('require_email_verification', false);
+  const requireVerify = await getSetting<boolean>('require_email_verification', true);
   const initialCredits =
     defaultPlan?.monthly_build_credits === -1 ? 0 : defaultPlan?.monthly_build_credits || 0;
 
@@ -101,7 +107,7 @@ export async function POST(req: NextRequest) {
     plan_id: defaultPlan?._id || null,
     build_credits: initialCredits,
     credits_reset_at: defaultPlan ? new Date() : null,
-    email_verified_at: requireVerify ? null : new Date(),
+    email_verified_at: null,
   });
 
   // Mirror PHP UserObserver::created — provision default UserAiSettings
@@ -131,22 +137,34 @@ export async function POST(req: NextRequest) {
     } catch {}
   }
 
-  // Admin notification email
+  // Send verification link email to every newly registered user (awaited so serverless never drops it)
+  const appOrigin = resolveRequestOrigin(req);
+  const verifyUrl = buildVerificationUrl(user, appOrigin);
+  let verifyEmailSent = false;
   try {
-    await sendAdminEventEmail('user_registered', {
+    const mailResult = await sendVerificationEmail(user, verifyUrl);
+    verifyEmailSent = Boolean(mailResult?.ok);
+    if (!verifyEmailSent) {
+      console.warn('[Register] Verification email failed:', mailResult?.error);
+    }
+  } catch (err: any) {
+    console.error('[Register] Verification email exception:', err?.message);
+  }
+
+  // Admin notification & welcome email in parallel (non-blocking if SMTP fails)
+  await Promise.allSettled([
+    sendAdminEventEmail('user_registered', {
       user_id: String(user._id),
       user_name: user.name,
       user_email: user.email,
-    });
-  } catch {}
-
-  // Welcome email
-  try {
-    await sendUserEmailNotification(user, 'welcome', {
-      user_name: user.name,
-      site_name: await getSetting<string>('site_name', 'Crevo'),
-    });
-  } catch {}
+    }),
+    !requireVerify
+      ? sendUserEmailNotification(user, 'welcome', {
+          user_name: user.name,
+          site_name: await getSetting<string>('site_name', 'Crevo'),
+        })
+      : Promise.resolve(),
+  ]);
 
   const sessionTimeoutMin = await getSetting<number>('session_timeout', 120);
   const ttlSeconds = sessionTimeoutMin * 60;
@@ -161,7 +179,11 @@ export async function POST(req: NextRequest) {
     payload: { auth_provider: 'local' },
   });
 
-  const redirectUrl = requireVerify ? '/verify-email' : '/create';
+  const redirectUrl = requireVerify
+    ? verifyEmailSent
+      ? '/verify-email?status=verification-link-sent'
+      : '/verify-email?error=send_failed'
+    : '/create';
   const res = NextResponse.redirect(new URL(redirectUrl, req.url), 303);
   attachSessionCookie(res, session.token, ttlSeconds, session.cookieDomain);
 

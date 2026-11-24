@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 export default async function VerifyEmailPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; error?: string }>;
 }) {
   const sessionCtx = await getSessionContext();
   if (!sessionCtx?.user) {
@@ -19,5 +19,5 @@ export default async function VerifyEmailPage({
   }
 
   const sp = await searchParams;
-  return <VerifyEmail status={sp.status} />;
+  return <VerifyEmail status={sp.status} error={sp.error} />;
 }

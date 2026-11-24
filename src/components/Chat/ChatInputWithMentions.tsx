@@ -40,7 +40,7 @@ interface ChatInputWithMentionsProps {
     /** Called when text changes */
     onChange: (value: string) => void;
     /** Called when form is submitted */
-    onSubmit: (e: React.FormEvent, fileData?: FileData) => void;
+    onSubmit: (e: React.FormEvent, fileData?: FileData, overrideText?: string) => void;
     /** Whether the input is disabled */
     disabled?: boolean;
     /** Currently selected element to mention */
@@ -154,25 +154,30 @@ function SyncPlugin({
 }
 
 /**
- * Plugin to handle Enter key submission.
+ * Plugin to handle Enter key submission (Enter sends, Shift+Enter inserts newline).
  */
 function EnterKeyPlugin({ onSubmit }: { onSubmit: () => void }) {
     const [editor] = useLexicalComposerContext();
+    const onSubmitRef = useRef(onSubmit);
+
+    useEffect(() => {
+        onSubmitRef.current = onSubmit;
+    }, [onSubmit]);
 
     useEffect(() => {
         return editor.registerCommand(
             KEY_ENTER_COMMAND,
             (event: KeyboardEvent | null) => {
-                if (event && !event.shiftKey) {
-                    event.preventDefault();
-                    onSubmit();
-                    return true;
+                if (event && (event.shiftKey || event.isComposing || event.defaultPrevented)) {
+                    return false;
                 }
-                return false;
+                event?.preventDefault();
+                onSubmitRef.current();
+                return true;
             },
             COMMAND_PRIORITY_HIGH
         );
-    }, [editor, onSubmit]);
+    }, [editor]);
 
     return null;
 }
@@ -212,6 +217,12 @@ export function ChatInputWithMentions({
     const handleSubmit = useCallback(
         (e?: React.FormEvent) => {
             e?.preventDefault();
+            if (disabled) return;
+
+            // Read live text directly from Lexical so fast Enter never sees stale React state
+            const liveText = editorRef.current
+                ? editorRef.current.getEditorState().read(() => $getRoot().getTextContent())
+                : value;
 
             // Extract @mentioned files from the editor, resolving full metadata from projectFiles
             const mentionData = editorRef.current
@@ -227,11 +238,15 @@ export function ChatInputWithMentions({
                 ? { fileIds: allFileIds, attachedFiles: allFiles }
                 : undefined;
 
-            if (value.trim() || selectedElement || allFileIds.length > 0) {
-                onSubmit(e || ({ preventDefault: () => { } } as React.FormEvent), fileData);
+            const finalText = liveText || value;
+            if (finalText.trim() || selectedElement || allFileIds.length > 0) {
+                if (liveText !== value) {
+                    onChange(liveText);
+                }
+                onSubmit(e || ({ preventDefault: () => { } } as React.FormEvent), fileData, finalText);
             }
         },
-        [value, selectedElement, onSubmit, uploadedFiles, projectFiles]
+        [disabled, value, onChange, selectedElement, onSubmit, uploadedFiles, projectFiles]
     );
 
     const handleDrop = useCallback((e: React.DragEvent) => {
@@ -386,6 +401,7 @@ export function ChatInputWithMentions({
                         <PlainTextPlugin
                             contentEditable={
                                 <ContentEditable
+                                    enterKeyHint="send"
                                     className={cn(
                                         'w-full px-4 py-3 text-base md:text-sm resize-none border-0 bg-transparent',
                                         'focus:outline-none focus:ring-0 min-h-[60px] max-h-[120px] overflow-y-auto',

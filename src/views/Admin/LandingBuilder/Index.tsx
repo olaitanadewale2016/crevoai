@@ -1,7 +1,7 @@
-﻿'use client';
+'use client';
 
 import { useState, useCallback, useEffect } from 'react';
-import { Head, Link, router } from '@/lib/inertia-compat';
+import { Head, Link } from '@/lib/inertia-compat';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
@@ -554,6 +554,7 @@ function ItemForm({ item, itemType, onUpdate, t }: ItemFormProps) {
             );
 
         case 'logo':
+        case 'company':
             return (
                 <div className="space-y-4">
                     <div className="space-y-2">
@@ -743,6 +744,7 @@ function getDefaultItemData(itemType: string): Record<string, unknown> {
         case 'category':
             return { name: '', icon: 'Layout' };
         case 'logo':
+        case 'company':
             return { name: '', initial: '', color: 'bg-blue-500', image_url: null };
         case 'testimonial':
             return { quote: '', author: '', role: '', rating: 5, avatar: null, company_url: null };
@@ -765,6 +767,7 @@ function getItemTitle(item: SectionItem, itemType: string, t: (key: string) => s
         case 'category':
             return (data.name as string) || untitled;
         case 'logo':
+        case 'company':
             return (data.name as string) || untitled;
         case 'testimonial':
             return (data.author as string) || untitled;
@@ -791,6 +794,7 @@ export default function Index({
     );
     const [selectedLocale, setSelectedLocale] = useState(defaultLanguage);
     const [activeTab, setActiveTab] = useState<'settings' | 'preview'>('settings');
+    const [mobilePanel, setMobilePanel] = useState<'sections' | 'editor'>('sections');
     const [isSaving, setIsSaving] = useState(false);
     const [previewKey, setPreviewKey] = useState(Date.now());
     const [initialLoading, setInitialLoading] = useState(true);
@@ -809,6 +813,45 @@ export default function Index({
         })
     );
 
+    const updateSectionSettings = useCallback(
+        async (sectionId: Section['id'], newSettings: Record<string, unknown>) => {
+            let previousSections: Section[] = [];
+            setSections((prev) => {
+                previousSections = prev;
+                return prev.map((s) => (s.id === sectionId ? { ...s, settings: newSettings } : s));
+            });
+            setSelectedSection((prev) =>
+                prev?.id === sectionId ? { ...prev, settings: newSettings } : prev
+            );
+
+            try {
+                const res = await fetch(`/admin/landing-builder/sections/${sectionId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Accept: 'application/json',
+                    },
+                    body: JSON.stringify({ settings: newSettings }),
+                });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data.error || data.errors?.error || t('Failed to update settings'));
+                }
+                toast.success(t('Settings updated'));
+                setPreviewKey(Date.now());
+            } catch (err: any) {
+                setSections(previousSections);
+                setSelectedSection((prev) =>
+                    prev?.id === sectionId
+                        ? previousSections.find((s) => s.id === sectionId) || prev
+                        : prev
+                );
+                toast.error(err?.message || t('Failed to update settings'));
+            }
+        },
+        [t]
+    );
+
     const handleDragEnd = useCallback(
         (event: DragEndEvent) => {
             const { active, over } = event;
@@ -819,16 +862,27 @@ export default function Index({
                     const newIndex = items.findIndex((item) => item.id === over.id);
                     const newItems = arrayMove(items, oldIndex, newIndex);
 
-                    // Save reorder to backend
-                    router.post(
-                        '/admin/landing-builder/reorder',
-                        { ids: newItems.map((s) => s.id) },
-                        {
-                            preserveScroll: true,
-                            onSuccess: () => toast.success(t('Sections reordered')),
-                            onError: () => toast.error(t('Failed to reorder sections')),
-                        }
-                    );
+                    // Save reorder to backend asynchronously (real-time optimistic UI)
+                    fetch('/admin/landing-builder/reorder', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            Accept: 'application/json',
+                        },
+                        body: JSON.stringify({ ids: newItems.map((s) => s.id) }),
+                    })
+                        .then(async (res) => {
+                            if (!res.ok) {
+                                const data = await res.json().catch(() => ({}));
+                                throw new Error(data.error || data.errors?.error || t('Failed to reorder sections'));
+                            }
+                            toast.success(t('Sections reordered'));
+                            setPreviewKey(Date.now());
+                        })
+                        .catch((err: any) => {
+                            setSections(items);
+                            toast.error(err?.message || t('Failed to reorder sections'));
+                        });
 
                     return newItems;
                 });
@@ -838,26 +892,40 @@ export default function Index({
     );
 
     const handleToggleSection = useCallback(
-        (section: Section, enabled: boolean) => {
-            router.put(
-                `/admin/landing-builder/sections/${section.id}`,
-                { is_enabled: enabled },
-                {
-                    preserveScroll: true,
-                    onSuccess: () => {
-                        setSections((items) =>
-                            items.map((s) =>
-                                s.id === section.id ? { ...s, is_enabled: enabled } : s
-                            )
-                        );
-                        setSelectedSection((prev) =>
-                            prev?.id === section.id ? { ...prev, is_enabled: enabled } : prev
-                        );
-                        toast.success(enabled ? t('Section enabled') : t('Section disabled'));
-                    },
-                    onError: () => toast.error(t('Failed to update section')),
-                }
+        async (section: Section, enabled: boolean) => {
+            // Optimistic immediate toggle
+            setSections((items) =>
+                items.map((s) => (s.id === section.id ? { ...s, is_enabled: enabled } : s))
             );
+            setSelectedSection((prev) =>
+                prev?.id === section.id ? { ...prev, is_enabled: enabled } : prev
+            );
+
+            try {
+                const res = await fetch(`/admin/landing-builder/sections/${section.id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Accept: 'application/json',
+                    },
+                    body: JSON.stringify({ is_enabled: enabled }),
+                });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data.error || data.errors?.error || t('Failed to update section'));
+                }
+                toast.success(enabled ? t('Section enabled') : t('Section disabled'));
+                setPreviewKey(Date.now());
+            } catch (err: any) {
+                // Rollback on failure
+                setSections((items) =>
+                    items.map((s) => (s.id === section.id ? { ...s, is_enabled: !enabled } : s))
+                );
+                setSelectedSection((prev) =>
+                    prev?.id === section.id ? { ...prev, is_enabled: !enabled } : prev
+                );
+                toast.error(err?.message || t('Failed to update section'));
+            }
         },
         [t]
     );
@@ -870,29 +938,32 @@ export default function Index({
         const hasItems = sectionTypes[selectedSection.type]?.has_items;
 
         try {
-            // Save content
-            const content = selectedSection.content[selectedLocale] || {};
-            const contentResponse = await fetch(`/admin/landing-builder/sections/${selectedSection.id}/content`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': csrfToken,
-                    'Accept': 'application/json',
-                },
-                body: JSON.stringify({
-                    locale: selectedLocale,
-                    fields: content,
-                }),
-            });
+            // Save content (use active locale content if present; skip empty no-op on fallback locales)
+            const content = selectedSection.content[selectedLocale];
+            if (content && Object.keys(content).length > 0) {
+                const contentResponse = await fetch(`/admin/landing-builder/sections/${selectedSection.id}/content`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': csrfToken,
+                        'Accept': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        locale: selectedLocale,
+                        fields: content,
+                    }),
+                });
 
-            if (!contentResponse.ok) {
-                toast.error(t('Failed to save content'));
-                return;
+                if (!contentResponse.ok) {
+                    const errData = await contentResponse.json().catch(() => ({}));
+                    toast.error(errData.error || errData.errors?.error || t('Failed to save content'));
+                    return;
+                }
             }
 
-            // Save items if section has items
-            if (hasItems) {
-                const items = selectedSection.items[selectedLocale] || [];
+            // Save items if section has items and this locale has an explicit items array
+            const localeItems = selectedSection.items[selectedLocale];
+            if (hasItems && Array.isArray(localeItems)) {
                 const itemsResponse = await fetch(`/admin/landing-builder/sections/${selectedSection.id}/items`, {
                     method: 'PUT',
                     headers: {
@@ -902,7 +973,7 @@ export default function Index({
                     },
                     body: JSON.stringify({
                         locale: selectedLocale,
-                        items: items.map((item, index) => ({
+                        items: localeItems.map((item, index) => ({
                             key: item.key,
                             sort_order: index,
                             is_enabled: item.is_enabled,
@@ -912,20 +983,24 @@ export default function Index({
                 });
 
                 if (!itemsResponse.ok) {
-                    toast.error(t('Failed to save items'));
+                    const errData = await itemsResponse.json().catch(() => ({}));
+                    toast.error(errData.error || errData.errors?.error || t('Failed to save items'));
                     return;
                 }
             }
 
-            // Show single success message
+            // Show single success message & reload preview iframe cleanly
             toast.success(t('Section saved successfully'));
+            if (activeTab === 'preview') {
+                setPreviewLoading(true);
+            }
             setPreviewKey(Date.now());
         } catch {
             toast.error(t('Failed to save section'));
         } finally {
             setIsSaving(false);
         }
-    }, [selectedSection, selectedLocale, sectionTypes, t]);
+    }, [selectedSection, selectedLocale, sectionTypes, activeTab, t]);
 
     const handleContentUpdate = useCallback(
         (fields: Record<string, unknown>) => {
@@ -1020,9 +1095,59 @@ export default function Index({
             <Head title={t('Landing Page Builder')} />
             <Toaster />
 
-            <div className="h-screen flex bg-background text-foreground">
+            <div className="h-screen flex flex-col md:flex-row bg-background text-foreground">
+                {/* Mobile Panel Switcher */}
+                <div className="md:hidden flex items-center justify-between gap-2 px-3 py-2 border-b bg-background shrink-0">
+                    <div className="flex items-center border rounded-lg overflow-hidden">
+                        <button
+                            type="button"
+                            onClick={() => setMobilePanel('sections')}
+                            className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                                mobilePanel === 'sections'
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'bg-background text-muted-foreground'
+                            }`}
+                        >
+                            {t('Sections')}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setActiveTab('settings');
+                                setMobilePanel('editor');
+                            }}
+                            className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                                mobilePanel === 'editor' && activeTab === 'settings'
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'bg-background text-muted-foreground'
+                            }`}
+                        >
+                            {t('Edit')}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setPreviewLoading(true);
+                                setActiveTab('preview');
+                                setMobilePanel('editor');
+                            }}
+                            className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                                mobilePanel === 'editor' && activeTab === 'preview'
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'bg-background text-muted-foreground'
+                            }`}
+                        >
+                            {t('Preview')}
+                        </button>
+                    </div>
+                    <Button size="sm" onClick={handleSave} disabled={isSaving} className="h-7 text-xs">
+                        <Save className="h-3.5 w-3.5 me-1" />
+                        {isSaving ? t('Saving...') : t('Save')}
+                    </Button>
+                </div>
+
                 {/* LEFT PANEL - Section List */}
-                <div className="w-full md:w-[420px] shrink-0 md:border-e flex flex-col">
+                <div className={`${mobilePanel === 'sections' ? 'flex' : 'hidden'} md:flex w-full md:w-[420px] shrink-0 md:border-e flex-col flex-1 md:flex-none min-h-0`}>
                     {/* Header */}
                     <div className="h-14 px-4 border-b flex items-center justify-between shrink-0">
                         <span className="font-semibold truncate">{t('Landing Page Builder')}</span>
@@ -1049,17 +1174,22 @@ export default function Index({
                                     items={sections.map((s) => s.id)}
                                     strategy={verticalListSortingStrategy}
                                 >
-                                    {sections.map((section) => (
-                                        <SortableSectionCard
-                                            key={section.id}
-                                            section={section}
-                                            sectionType={sectionTypes[section.type]}
-                                            isSelected={selectedSection?.id === section.id}
-                                            onSelect={() => setSelectedSection(section)}
-                                            onToggle={(enabled) => handleToggleSection(section, enabled)}
-                                            t={t}
-                                        />
-                                    ))}
+                                    {sections
+                                        .filter((section) => Boolean(sectionTypes[section.type]))
+                                        .map((section) => (
+                                            <SortableSectionCard
+                                                key={section.id}
+                                                section={section}
+                                                sectionType={sectionTypes[section.type]}
+                                                isSelected={selectedSection?.id === section.id}
+                                                onSelect={() => {
+                                                    setSelectedSection(section);
+                                                    setMobilePanel('editor');
+                                                }}
+                                                onToggle={(enabled) => handleToggleSection(section, enabled)}
+                                                t={t}
+                                            />
+                                        ))}
                                 </SortableContext>
                             </DndContext>
                         </div>
@@ -1067,7 +1197,7 @@ export default function Index({
                 </div>
 
                 {/* RIGHT PANEL - Editor/Preview/Settings */}
-                <div className="hidden md:flex flex-1 flex-col overflow-hidden">
+                <div className={`${mobilePanel === 'editor' ? 'flex' : 'hidden'} md:flex flex-1 flex-col overflow-hidden min-h-0`}>
                     {/* Tab Header */}
                     <div className="h-14 px-4 border-b flex items-center justify-between shrink-0 bg-background relative z-10">
                         {/* Tab Toggle Buttons */}
@@ -1186,28 +1316,7 @@ export default function Index({
                                                                 ...selectedSection.settings,
                                                                 showcase_type: value as 'video' | 'screenshots',
                                                             };
-                                                            router.put(
-                                                                `/admin/landing-builder/sections/${selectedSection.id}`,
-                                                                { settings: newSettings },
-                                                                {
-                                                                    preserveScroll: true,
-                                                                    onSuccess: () => {
-                                                                        setSections((items) =>
-                                                                            items.map((s) =>
-                                                                                s.id === selectedSection.id
-                                                                                    ? { ...s, settings: newSettings }
-                                                                                    : s
-                                                                            )
-                                                                        );
-                                                                        setSelectedSection((prev) =>
-                                                                            prev ? { ...prev, settings: newSettings } : prev
-                                                                        );
-                                                                        toast.success(t('Settings updated'));
-                                                                        setPreviewKey(Date.now());
-                                                                    },
-                                                                    onError: () => toast.error(t('Failed to update settings')),
-                                                                }
-                                                            );
+                                                            updateSectionSettings(selectedSection.id, newSettings);
                                                         }}
                                                     >
                                                         <SelectTrigger>
@@ -1296,6 +1405,26 @@ export default function Index({
                                                 </div>
                                             </div>
 
+                                            {/* Optional Custom Hero Copy Overrides (leave empty for AI/static defaults) */}
+                                            <div className="border-t pt-6">
+                                                <div className="mb-4">
+                                                    <h4 className="font-medium">{t('Custom Hero Content (Optional)')}</h4>
+                                                    <p className="text-xs text-muted-foreground mt-1">
+                                                        {t('Leave any list empty to automatically use AI-generated or default translated copy.')}
+                                                    </p>
+                                                </div>
+                                                <ContentEditor
+                                                    section={selectedSection}
+                                                    sectionType={{
+                                                        ...sectionTypes[selectedSection.type],
+                                                        content_fields: ['headlines', 'subtitles', 'cta_button', 'suggestions', 'typing_prompts'],
+                                                    }}
+                                                    locale={selectedLocale}
+                                                    onUpdate={handleContentUpdate}
+                                                    t={t}
+                                                />
+                                            </div>
+
                                             {/* Trusted By Section */}
                                             <div className="border-t pt-6">
                                                 <div className="flex items-center justify-between mb-4">
@@ -1311,28 +1440,7 @@ export default function Index({
                                                                     ...selectedSection.settings,
                                                                     show_trusted_by: checked,
                                                                 };
-                                                                router.put(
-                                                                    `/admin/landing-builder/sections/${selectedSection.id}`,
-                                                                    { settings: newSettings },
-                                                                    {
-                                                                        preserveScroll: true,
-                                                                        onSuccess: () => {
-                                                                            setSections((items) =>
-                                                                                items.map((s) =>
-                                                                                    s.id === selectedSection.id
-                                                                                        ? { ...s, settings: newSettings }
-                                                                                        : s
-                                                                                )
-                                                                            );
-                                                                            setSelectedSection((prev) =>
-                                                                                prev ? { ...prev, settings: newSettings } : prev
-                                                                            );
-                                                                            toast.success(t('Settings updated'));
-                                                                            setPreviewKey(Date.now());
-                                                                        },
-                                                                        onError: () => toast.error(t('Failed to update settings')),
-                                                                    }
-                                                                );
+                                                                updateSectionSettings(selectedSection.id, newSettings);
                                                             }}
                                                         />
                                                     </div>
@@ -1409,7 +1517,7 @@ export default function Index({
                                 )}
                                 <iframe
                                     key={previewKey}
-                                    src={`/admin/landing-builder/preview?locale=${selectedLocale}`}
+                                    src={`/admin/landing-builder/preview?locale=${encodeURIComponent(selectedLocale)}&t=${previewKey}`}
                                     className="w-full h-full border-0 relative z-10"
                                     title={t('Landing Page Preview')}
                                     onLoad={() => setPreviewLoading(false)}

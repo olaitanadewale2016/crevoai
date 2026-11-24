@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, KeyboardEvent } from 'react';
 import { Button } from '@/components/ui/button';
@@ -24,7 +24,7 @@ export function ChatInput({ onSend, disabled = false, onCancel }: ChatInputProps
 
     const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
         // Enter to send, Shift+Enter for new line
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
             handleSend();
         }

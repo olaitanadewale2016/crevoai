@@ -310,7 +310,7 @@ export async function getSharedAppSettings() {
       Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
     facebook_login_enabled: Boolean(auth.facebook_login_enabled ?? false),
     github_login_enabled: Boolean(auth.github_login_enabled ?? false),
-    kinde_login_enabled: isKindeConfigured(),
+    kinde_login_enabled: false,
     recaptcha_enabled: recaptchaEnabled,
     recaptcha_site_key: recaptchaEnabled ? auth.recaptcha_site_key || '' : '',
     realtime_provider: 'pusher' as 'sse' | 'pusher',

@@ -142,26 +142,60 @@ export async function generateGdprExportToR2(exportRequestId: string): Promise<v
   }
 }
 
-export async function cascadeForceDeleteProject(projectId: string): Promise<void> {
+export async function bulkDeleteProjectRecords(projectIds: string[]): Promise<{
+  deletedCount: number;
+  cleanupR2: () => Promise<void>;
+}> {
+  const uniqueIds = Array.from(new Set(projectIds.map((id) => String(id).trim()).filter(Boolean)));
+  if (uniqueIds.length === 0) {
+    return { deletedCount: 0, cleanupR2: async () => {} };
+  }
+
   await connectDB();
-  const project = await Project.findById(projectId).lean();
-  if (!project) return;
+  const projects = await Project.find({ _id: { $in: uniqueIds } })
+    .select('_id thumbnail share_image')
+    .lean();
 
-  // Clean up R2 prefixes for this project
+  if (projects.length === 0) {
+    return { deletedCount: 0, cleanupR2: async () => {} };
+  }
+
+  const idsToDelete = projects.map((p) => String(p._id));
+
+  // Delete MongoDB records immediately in one parallel batch (~15ms)
   await Promise.all([
-    r2DeletePrefix('private', `sites/${projectId}/`).catch(() => { }),
-    r2DeletePrefix('private', `builds/${projectId}/`).catch(() => { }),
-    r2DeletePrefix('private', `project-files/${projectId}/`).catch(() => { }),
-    project.thumbnail ? r2DeleteObject('public', project.thumbnail).catch(() => { }) : Promise.resolve(),
-    project.share_image ? r2DeleteObject('public', project.share_image).catch(() => { }) : Promise.resolve(),
+    ProjectShare.deleteMany({ project_id: { $in: idsToDelete } }),
+    ProjectFile.deleteMany({ project_id: { $in: idsToDelete } }),
+    BuildCreditUsage.updateMany({ project_id: { $in: idsToDelete } }, { $set: { project_id: null } }),
+    Project.deleteMany({ _id: { $in: idsToDelete } }),
   ]);
 
-  await Promise.all([
-    ProjectShare.deleteMany({ project_id: projectId }),
-    ProjectFile.deleteMany({ project_id: projectId }),
-    BuildCreditUsage.updateMany({ project_id: projectId }, { $set: { project_id: null } }),
-    Project.deleteOne({ _id: projectId }),
-  ]);
+  // R2 object cleanup runs after HTTP response via Next.js after() so UI deletes feel instant
+  const cleanupR2 = async () => {
+    const batchSize = 5;
+    for (let i = 0; i < projects.length; i += batchSize) {
+      const slice = projects.slice(i, i + batchSize);
+      await Promise.allSettled(
+        slice.flatMap((p) => {
+          const pid = String(p._id);
+          return [
+            r2DeletePrefix('private', `sites/${pid}/`).catch(() => {}),
+            r2DeletePrefix('private', `builds/${pid}/`).catch(() => {}),
+            r2DeletePrefix('private', `project-files/${pid}/`).catch(() => {}),
+            p.thumbnail ? r2DeleteObject('public', p.thumbnail).catch(() => {}) : Promise.resolve(),
+            p.share_image ? r2DeleteObject('public', p.share_image).catch(() => {}) : Promise.resolve(),
+          ];
+        })
+      );
+    }
+  };
+
+  return { deletedCount: idsToDelete.length, cleanupR2 };
+}
+
+export async function cascadeForceDeleteProject(projectId: string): Promise<void> {
+  const { cleanupR2 } = await bulkDeleteProjectRecords([projectId]);
+  await cleanupR2();
 }
 
 export async function cascadeDeleteUser(userId: string, actorId?: string): Promise<void> {

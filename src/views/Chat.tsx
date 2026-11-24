@@ -676,15 +676,19 @@ export default function Chat({
 
     const isOutOfCredits = !credits.isUnlimited && !credits.usingOwnKey && credits.remaining <= 0;
 
-    const handleSubmit = async (e: React.FormEvent, fileData?: { fileIds: (number | string)[]; attachedFiles: AttachedFile[] }) => {
+    const handleSubmit = async (
+        e: React.FormEvent,
+        fileData?: { fileIds: (number | string)[]; attachedFiles: AttachedFile[] },
+        overrideText?: string
+    ) => {
         e.preventDefault();
-        if ((!prompt.trim() && !selectedElement && !fileData?.fileIds.length) || isLoading) return;
+        const msg = (overrideText ?? prompt).trim();
+        if ((!msg && !selectedElement && !fileData?.fileIds.length) || isLoading) return;
         if (isOutOfCredits) {
             setOutOfCreditsModalOpen(true);
             return;
         }
 
-        const msg = prompt.trim();
         const elementContext = selectedElement ? {
             tagName: selectedElement.tagName,
             selector: selectedElement.selector,

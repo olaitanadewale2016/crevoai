@@ -6,18 +6,8 @@ import { getSetting } from '@/lib/settings';
 import { isBroadcastConfigured } from '@/lib/broadcast';
 import { cacheRemember } from '@/lib/cache';
 import { getSharedAppProps } from '@/services/shared-context';
-import { getLandingPageConfig } from '@/services/landing';
+import { getLandingPageConfig, enrichHeroSectionWithFallbacks } from '@/services/landing';
 import { canPerformBuild } from '@/services/credits';
-import {
-  getInternalHeroHeadlines,
-  getInternalHeroSubtitles,
-  getInternalSuggestions,
-  getInternalTypingPrompts,
-  STATIC_HERO_HEADLINES,
-  STATIC_HERO_SUBTITLES,
-  STATIC_SUGGESTIONS,
-  STATIC_TYPING_PROMPTS,
-} from '@/services/internal-ai';
 import { Plan } from '@/models/Billing';
 import { Project } from '@/models/Project';
 import { User } from '@/models/User';
@@ -62,7 +52,7 @@ export default async function HomePage() {
   const shared = await getSharedAppProps();
   const locale = shared.locale?.current || 'en';
 
-  // Fetch landing config & AI content with safe fallbacks
+  // Fetch landing config & enrich Hero with AI/static fallbacks ONLY where admin left fields empty
   let rawSections: any[] = [];
   try {
     const cfg = await getLandingPageConfig(locale);
@@ -71,62 +61,13 @@ export default async function HomePage() {
     rawSections = [];
   }
 
-  let allHeadlines: string[] = STATIC_HERO_HEADLINES;
-  let allSubtitles: string[] = STATIC_HERO_SUBTITLES;
-  let fallbackSuggestions: string[] = STATIC_SUGGESTIONS;
-  let fallbackTypingPrompts: string[] = STATIC_TYPING_PROMPTS;
-
-  try {
-    const [headlines, subtitles, suggestions, typingPrompts] = await Promise.all([
-      getInternalHeroHeadlines(4, locale),
-      getInternalHeroSubtitles(4, locale),
-      getInternalSuggestions(4, locale),
-      getInternalTypingPrompts(8, locale),
-    ]);
-    if (headlines.length > 0) allHeadlines = headlines;
-    if (subtitles.length > 0) allSubtitles = subtitles;
-    if (suggestions.length > 0) fallbackSuggestions = suggestions;
-    if (typingPrompts.length > 0) fallbackTypingPrompts = typingPrompts;
-  } catch {
-    // Keep static fallbacks
-  }
-
-  const randomHeadline =
-    allHeadlines[Math.floor(Math.random() * allHeadlines.length)] || STATIC_HERO_HEADLINES[0];
-  const randomSubtitle =
-    allSubtitles[Math.floor(Math.random() * allSubtitles.length)] || STATIC_HERO_SUBTITLES[0];
-
-  // Flatten landing items (Landing section components read fields directly on each item)
-  // and inject locale-aware hero defaults
-  const sections = rawSections.map((sec) => {
-    const flatItems = Array.isArray(sec.items)
-      ? sec.items.map((it: any) =>
-          it && typeof it.data === 'object' && it.data !== null
-            ? { ...it.data, id: it.id, item_key: it.item_key }
-            : it
-        )
-      : [];
-
-    if (sec.type === 'hero') {
-      return {
-        ...sec,
-        content: {
-          ...(sec.content || {}),
-          headlines: [randomHeadline],
-          subtitles: [randomSubtitle],
-          suggestions: fallbackSuggestions,
-          typing_prompts: fallbackTypingPrompts,
-        },
-        items: flatItems,
-      };
-    }
-
-    return {
-      ...sec,
-      content: sec.content || {},
-      items: flatItems,
-    };
-  });
+  const {
+    sections,
+    headline: randomHeadline,
+    subtitle: randomSubtitle,
+    suggestions: fallbackSuggestions,
+    typingPrompts: fallbackTypingPrompts,
+  } = await enrichHeroSectionWithFallbacks(rawSections, locale);
 
   // Active plans for pricing section
   let plans: any[] = [];

@@ -1,7 +1,7 @@
-﻿'use client';
+'use client';
 
 import { Head, Link, router, usePage } from '@/lib/inertia-compat';
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { usePageLoading } from '@/hooks/usePageLoading';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { ProjectsSkeleton } from './ProjectsSkeleton';
@@ -11,6 +11,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -68,6 +69,8 @@ import {
     RotateCcw,
     ChevronLeft,
     ChevronRight,
+    CheckSquare,
+    X,
 } from 'lucide-react';
 
 type ViewMode = 'grid' | 'list' | 'large';
@@ -76,6 +79,9 @@ interface ProjectCardProps {
     project: Project;
     isTrash?: boolean;
     thumbnailUrl?: string | null;
+    isSelected?: boolean;
+    selectionMode?: boolean;
+    onToggleSelect?: (id: string, shiftKey?: boolean) => void;
     onToggleStar?: (id: string) => void;
     onDuplicate?: (id: string) => void;
     onDelete?: (project: Project) => void;
@@ -87,6 +93,9 @@ function ProjectCard({
     project,
     isTrash = false,
     thumbnailUrl,
+    isSelected = false,
+    selectionMode = false,
+    onToggleSelect,
     onToggleStar,
     onDuplicate,
     onDelete,
@@ -106,10 +115,27 @@ function ProjectCard({
         return t('Edited :days days ago', { days: diffDays });
     };
 
+    const handleCardClick = (e: React.MouseEvent) => {
+        if (selectionMode || isTrash) {
+            e.preventDefault();
+            onToggleSelect?.(project.id, e.shiftKey);
+        }
+    };
+
     return (
         <div className="group relative">
-            <Link href={isTrash ? '#' : `/project/${project.id}`} className={isTrash ? 'pointer-events-none' : ''}>
-                <div className="aspect-[4/3] rounded-xl border bg-card overflow-hidden mb-3 hover:shadow-lg transition-shadow">
+            <Link
+                href={isTrash ? '#' : `/project/${project.id}`}
+                onClick={handleCardClick}
+                className={isTrash ? 'cursor-pointer' : ''}
+            >
+                <div
+                    className={`aspect-[4/3] rounded-xl border bg-card overflow-hidden mb-3 hover:shadow-lg transition-all ${
+                        isSelected
+                            ? 'ring-2 ring-primary border-primary shadow-md'
+                            : 'border-border'
+                    }`}
+                >
                     {thumbnailUrl ? (
                         <img
                             src={thumbnailUrl}
@@ -124,9 +150,39 @@ function ProjectCard({
                 </div>
             </Link>
 
+            {/* Selection Checkbox (visible on hover or when any project is selected) */}
+            <div
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleSelect?.(project.id, e.shiftKey);
+                }}
+                className={`absolute top-2 start-2 z-10 flex items-center justify-center h-7 w-7 rounded-md bg-background/90 backdrop-blur-sm border border-border shadow-xs cursor-pointer transition-opacity ${
+                    isSelected || selectionMode
+                        ? 'opacity-100'
+                        : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
+                }`}
+                title={isSelected ? t('Deselect project') : t('Select project')}
+            >
+                <Checkbox
+                    checked={isSelected}
+                    onCheckedChange={() => {
+                        /* handled by container onClick to preserve shiftKey */
+                    }}
+                    aria-label={t('Select project')}
+                    className="pointer-events-none"
+                />
+            </div>
+
+            {/* Star indicator (positioned neatly beside selection checkbox) */}
+            {project.is_starred && !isTrash && (
+                <div className="absolute top-2.5 start-11 z-10 pointer-events-none">
+                    <Star className="h-4 w-4 text-yellow-500 fill-yellow-500 drop-shadow-xs" />
+                </div>
+            )}
+
             {/* Actions dropdown */}
             <TableActionMenu>
-                <TableActionMenuTrigger className="absolute top-2 end-2 opacity-0 group-hover:opacity-100 transition-opacity bg-background/80 hover:bg-background h-8 w-8 p-0" />
+                <TableActionMenuTrigger className="absolute top-2 end-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity bg-background/85 hover:bg-background h-8 w-8 p-0" />
                 <TableActionMenuContent>
                     {isTrash ? (
                         <>
@@ -174,12 +230,10 @@ function ProjectCard({
                 </TableActionMenuContent>
             </TableActionMenu>
 
-            {/* Star indicator */}
-            {project.is_starred && !isTrash && (
-                <Star className="absolute top-2 start-2 h-4 w-4 text-yellow-500 fill-yellow-500" />
-            )}
-
-            <div>
+            <div
+                onClick={selectionMode || isTrash ? (e) => onToggleSelect?.(project.id, e.shiftKey) : undefined}
+                className={selectionMode || isTrash ? 'cursor-pointer' : ''}
+            >
                 <h3 className="font-medium truncate group-hover:text-primary transition-colors">
                     {project.name}
                 </h3>
@@ -218,6 +272,35 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
     // Credits state
     const [credits, setCredits] = useState<UserCredits | null>(userCredits);
 
+    // Local optimistic state for instant real-time updates
+    const [projectItems, setProjectItems] = useState<Project[]>(projects.data);
+    const [tabCounts, setTabCounts] = useState(counts);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const lastSelectedIndexRef = useRef<number | null>(null);
+
+    // Keep local state in sync when server props change (tab/page/filter navigation)
+    useEffect(() => {
+        setProjectItems(projects.data);
+        setSelectedIds(new Set());
+        lastSelectedIndexRef.current = null;
+    }, [projects.data, activeTab, projects.current_page]);
+
+    useEffect(() => {
+        setTabCounts(counts);
+    }, [counts]);
+
+    // Clear selection on Escape key
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && selectedIds.size > 0) {
+                setSelectedIds(new Set());
+                lastSelectedIndexRef.current = null;
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [selectedIds.size]);
+
     // Real-time project status updates
     const [projectStatuses, setProjectStatuses] = useState<Record<string, Project['build_status']>>({});
 
@@ -228,7 +311,6 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
         enabled: !!broadcastConfig?.key,
         onNotification: (notification: UserNotification) => {
             addNotification(notification);
-            // Show toast for important notifications
             if (notification.type === 'credits_low') {
                 toast(notification.title, {
                     description: notification.message,
@@ -251,14 +333,17 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
         },
     });
 
+    // Single & bulk dialog state
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-    const [projectToDelete, setProjectToDelete] = useState<string | null>(null);
+    const [pendingPermanentDeleteIds, setPendingPermanentDeleteIds] = useState<string[]>([]);
     const [trashDialogOpen, setTrashDialogOpen] = useState(false);
-    const [projectToTrash, setProjectToTrash] = useState<string | null>(null);
-    const [projectToTrashInfo, setProjectToTrashInfo] = useState<{
+    const [pendingTrashIds, setPendingTrashIds] = useState<string[]>([]);
+    const [pendingTrashPublished, setPendingTrashPublished] = useState<Array<{
+        name: string;
         subdomain: string | null;
         customDomain: string | null;
-    } | null>(null);
+    }>>([]);
+
     const [searchValue, setSearchValue] = useState(filters.search || '');
     const searchTimeout = useRef<NodeJS.Timeout | null>(null);
     const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -273,19 +358,56 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
         localStorage.setItem('projects-view', viewMode);
     }, [viewMode]);
 
+    // Multi-select helpers
+    const allVisibleSelected = useMemo(
+        () => projectItems.length > 0 && projectItems.every((p) => selectedIds.has(p.id)),
+        [projectItems, selectedIds]
+    );
+
+    const handleToggleSelect = useCallback(
+        (id: string, shiftKey = false) => {
+            const clickedIdx = projectItems.findIndex((p) => p.id === id);
+            setSelectedIds((prev) => {
+                const next = new Set(prev);
+                if (shiftKey && lastSelectedIndexRef.current !== null && clickedIdx !== -1) {
+                    const start = Math.min(lastSelectedIndexRef.current, clickedIdx);
+                    const end = Math.max(lastSelectedIndexRef.current, clickedIdx);
+                    for (let i = start; i <= end; i++) {
+                        next.add(projectItems[i].id);
+                    }
+                } else if (next.has(id)) {
+                    next.delete(id);
+                } else {
+                    next.add(id);
+                }
+                return next;
+            });
+            if (clickedIdx !== -1) {
+                lastSelectedIndexRef.current = clickedIdx;
+            }
+        },
+        [projectItems]
+    );
+
+    const handleToggleSelectAll = useCallback(() => {
+        if (allVisibleSelected) {
+            setSelectedIds(new Set());
+            lastSelectedIndexRef.current = null;
+        } else {
+            setSelectedIds(new Set(projectItems.map((p) => p.id)));
+        }
+    }, [allVisibleSelected, projectItems]);
+
     // Helper function to get thumbnail URL with cache busting
     const getThumbnailUrl = useCallback((project: Project): string | null => {
         if (!project.thumbnail) return null;
-        // Cache buster based on updated_at
         const cacheBuster = project.updated_at ? `?v=${new Date(project.updated_at).getTime()}` : '';
-        // If already a full URL, return as-is
         if (project.thumbnail.startsWith('http')) {
             return project.thumbnail + cacheBuster;
         }
         if (project.thumbnail.startsWith('/storage/')) {
             return project.thumbnail + cacheBuster;
         }
-        // Prepend /storage/ for local storage paths
         return `/storage/${project.thumbnail}${cacheBuster}`;
     }, []);
 
@@ -294,20 +416,16 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
         const url = activeTab === 'trash' ? '/projects/trash' : '/projects';
         const params: Record<string, string> = {};
 
-        // Preserve tab for non-trash
         if (activeTab !== 'trash' && activeTab !== 'all') {
             params.tab = activeTab;
         }
 
-        // Build search param
         const searchVal = newFilters.search !== undefined ? newFilters.search : filters.search;
         if (searchVal) params.search = searchVal;
 
-        // Build sort param
         const sortVal = newFilters.sort !== undefined ? newFilters.sort : filters.sort;
         if (sortVal && sortVal !== 'last-edited') params.sort = sortVal;
 
-        // Build visibility param (not for trash)
         if (activeTab !== 'trash') {
             const visibilityVal = newFilters.visibility !== undefined ? newFilters.visibility : filters.visibility;
             if (visibilityVal) params.visibility = visibilityVal;
@@ -330,6 +448,7 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
     };
 
     const handleTabChange = (tab: string) => {
+        setSelectedIds(new Set());
         if (tab === 'trash') {
             router.visit('/projects/trash');
         } else {
@@ -360,10 +479,30 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
     };
 
     const handleToggleStar = (id: string) => {
+        const target = projectItems.find((p) => p.id === id);
+        if (!target) return;
+        const nextStarred = !target.is_starred;
+        const prevItems = projectItems;
+        const prevCounts = tabCounts;
+
+        setProjectItems((items) =>
+            activeTab === 'favorites' && !nextStarred
+                ? items.filter((p) => p.id !== id)
+                : items.map((p) => (p.id === id ? { ...p, is_starred: nextStarred } : p))
+        );
+        setTabCounts((c) => ({
+            ...c,
+            favorites: Math.max(0, c.favorites + (nextStarred ? 1 : -1)),
+        }));
+
         router.post(`/projects/${id}/toggle-star`, {}, {
             preserveScroll: true,
             onSuccess: () => toast.success(t('Project updated')),
-            onError: () => toast.error(t('Failed to update project')),
+            onError: () => {
+                setProjectItems(prevItems);
+                setTabCounts(prevCounts);
+                toast.error(t('Failed to update project'));
+            },
         });
     };
 
@@ -374,55 +513,263 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
         });
     };
 
-    const handleDelete = (project: Project) => {
-        // Check if project has published domains
-        if (project.subdomain || project.custom_domain) {
-            setProjectToTrash(project.id);
-            setProjectToTrashInfo({
-                subdomain: project.subdomain ?? null,
-                customDomain: project.custom_domain ?? null,
+    // Fast optimistic single or bulk Move to Trash (0ms UI feedback)
+    const executeTrash = useCallback(
+        async (ids: string[]) => {
+            if (ids.length === 0) return;
+            const idSet = new Set(ids);
+            const removedProjects = projectItems.filter((p) => idSet.has(p.id));
+            const starredRemovedCount = removedProjects.filter((p) => p.is_starred).length;
+            const prevItems = projectItems;
+            const prevCounts = tabCounts;
+
+            // Optimistically update UI & tab counts instantly
+            setProjectItems((items) => items.filter((p) => !idSet.has(p.id)));
+            setSelectedIds((prev) => {
+                const next = new Set(prev);
+                ids.forEach((id) => next.delete(id));
+                return next;
             });
+            setTabCounts((c) => ({
+                all: Math.max(0, c.all - removedProjects.length),
+                favorites: Math.max(0, c.favorites - starredRemovedCount),
+                trash: c.trash + removedProjects.length,
+            }));
+            setTrashDialogOpen(false);
+            setPendingTrashIds([]);
+            setPendingTrashPublished([]);
+
+            try {
+                const res =
+                    ids.length === 1
+                        ? await fetch(`/projects/${ids[0]}`, {
+                              method: 'DELETE',
+                              headers: {
+                                  Accept: 'application/json',
+                                  'X-Requested-With': 'XMLHttpRequest',
+                              },
+                          })
+                        : await fetch('/projects/bulk', {
+                              method: 'POST',
+                              headers: {
+                                  'Content-Type': 'application/json',
+                                  Accept: 'application/json',
+                                  'X-Requested-With': 'XMLHttpRequest',
+                              },
+                              body: JSON.stringify({ action: 'trash', ids }),
+                          });
+
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data.error || t('Failed to delete project'));
+                }
+
+                const data = await res.json().catch(() => ({}));
+                if (data.counts) {
+                    setTabCounts(data.counts);
+                }
+
+                toast.success(
+                    ids.length === 1
+                        ? t('Project moved to trash')
+                        : t(':count projects moved to trash', { count: ids.length })
+                );
+            } catch (err: any) {
+                setProjectItems(prevItems);
+                setTabCounts(prevCounts);
+                toast.error(err?.message || t('Failed to delete project'));
+            }
+        },
+        [projectItems, tabCounts, t]
+    );
+
+    const handleDelete = (project: Project) => {
+        if (project.subdomain || project.custom_domain) {
+            setPendingTrashIds([project.id]);
+            setPendingTrashPublished([
+                {
+                    name: project.name,
+                    subdomain: project.subdomain ?? null,
+                    customDomain: project.custom_domain ?? null,
+                },
+            ]);
             setTrashDialogOpen(true);
         } else {
-            // No published domains, delete directly
-            performDelete(project.id);
+            executeTrash([project.id]);
         }
     };
 
-    const performDelete = (id: string) => {
-        router.delete(`/projects/${id}`, {
-            preserveScroll: true,
-            onSuccess: () => {
-                toast.success(t('Project moved to trash'));
-                setTrashDialogOpen(false);
-                setProjectToTrash(null);
-                setProjectToTrashInfo(null);
-            },
-            onError: () => toast.error(t('Failed to delete project')),
-        });
+    const handleBulkTrash = () => {
+        const ids = Array.from(selectedIds);
+        if (ids.length === 0) return;
+
+        const published = projectItems
+            .filter((p) => selectedIds.has(p.id) && (p.subdomain || p.custom_domain))
+            .map((p) => ({
+                name: p.name,
+                subdomain: p.subdomain ?? null,
+                customDomain: p.custom_domain ?? null,
+            }));
+
+        if (published.length > 0) {
+            setPendingTrashIds(ids);
+            setPendingTrashPublished(published);
+            setTrashDialogOpen(true);
+        } else {
+            executeTrash(ids);
+        }
     };
+
+    // Fast optimistic single or bulk Restore from Trash
+    const executeRestore = useCallback(
+        async (ids: string[]) => {
+            if (ids.length === 0) return;
+            const idSet = new Set(ids);
+            const restoredProjects = projectItems.filter((p) => idSet.has(p.id));
+            const starredRestoredCount = restoredProjects.filter((p) => p.is_starred).length;
+            const prevItems = projectItems;
+            const prevCounts = tabCounts;
+
+            setProjectItems((items) => items.filter((p) => !idSet.has(p.id)));
+            setSelectedIds((prev) => {
+                const next = new Set(prev);
+                ids.forEach((id) => next.delete(id));
+                return next;
+            });
+            setTabCounts((c) => ({
+                all: c.all + restoredProjects.length,
+                favorites: c.favorites + starredRestoredCount,
+                trash: Math.max(0, c.trash - restoredProjects.length),
+            }));
+
+            try {
+                const res =
+                    ids.length === 1
+                        ? await fetch(`/projects/${ids[0]}/restore`, {
+                              method: 'POST',
+                              headers: {
+                                  Accept: 'application/json',
+                                  'X-Requested-With': 'XMLHttpRequest',
+                              },
+                          })
+                        : await fetch('/projects/bulk', {
+                              method: 'POST',
+                              headers: {
+                                  'Content-Type': 'application/json',
+                                  Accept: 'application/json',
+                                  'X-Requested-With': 'XMLHttpRequest',
+                              },
+                              body: JSON.stringify({ action: 'restore', ids }),
+                          });
+
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data.error || t('Failed to restore project'));
+                }
+
+                const data = await res.json().catch(() => ({}));
+                if (data.counts) {
+                    setTabCounts(data.counts);
+                }
+
+                toast.success(
+                    ids.length === 1
+                        ? t('Project restored')
+                        : t(':count projects restored', { count: ids.length })
+                );
+            } catch (err: any) {
+                setProjectItems(prevItems);
+                setTabCounts(prevCounts);
+                toast.error(err?.message || t('Failed to restore project'));
+            }
+        },
+        [projectItems, tabCounts, t]
+    );
 
     const handleRestore = (id: string) => {
-        router.post(`/projects/${id}/restore`, {}, {
-            onSuccess: () => toast.success(t('Project restored')),
-            onError: () => toast.error(t('Failed to restore project')),
-        });
+        executeRestore([id]);
     };
 
+    const handleBulkRestore = () => {
+        executeRestore(Array.from(selectedIds));
+    };
+
+    // Fast optimistic single or bulk Permanent Delete
     const handlePermanentDelete = (id: string) => {
-        setProjectToDelete(id);
+        setPendingPermanentDeleteIds([id]);
         setDeleteDialogOpen(true);
     };
 
-    const confirmPermanentDelete = () => {
-        if (projectToDelete) {
-            router.delete(`/projects/${projectToDelete}/force-delete`, {
-                onSuccess: () => toast.success(t('Project permanently deleted')),
-                onError: () => toast.error(t('Failed to delete project')),
-            });
-        }
+    const handleBulkPermanentDelete = () => {
+        const ids = Array.from(selectedIds);
+        if (ids.length === 0) return;
+        setPendingPermanentDeleteIds(ids);
+        setDeleteDialogOpen(true);
+    };
+
+    const confirmPermanentDelete = async () => {
+        const ids = pendingPermanentDeleteIds;
         setDeleteDialogOpen(false);
-        setProjectToDelete(null);
+        setPendingPermanentDeleteIds([]);
+        if (ids.length === 0) return;
+
+        const idSet = new Set(ids);
+        const removedCount = projectItems.filter((p) => idSet.has(p.id)).length;
+        const prevItems = projectItems;
+        const prevCounts = tabCounts;
+
+        // Optimistically remove immediately (0ms perceived latency)
+        setProjectItems((items) => items.filter((p) => !idSet.has(p.id)));
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            ids.forEach((id) => next.delete(id));
+            return next;
+        });
+        setTabCounts((c) => ({
+            ...c,
+            trash: Math.max(0, c.trash - removedCount),
+        }));
+
+        try {
+            const res =
+                ids.length === 1
+                    ? await fetch(`/projects/${ids[0]}/force-delete`, {
+                          method: 'DELETE',
+                          headers: {
+                              Accept: 'application/json',
+                              'X-Requested-With': 'XMLHttpRequest',
+                          },
+                      })
+                    : await fetch('/projects/bulk', {
+                          method: 'POST',
+                          headers: {
+                              'Content-Type': 'application/json',
+                              Accept: 'application/json',
+                              'X-Requested-With': 'XMLHttpRequest',
+                          },
+                          body: JSON.stringify({ action: 'force-delete', ids }),
+                      });
+
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || t('Failed to delete project'));
+            }
+
+            const data = await res.json().catch(() => ({}));
+            if (data.counts) {
+                setTabCounts(data.counts);
+            }
+
+            toast.success(
+                ids.length === 1
+                    ? t('Project permanently deleted')
+                    : t(':count projects permanently deleted', { count: ids.length })
+            );
+        } catch (err: any) {
+            setProjectItems(prevItems);
+            setTabCounts(prevCounts);
+            toast.error(err?.message || t('Failed to delete project'));
+        }
     };
 
     const getEmptyMessage = () => {
@@ -530,27 +877,27 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
                                         <TabsList>
                                             <TabsTrigger value="all">
                                                 {t('All Projects')}
-                                                {counts.all > 0 && (
+                                                {tabCounts.all > 0 && (
                                                     <span className="ms-2 text-xs bg-muted-foreground/20 px-1.5 py-0.5 rounded">
-                                                        {counts.all}
+                                                        {tabCounts.all}
                                                     </span>
                                                 )}
                                             </TabsTrigger>
                                             <TabsTrigger value="favorites">
                                                 <Star className="h-4 w-4 me-1" />
                                                 {t('Favorites')}
-                                                {counts.favorites > 0 && (
+                                                {tabCounts.favorites > 0 && (
                                                     <span className="ms-2 text-xs bg-muted-foreground/20 px-1.5 py-0.5 rounded">
-                                                        {counts.favorites}
+                                                        {tabCounts.favorites}
                                                     </span>
                                                 )}
                                             </TabsTrigger>
                                             <TabsTrigger value="trash">
                                                 <Trash2 className="h-4 w-4 me-1" />
                                                 {t('Trash')}
-                                                {counts.trash > 0 && (
+                                                {tabCounts.trash > 0 && (
                                                     <span className="ms-2 text-xs bg-muted-foreground/20 px-1.5 py-0.5 rounded">
-                                                        {counts.trash}
+                                                        {tabCounts.trash}
                                                     </span>
                                                 )}
                                             </TabsTrigger>
@@ -602,6 +949,22 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
                                         {/* Spacer */}
                                         <div className="flex-1" />
 
+                                        {/* Select All toggle */}
+                                        {projectItems.length > 0 && (
+                                            <Button
+                                                type="button"
+                                                variant={allVisibleSelected ? 'secondary' : 'outline'}
+                                                size="sm"
+                                                onClick={handleToggleSelectAll}
+                                                className="h-9 gap-1.5"
+                                            >
+                                                <CheckSquare className="h-4 w-4" />
+                                                <span>
+                                                    {allVisibleSelected ? t('Deselect all') : t('Select all')}
+                                                </span>
+                                            </Button>
+                                        )}
+
                                         {/* View Toggle */}
                                         <div className="flex items-center border rounded-lg bg-background">
                                             <Button
@@ -631,6 +994,67 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
                                         </div>
                                     </div>
 
+                                    {/* Multi-select Bulk Action Bar */}
+                                    {selectedIds.size > 0 && (
+                                        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3">
+                                            <div className="flex items-center gap-3">
+                                                <span className="text-sm font-medium text-foreground">
+                                                    {t(':count selected', { count: selectedIds.size })}
+                                                </span>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => {
+                                                        setSelectedIds(new Set());
+                                                        lastSelectedIndexRef.current = null;
+                                                    }}
+                                                    className="h-8 text-xs text-muted-foreground hover:text-foreground"
+                                                >
+                                                    <X className="h-3.5 w-3.5 me-1" />
+                                                    {t('Clear')}
+                                                </Button>
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                {activeTab === 'trash' ? (
+                                                    <>
+                                                        <Button
+                                                            type="button"
+                                                            variant="outline"
+                                                            size="sm"
+                                                            onClick={handleBulkRestore}
+                                                            className="h-8"
+                                                        >
+                                                            <RotateCcw className="h-3.5 w-3.5 me-1.5" />
+                                                            {t('Restore')} ({selectedIds.size})
+                                                        </Button>
+                                                        <Button
+                                                            type="button"
+                                                            variant="destructive"
+                                                            size="sm"
+                                                            onClick={handleBulkPermanentDelete}
+                                                            className="h-8"
+                                                        >
+                                                            <Trash2 className="h-3.5 w-3.5 me-1.5" />
+                                                            {t('Delete permanently')} ({selectedIds.size})
+                                                        </Button>
+                                                    </>
+                                                ) : (
+                                                    <Button
+                                                        type="button"
+                                                        variant="destructive"
+                                                        size="sm"
+                                                        onClick={handleBulkTrash}
+                                                        className="h-8"
+                                                    >
+                                                        <Trash2 className="h-3.5 w-3.5 me-1.5" />
+                                                        {t('Move to trash')} ({selectedIds.size})
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {/* Trash notice */}
                                     {activeTab === 'trash' && (
                                         <div className="mb-6 p-4 bg-muted rounded-lg">
@@ -643,7 +1067,7 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
                                     {/* Projects Grid */}
                                     <div className={`grid ${getGridClasses()} gap-6`}>
                                         {/* Project Cards */}
-                                        {projects.data.map((project) => (
+                                        {projectItems.map((project) => (
                                             <ProjectCard
                                                 key={project.id}
                                                 project={{
@@ -652,6 +1076,9 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
                                                 }}
                                                 isTrash={activeTab === 'trash'}
                                                 thumbnailUrl={getThumbnailUrl(project)}
+                                                isSelected={selectedIds.has(project.id)}
+                                                selectionMode={selectedIds.size > 0}
+                                                onToggleSelect={handleToggleSelect}
                                                 onToggleStar={handleToggleStar}
                                                 onDuplicate={handleDuplicate}
                                                 onDelete={handleDelete}
@@ -661,7 +1088,7 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
                                         ))}
 
                                         {/* Empty state */}
-                                        {projects.data.length === 0 && (
+                                        {projectItems.length === 0 && (
                                             <div className="col-span-full text-center py-12">
                                                 <p className="text-muted-foreground">
                                                     {getEmptyMessage()}
@@ -704,13 +1131,21 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
                 </SidebarProvider>
             </TooltipProvider>
 
-            {/* Permanent delete confirmation dialog */}
+            {/* Permanent delete confirmation dialog (single & bulk) */}
             <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>{t('Delete permanently?')}</AlertDialogTitle>
+                        <AlertDialogTitle>
+                            {pendingPermanentDeleteIds.length > 1
+                                ? t('Delete :count projects permanently?', { count: pendingPermanentDeleteIds.length })
+                                : t('Delete permanently?')}
+                        </AlertDialogTitle>
                         <AlertDialogDescription>
-                            {t('This action cannot be undone. This project will be permanently deleted.')}
+                            {pendingPermanentDeleteIds.length > 1
+                                ? t('This action cannot be undone. All :count selected projects will be permanently deleted.', {
+                                      count: pendingPermanentDeleteIds.length,
+                                  })
+                                : t('This action cannot be undone. This project will be permanently deleted.')}
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -722,21 +1157,37 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
                 </AlertDialogContent>
             </AlertDialog>
 
-            {/* Trash warning dialog for published projects */}
+            {/* Trash warning dialog for published projects (single & bulk) */}
             <AlertDialog open={trashDialogOpen} onOpenChange={setTrashDialogOpen}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>{t('Move to Trash?')}</AlertDialogTitle>
+                        <AlertDialogTitle>
+                            {pendingTrashIds.length > 1
+                                ? t('Move :count projects to Trash?', { count: pendingTrashIds.length })
+                                : t('Move to Trash?')}
+                        </AlertDialogTitle>
                         <AlertDialogDescription asChild>
                             <div className="space-y-2">
-                                <p>{t('This project is currently published and accessible at:')}</p>
+                                <p>
+                                    {pendingTrashPublished.length > 1
+                                        ? t('Some selected projects are currently published and accessible at:')
+                                        : t('This project is currently published and accessible at:')}
+                                </p>
                                 <ul className="list-disc list-inside space-y-1">
-                                    {projectToTrashInfo?.subdomain && baseDomain && (
-                                        <li><code className="text-xs bg-muted px-1 py-0.5 rounded">{projectToTrashInfo.subdomain}.{baseDomain}</code></li>
-                                    )}
-                                    {projectToTrashInfo?.customDomain && (
-                                        <li><code className="text-xs bg-muted px-1 py-0.5 rounded">{projectToTrashInfo.customDomain}</code></li>
-                                    )}
+                                    {pendingTrashPublished.map((info, idx) => (
+                                        <li key={idx}>
+                                            {info.subdomain && baseDomain && (
+                                                <code className="text-xs bg-muted px-1 py-0.5 rounded me-1">
+                                                    {info.subdomain}.{baseDomain}
+                                                </code>
+                                            )}
+                                            {info.customDomain && (
+                                                <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                                                    {info.customDomain}
+                                                </code>
+                                            )}
+                                        </li>
+                                    ))}
                                 </ul>
                                 <p className="text-destructive font-medium">
                                     {t('Moving to trash will make these URLs inaccessible.')}
@@ -747,7 +1198,7 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
                     <AlertDialogFooter>
                         <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
                         <AlertDialogAction
-                            onClick={() => projectToTrash && performDelete(projectToTrash)}
+                            onClick={() => executeTrash(pendingTrashIds)}
                             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                         >
                             {t('Move to Trash')}

@@ -3,7 +3,7 @@
 import { usePage } from '@/lib/inertia-compat';
 import { Button } from '@/components/ui/button';
 import { PageProps } from '@/types';
-import { Github, KeyRound } from 'lucide-react';
+import { Github } from 'lucide-react';
 import { useTranslation } from '@/contexts/LanguageContext';
 
 // Custom SVG icons for Google and Facebook
@@ -49,13 +49,6 @@ export function SocialLoginButtons({ mode = 'login' }: SocialLoginButtonsProps) 
             name: 'Google',
             icon: GoogleIcon,
             href: `/auth/google?mode=${mode}`,
-        },
-        {
-            key: 'kinde',
-            enabled: Boolean(appSettings.kinde_login_enabled),
-            name: 'Kinde',
-            icon: KeyRound,
-            href: `/api/auth/kinde/login?mode=${mode}`,
         },
         {
             key: 'facebook',

@@ -3,6 +3,7 @@ import Index from '@/Pages/Admin/LandingBuilder/Index';
 import { connectDB } from '@/lib/db';
 import { getSessionContext } from '@/lib/auth';
 import { getSharedAppProps } from '@/services/shared-context';
+import { seedLandingPage, seedLanguages } from '@/services/seeders';
 import { LandingSection, LandingContent, LandingItem, Language } from '@/models';
 
 export const dynamic = 'force-dynamic';
@@ -102,6 +103,18 @@ export default async function AdminLandingBuilderPage() {
   }
 
   await connectDB();
+
+  // Auto-seed default landing sections & languages if database hasn't seeded them yet
+  const [sectionCount, langCount] = await Promise.all([
+    LandingSection.countDocuments(),
+    Language.countDocuments(),
+  ]);
+  if (sectionCount === 0) {
+    await seedLandingPage().catch(() => {});
+  }
+  if (langCount === 0) {
+    await seedLanguages().catch(() => {});
+  }
 
   const [sections, contents, items, languages, sharedProps] = await Promise.all([
     LandingSection.find().sort({ sort_order: 1 }).lean(),

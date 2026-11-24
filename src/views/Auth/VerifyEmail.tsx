@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { route } from '@/lib/route';
 import { Button } from '@/components/ui/button';
@@ -8,16 +8,25 @@ import { FormEventHandler } from 'react';
 import { toast } from 'sonner';
 import { useTranslation } from '@/contexts/LanguageContext';
 
-export default function VerifyEmail({ status }: { status?: string }) {
+export default function VerifyEmail({ status, error }: { status?: string; error?: string }) {
     const { t } = useTranslation();
     const { post, processing } = useForm({});
+
+    const errorMessage =
+        error === 'expired'
+            ? t('This verification link has expired. Please request a new one below.')
+            : error === 'invalid'
+              ? t('This verification link is invalid. Please request a new one below.')
+              : error === 'send_failed'
+                ? t('We could not send the verification email. Please try resending below or contact support.')
+                : null;
 
     const submit: FormEventHandler = (e) => {
         e.preventDefault();
 
         post(route('verification.send'), {
             onSuccess: () => toast.success(t('Verification email sent')),
-            onError: () => toast.error(t('Failed to send verification email')),
+            onError: (errs) => toast.error(errs.error || t('Failed to send verification email')),
         });
     };
 
@@ -31,6 +40,12 @@ export default function VerifyEmail({ status }: { status?: string }) {
                     {t('Thanks for signing up! Before getting started, please verify your email address by clicking on the link we just emailed to you.')}
                 </p>
             </div>
+
+            {errorMessage && (
+                <div className="mb-4 text-sm font-medium text-destructive bg-destructive/10 rounded-lg p-3 text-center">
+                    {errorMessage}
+                </div>
+            )}
 
             {status === 'verification-link-sent' && (
                 <div className="mb-4 text-sm font-medium text-primary bg-primary/10 rounded-lg p-3 text-center">

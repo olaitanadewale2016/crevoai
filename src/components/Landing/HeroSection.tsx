@@ -275,8 +275,9 @@ export function HeroSection({
         }
     };
 
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault();
             handleSubmit(e);
         }
     };
@@ -445,7 +446,7 @@ export function HeroSection({
                                     <div className="hidden sm:flex items-center gap-2 text-sm text-muted-foreground ms-1">
                                         <span>{t('Press')}</span>
                                         <kbd className="px-2 py-0.5 bg-card rounded border text-xs">
-                                            ⌘ Enter
+                                            Enter
                                         </kbd>
                                         <span>{t('to start')}</span>
                                     </div>

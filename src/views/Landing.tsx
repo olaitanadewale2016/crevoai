@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useMemo } from 'react';
 import { Head, usePage } from '@/lib/inertia-compat';
@@ -130,6 +130,10 @@ export default function Landing({
         () => sections.find((s) => s.type === 'hero'),
         [sections]
     );
+    const trustedBySection = useMemo(
+        () => sections.find((s) => s.type === 'trusted_by'),
+        [sections]
+    );
     const socialProofSection = useMemo(
         () => sections.find((s) => s.type === 'social_proof'),
         [sections]
@@ -197,9 +201,18 @@ export default function Landing({
                             cta_button: heroCtaButton,
                         }}
                         trustedBy={{
-                            enabled: heroSection?.settings?.show_trusted_by !== false,
-                            content: { title: heroContent.trusted_by_title as string },
-                            items: heroSection?.items || [],
+                            enabled:
+                                heroSection?.settings?.show_trusted_by !== false &&
+                                (trustedBySection ? trustedBySection.is_enabled : true),
+                            content: {
+                                title:
+                                    (heroContent.trusted_by_title as string) ||
+                                    (trustedBySection?.content?.title as string),
+                            },
+                            items:
+                                heroSection?.items?.length
+                                    ? heroSection.items
+                                    : trustedBySection?.items || [],
                         }}
                     />
                 );

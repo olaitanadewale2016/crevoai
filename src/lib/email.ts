@@ -3,6 +3,7 @@ import { getSetting, getSettingGroup } from './settings';
 import { getPublicAssetUrl } from './r2';
 import { formatCurrencyAmount, formatDateWithSettings } from './currency';
 import { translateServer } from './i18n';
+import { hmacSha256 } from './crypto';
 
 export const EMAIL_THEME_PALETTES: Record<
   string,
@@ -130,15 +131,15 @@ export function renderBaseEmailLayout(params: {
 
 export async function createMailTransporter() {
   const email = await getSettingGroup('email');
-  const mailer = email.mail_mailer || 'smtp';
+  const mailer = email.mail_mailer || process.env.MAIL_MAILER || 'smtp';
   if (mailer === 'sendmail') {
     return nodemailer.createTransport({ sendmail: true });
   }
-  const host = email.smtp_host || '';
-  const port = Number(email.smtp_port || 587);
-  const enc = (email.smtp_encryption || 'tls').toLowerCase();
-  const user = email.smtp_username || '';
-  const pass = email.smtp_password || '';
+  const host = email.smtp_host || process.env.SMTP_HOST || process.env.MAIL_HOST || '';
+  const port = Number(email.smtp_port || process.env.SMTP_PORT || process.env.MAIL_PORT || 587);
+  const enc = (email.smtp_encryption || process.env.SMTP_ENCRYPTION || process.env.MAIL_ENCRYPTION || 'tls').toLowerCase();
+  const user = email.smtp_username || process.env.SMTP_USERNAME || process.env.MAIL_USERNAME || '';
+  const pass = email.smtp_password || process.env.SMTP_PASSWORD || process.env.MAIL_PASSWORD || '';
 
   return nodemailer.createTransport({
     host,
@@ -157,12 +158,14 @@ export async function sendMail(params: {
 }): Promise<{ ok: boolean; error?: string }> {
   try {
     const email = await getSettingGroup('email');
-    if (!email.smtp_host && (email.mail_mailer || 'smtp') === 'smtp') {
+    const mailer = email.mail_mailer || process.env.MAIL_MAILER || 'smtp';
+    const smtpHost = email.smtp_host || process.env.SMTP_HOST || process.env.MAIL_HOST || '';
+    if (!smtpHost && mailer === 'smtp') {
       return { ok: false, error: 'SMTP is not configured' };
     }
     const transporter = await createMailTransporter();
-    const fromName = email.mail_from_name || (await getSetting('site_name', 'Crevo'));
-    const fromAddress = email.mail_from_address || 'noreply@example.com';
+    const fromName = email.mail_from_name || process.env.MAIL_FROM_NAME || (await getSetting('site_name', 'Crevo'));
+    const fromAddress = email.mail_from_address || process.env.MAIL_FROM_ADDRESS || 'noreply@example.com';
 
     await transporter.sendMail({
       from: `"${fromName}" <${fromAddress}>`,
@@ -190,6 +193,21 @@ export async function getAdminEmailLocale(): Promise<string> {
 // ALL 14 Notification Email Helpers + VerifyEmail / ResetPassword
 // =========================================================
 
+export function buildVerificationUrl(
+  user: { _id: unknown; email: string },
+  origin: string,
+  ttlSeconds = 86400
+): string {
+  const appKey =
+    process.env.APP_ENCRYPTION_KEY ||
+    process.env.APP_KEY ||
+    'default-secret-key-32-chars-long!';
+  const expires = Math.floor(Date.now() / 1000) + ttlSeconds;
+  const hash = hmacSha256(appKey, `${String(user._id)}|${user.email}|${expires}`);
+  const cleanOrigin = origin.replace(/\/+$/, '');
+  return `${cleanOrigin}/verify-email/${String(user._id)}/${hash}?expires=${expires}`;
+}
+
 export async function sendVerifyEmail(user: { name: string; email: string; locale?: string | null }, verifyUrl: string) {
   const locale = user.locale || (await getSetting('default_locale', 'en'));
   const theme = await getEmailTheme();
@@ -199,11 +217,14 @@ export async function sendVerifyEmail(user: { name: string; email: string; local
     <p>Hello ${escapeHtml(user.name)},</p>
     <p>Please click the button below to verify your email address.</p>
     ${renderEmailButton(verifyUrl, translateServer(locale, 'Verify Email Address'), theme)}
-    <p style="font-size:13px;color:#6b7280;">If you did not create an account, no further action is required.</p>`;
+    <p style="font-size:13px;color:#6b7280;">If you did not create an account, no further action is required.</p>
+    <p style="font-size:12px;color:#9ca3af;margin-top:20px;word-break:break-all;">If you're having trouble clicking the button, copy and paste this URL into your browser:<br/><a href="${escapeHtml(verifyUrl)}" style="color:${theme.primaryColor};">${escapeHtml(verifyUrl)}</a></p>`;
+  const text = `Hello ${user.name},\n\nPlease verify your email address by visiting:\n${verifyUrl}\n\nIf you did not create an account, no further action is required.`;
   return sendMail({
     to: user.email,
     subject,
     html: renderBaseEmailLayout({ title: subject, bodyHtml, theme, isRtl: locale === 'ar' }),
+    text,
   });
 }
 
