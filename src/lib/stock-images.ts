@@ -4,6 +4,8 @@
  * dynamic search, and custom uploaded stock images for the AI builder.
  */
 
+import extraCuratedCatalog from './stock-images-catalog.json';
+
 export interface StockImageItem {
   filename: string;
   url: string;
@@ -208,9 +210,9 @@ export const LOCAL_STOCK_IMAGES: StockImageItem[] = [
   ...LOCAL_GALLERY_FILENAMES.map((f) => parseLocalFilename(f)),
 ];
 
-// Rich Multi-Industry Photography Catalog (Unsplash High-Speed Global CDN)
-// Over 200 distinct, verified high-resolution images across the most popular website categories built by users.
-export const CURATED_INDUSTRY_IMAGES: StockImageItem[] = [
+// Rich Multi-Industry Photography Catalog (Unsplash + Verified CC0 High-Speed Global CDNs)
+// Over 1,750 distinct, verified high-resolution images across 32 popular website niches built by users.
+const BASE_CURATED_INDUSTRY_IMAGES: StockImageItem[] = [
   // ============================================================================
   // 1. DENTISTRY, MEDICAL, HEALTHCARE, CLINICS & WELLNESS CARE
   // ============================================================================
@@ -2697,6 +2699,21 @@ export const CURATED_INDUSTRY_IMAGES: StockImageItem[] = [
     source: 'curated',
   },
 ];
+
+const EXTRA_CURATED_INDUSTRY_IMAGES: StockImageItem[] =
+  extraCuratedCatalog as StockImageItem[];
+
+export const CURATED_INDUSTRY_IMAGES: StockImageItem[] = (() => {
+  const seen = new Set<string>();
+  const combined: StockImageItem[] = [];
+  for (const item of [...BASE_CURATED_INDUSTRY_IMAGES, ...EXTRA_CURATED_INDUSTRY_IMAGES]) {
+    if (!seen.has(item.url)) {
+      seen.add(item.url);
+      combined.push(item);
+    }
+  }
+  return combined;
+})();
 
 // Combine all libraries into a master list
 export const ALL_PRESET_IMAGES: StockImageItem[] = [

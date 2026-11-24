@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import AdminLayout from '@/Layouts/AdminLayout';
 import { AdminPageHeader } from '@/components/Admin/AdminPageHeader';
 import { Button } from '@/components/ui/button';
@@ -36,6 +36,8 @@ import {
   Palette,
   Eye,
   RefreshCw,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTranslation } from '@/contexts/LanguageContext';
@@ -61,6 +63,8 @@ export default function StockImagesView({ user, initialImages, stats: initialSta
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [toneFilter, setToneFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const PAGE_SIZE = 48;
 
   // Modals state
   const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -114,12 +118,24 @@ export default function StockImagesView({ user, initialImages, stats: initialSta
         const matchesSearch =
           img.subject.toLowerCase().includes(q) ||
           img.category.toLowerCase().includes(q) ||
+          img.categories.some((c) => c.toLowerCase().includes(q)) ||
           img.alt.toLowerCase().includes(q);
         if (!matchesSearch) return false;
       }
       return true;
     });
   }, [images, typeFilter, toneFilter, categoryFilter, search]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, typeFilter, toneFilter, categoryFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredImages.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedImages = useMemo(() => {
+    const start = (safePage - 1) * PAGE_SIZE;
+    return filteredImages.slice(start, start + PAGE_SIZE);
+  }, [filteredImages, safePage]);
 
   const handleCopy = async (text: string, identifier: string) => {
     try {
@@ -255,7 +271,7 @@ export default function StockImagesView({ user, initialImages, stats: initialSta
               <ImageIcon className="h-4 w-4 text-primary" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats.total}</div>
+              <div className="text-2xl font-bold">{stats.total.toLocaleString()}</div>
               <p className="text-xs text-muted-foreground mt-1">
                 {t('Including curated & local')}
               </p>
@@ -270,7 +286,7 @@ export default function StockImagesView({ user, initialImages, stats: initialSta
               <Layers className="h-4 w-4 text-blue-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats.backgrounds}</div>
+              <div className="text-2xl font-bold">{stats.backgrounds.toLocaleString()}</div>
               <p className="text-xs text-muted-foreground mt-1">{t('Hero & section textures')}</p>
             </CardContent>
           </Card>
@@ -283,7 +299,7 @@ export default function StockImagesView({ user, initialImages, stats: initialSta
               <Palette className="h-4 w-4 text-purple-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats.gallery}</div>
+              <div className="text-2xl font-bold">{stats.gallery.toLocaleString()}</div>
               <p className="text-xs text-muted-foreground mt-1">{t('Cards & featured photos')}</p>
             </CardContent>
           </Card>
@@ -296,7 +312,7 @@ export default function StockImagesView({ user, initialImages, stats: initialSta
               <Upload className="h-4 w-4 text-emerald-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats.custom}</div>
+              <div className="text-2xl font-bold">{stats.custom.toLocaleString()}</div>
               <p className="text-xs text-muted-foreground mt-1">{t('Admin managed custom files')}</p>
             </CardContent>
           </Card>
@@ -340,12 +356,13 @@ export default function StockImagesView({ user, initialImages, stats: initialSta
                     <SelectItem value="dark">{t('Dark')}</SelectItem>
                     <SelectItem value="warm">{t('Warm')}</SelectItem>
                     <SelectItem value="cool">{t('Cool')}</SelectItem>
+                    <SelectItem value="neutral">{t('Neutral')}</SelectItem>
                   </SelectContent>
                 </Select>
 
                 {/* Category Filter */}
                 <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                  <SelectTrigger className="w-[180px]">
+                  <SelectTrigger className="w-[200px]">
                     <SelectValue placeholder={t('All Niches')} />
                   </SelectTrigger>
                   <SelectContent>
@@ -357,22 +374,31 @@ export default function StockImagesView({ user, initialImages, stats: initialSta
                     <SelectItem value="technology">{t('Tech / SaaS / AI')}</SelectItem>
                     <SelectItem value="pets">{t('Pets / Veterinary')}</SelectItem>
                     <SelectItem value="real-estate">{t('Real Estate / Interior')}</SelectItem>
+                    <SelectItem value="architecture">{t('Architecture / Urban')}</SelectItem>
                     <SelectItem value="construction">{t('Construction / Trades')}</SelectItem>
-                    <SelectItem value="plumbing">{t('Plumbing / HVAC')}</SelectItem>
+                    <SelectItem value="plumbing">{t('Plumbing / Solar / HVAC')}</SelectItem>
                     <SelectItem value="beauty">{t('Beauty / Salon / Spa')}</SelectItem>
-                    <SelectItem value="restaurant">{t('Restaurant / Cafe / Food')}</SelectItem>
+                    <SelectItem value="restaurant">{t('Restaurant / Dining')}</SelectItem>
+                    <SelectItem value="coffee">{t('Coffee / Cafe / Bakery')}</SelectItem>
+                    <SelectItem value="hospitality">{t('Hospitality / Wine / Bar')}</SelectItem>
                     <SelectItem value="cleaning">{t('Cleaning / Maid Services')}</SelectItem>
                     <SelectItem value="education">{t('Education / Courses')}</SelectItem>
                     <SelectItem value="photography">{t('Photography / Creative')}</SelectItem>
-                    <SelectItem value="travel">{t('Travel / Hotels')}</SelectItem>
+                    <SelectItem value="travel">{t('Travel / Hotels / Resorts')}</SelectItem>
                     <SelectItem value="fashion">{t('E-Commerce / Fashion')}</SelectItem>
+                    <SelectItem value="jewelry">{t('Jewelry / Watches / Luxury')}</SelectItem>
                     <SelectItem value="finance">{t('Finance / Crypto')}</SelectItem>
-                    <SelectItem value="wedding">{t('Weddings / Events')}</SelectItem>
-                    <SelectItem value="music">{t('Music / Podcast / Gaming')}</SelectItem>
+                    <SelectItem value="wedding">{t('Weddings / Events / Florist')}</SelectItem>
+                    <SelectItem value="music">{t('Music / Podcast / Audio')}</SelectItem>
+                    <SelectItem value="gaming">{t('Gaming / Esports')}</SelectItem>
                     <SelectItem value="nonprofit">{t('Nonprofit / Green Energy')}</SelectItem>
+                    <SelectItem value="agriculture">{t('Agriculture / Farms / Organic')}</SelectItem>
                     <SelectItem value="logistics">{t('Logistics / Shipping')}</SelectItem>
+                    <SelectItem value="manufacturing">{t('Manufacturing / Industrial')}</SelectItem>
                     <SelectItem value="coworking">{t('Coworking / Business')}</SelectItem>
                     <SelectItem value="avatar">{t('Portraits / Avatars')}</SelectItem>
+                    <SelectItem value="abstract">{t('Abstract / Textures')}</SelectItem>
+                    <SelectItem value="nature">{t('Nature / Landscapes')}</SelectItem>
                   </SelectContent>
                 </Select>
 
@@ -384,9 +410,52 @@ export default function StockImagesView({ user, initialImages, stats: initialSta
           </CardContent>
         </Card>
 
+        {/* Results Summary & Top Pagination */}
+        {filteredImages.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-muted-foreground">
+            <p>
+              {t('Showing')}{' '}
+              <span className="font-medium text-foreground">
+                {((safePage - 1) * PAGE_SIZE + 1).toLocaleString()}–
+                {Math.min(safePage * PAGE_SIZE, filteredImages.length).toLocaleString()}
+              </span>{' '}
+              {t('of')}{' '}
+              <span className="font-medium text-foreground">
+                {filteredImages.length.toLocaleString()}
+              </span>{' '}
+              {t('images')}
+            </p>
+            {totalPages > 1 && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={safePage <= 1}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  {t('Previous')}
+                </Button>
+                <span className="text-xs font-medium px-2">
+                  {t('Page')} {safePage} / {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={safePage >= totalPages}
+                >
+                  {t('Next')}
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Images Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-          {filteredImages.map((img) => (
+          {paginatedImages.map((img) => (
             <Card
               key={img.filename + img.url}
               className="overflow-hidden group hover:shadow-md transition-shadow flex flex-col justify-between"
@@ -465,6 +534,62 @@ export default function StockImagesView({ user, initialImages, stats: initialSta
             </Card>
           ))}
         </div>
+
+        {/* Bottom Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-2 pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setCurrentPage(1);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              disabled={safePage <= 1}
+            >
+              {t('First')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setCurrentPage((p) => Math.max(1, p - 1));
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              disabled={safePage <= 1}
+            >
+              <ChevronLeft className="h-4 w-4 mr-1" />
+              {t('Previous')}
+            </Button>
+            <span className="text-sm text-muted-foreground px-3">
+              {t('Page')} <span className="font-medium text-foreground">{safePage}</span> {t('of')}{' '}
+              <span className="font-medium text-foreground">{totalPages}</span>
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setCurrentPage((p) => Math.min(totalPages, p + 1));
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              disabled={safePage >= totalPages}
+            >
+              {t('Next')}
+              <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setCurrentPage(totalPages);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              disabled={safePage >= totalPages}
+            >
+              {t('Last')}
+            </Button>
+          </div>
+        )}
 
         {filteredImages.length === 0 && (
           <div className="text-center py-16 border rounded-2xl bg-muted/20">
