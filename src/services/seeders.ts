@@ -344,9 +344,10 @@ export async function seedLandingPage() {
     { type: 'use_cases', sort_order: 4, is_enabled: true, settings: {} },
     { type: 'pricing', sort_order: 5, is_enabled: true, settings: {} },
     { type: 'categories', sort_order: 6, is_enabled: true, settings: {} },
-    { type: 'testimonials', sort_order: 7, is_enabled: true, settings: {} },
-    { type: 'faq', sort_order: 8, is_enabled: true, settings: {} },
-    { type: 'cta', sort_order: 9, is_enabled: true, settings: {} },
+    { type: 'trusted_by', sort_order: 7, is_enabled: false, settings: {} },
+    { type: 'testimonials', sort_order: 8, is_enabled: true, settings: {} },
+    { type: 'faq', sort_order: 9, is_enabled: true, settings: {} },
+    { type: 'cta', sort_order: 10, is_enabled: true, settings: {} },
   ];
 
   const sectionsMap = new Map<string, any>();
@@ -392,6 +393,9 @@ export async function seedLandingPage() {
       title: 'What will you build today?',
       subtitle: 'Generate any web experience in minutes.',
     },
+    trusted_by: {
+      title: 'Trusted by teams at',
+    },
     testimonials: {
       badge: 'Testimonials',
       title: 'Loved by builders',
@@ -423,6 +427,13 @@ export async function seedLandingPage() {
 
   const itemDefaults: Record<string, Array<Record<string, unknown>>> = {
     hero: [
+      { name: 'TechCorp', initial: 'T', color: 'bg-blue-500' },
+      { name: 'StartupHQ', initial: 'S', color: 'bg-green-500' },
+      { name: 'DesignCo', initial: 'D', color: 'bg-purple-500' },
+      { name: 'DevAgency', initial: 'A', color: 'bg-orange-500' },
+      { name: 'BuilderInc', initial: 'B', color: 'bg-pink-500' },
+    ],
+    trusted_by: [
       { name: 'TechCorp', initial: 'T', color: 'bg-blue-500' },
       { name: 'StartupHQ', initial: 'S', color: 'bg-green-500' },
       { name: 'DesignCo', initial: 'D', color: 'bg-purple-500' },

@@ -109,7 +109,7 @@ export default async function AdminLandingBuilderPage() {
     LandingSection.countDocuments(),
     Language.countDocuments(),
   ]);
-  if (sectionCount === 0) {
+  if (sectionCount < 11) {
     await seedLandingPage().catch(() => {});
   }
   if (langCount === 0) {

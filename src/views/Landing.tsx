@@ -202,8 +202,7 @@ export default function Landing({
                         }}
                         trustedBy={{
                             enabled:
-                                heroSection?.settings?.show_trusted_by !== false &&
-                                (trustedBySection ? trustedBySection.is_enabled : true),
+                                heroSection?.settings?.show_trusted_by !== false,
                             content: {
                                 title:
                                     (heroContent.trusted_by_title as string) ||

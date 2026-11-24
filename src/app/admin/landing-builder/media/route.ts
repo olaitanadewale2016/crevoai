@@ -92,14 +92,19 @@ export async function DELETE(req: NextRequest) {
   }
 
   const body = await parseRequestBody<{ path?: string }>(req);
-  const path = (body.path || '').trim();
+  const targetPath = (body.path || '').trim();
 
-  if (!path) {
+  if (!targetPath) {
     return NextResponse.json({ errors: { path: 'Path is required' } }, { status: 422 });
   }
 
-  const r2Key = `landing/${path}`;
+  const r2Key = `landing/${targetPath}`;
   await r2DeleteObject(r2Key, 'public').catch(() => {});
+
+  // Local storage cleanup fallback
+  const filename = targetPath.replace(/^.*[\\/]/, '');
+  const localFile = path.join(process.cwd(), 'public', 'storage', 'landing', filename);
+  await fs.promises.unlink(localFile).catch(() => {});
 
   return NextResponse.json({ success: true });
 }
