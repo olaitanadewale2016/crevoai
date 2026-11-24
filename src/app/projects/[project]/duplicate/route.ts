@@ -77,7 +77,7 @@ export async function POST(
     user_id: ctx.user._id,
     name: newName,
     description: project.description,
-    initial_prompt: project.initial_prompt,
+    initial_prompt: null,
     conversation_history: project.conversation_history || [],
     template_id: project.template_id,
     theme_preset: project.theme_preset,

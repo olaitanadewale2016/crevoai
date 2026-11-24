@@ -39,6 +39,15 @@ export async function POST(
     return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
+  // Consume initial_prompt as soon as the first build attempt is triggered so it never
+  // lingers on the project document even if validation/credits/builder checks return early.
+  if (project.initial_prompt || (project.initial_file_ids && project.initial_file_ids.length > 0)) {
+    await Project.updateOne(
+      { _id: project._id },
+      { $set: { initial_prompt: null, initial_file_ids: [] } }
+    ).catch(() => {});
+  }
+
   if (isDemoAdminUser(ctx.user)) {
     return NextResponse.json(
       {

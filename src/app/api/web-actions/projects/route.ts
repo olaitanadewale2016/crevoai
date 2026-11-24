@@ -167,14 +167,16 @@ export async function POST(req: NextRequest) {
     req.headers.get('x-requested-with') === 'XMLHttpRequest' ||
     req.headers.get('accept')?.includes('application/json');
 
+  const projectUrl = `/project/${project._id}?autostart=1`;
+
   if (isAjax) {
     return NextResponse.json({
       success: true,
-      redirect: `/project/${project._id}`,
+      redirect: projectUrl,
       hard_redirect: true,
       projectId: project._id,
     });
   }
 
-  return NextResponse.redirect(new URL(`/project/${project._id}`, req.url), 303);
+  return NextResponse.redirect(new URL(projectUrl, req.url), 303);
 }

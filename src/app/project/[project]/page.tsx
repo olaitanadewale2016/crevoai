@@ -44,14 +44,16 @@ async function generateSuggestedSubdomain(name: string): Promise<string> {
 
 export default async function ProjectChatPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ project: string }>;
+  searchParams: Promise<{ autostart?: string }>;
 }) {
   const ctx = await getSessionContext();
   if (!ctx) redirect('/login');
   if (!(await hasVerifiedEmail(ctx.user))) redirect('/verify-email');
 
-  const { project: projectId } = await params;
+  const [{ project: projectId }, { autostart }] = await Promise.all([params, searchParams]);
   await connectDB();
 
   const project = await Project.findOne({ _id: projectId, deleted_at: null }).lean();
@@ -298,14 +300,30 @@ export default async function ProjectChatPage({
 
   const serializedUser = serializeUser(user) as any;
 
+  // Only auto-start the first prompt when arriving immediately after creating a brand-new
+  // project (?autostart=1) with no prior history, preview, or build session.
+  // Opening any recent/existing project must simply open it without re-sending the first prompt.
+  const shouldAutoStartInitialPrompt = Boolean(
+    autostart === '1' &&
+      project.initial_prompt &&
+      conversationHistory.length === 0 &&
+      !previewExists &&
+      !project.active_build_id &&
+      !project.build_session_id &&
+      (!project.build_status || project.build_status === 'idle')
+  );
+
   return (
     <Chat
+      key={String(project._id)}
       {...(sharedProps as any)}
       project={{
         id: String(project._id),
         name: project.name,
-        initial_prompt: project.initial_prompt ?? null,
-        initial_file_ids: (project.initial_file_ids || []).map(String),
+        initial_prompt: shouldAutoStartInitialPrompt ? project.initial_prompt ?? null : null,
+        initial_file_ids: shouldAutoStartInitialPrompt
+          ? (project.initial_file_ids || []).map(String)
+          : [],
         has_history: conversationHistory.length > 0,
         conversation_history: conversationHistory,
         preview_url: previewExists ? `/preview/${String(project._id)}` : null,

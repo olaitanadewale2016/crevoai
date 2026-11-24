@@ -617,18 +617,57 @@ export default function Chat({
         }
     }, [progress.status, thinkingStartTime]);
 
-    // Send initial message from project prompt (only for new projects with no history)
+    // Send initial message from project prompt ONLY for brand-new projects arriving with ?autostart=1.
+    // Opening an existing/recent project must never auto-resend the first prompt.
     useEffect(() => {
-        if (project.initial_prompt && !initialSent.current && !project.has_history) {
-            initialSent.current = true;
-            playSound('send');
-            setThinkingStartTime(Date.now());
-            setThinkingDuration(null);
-            sendMessage(project.initial_prompt, {
-                fileIds: project.initial_file_ids || [],
-            });
+        if (
+            !project.initial_prompt ||
+            initialSent.current ||
+            project.has_history ||
+            project.preview_url ||
+            project.has_active_session ||
+            (project.build_status && project.build_status !== 'idle')
+        ) {
+            return;
         }
-    }, [project.initial_prompt, project.initial_file_ids, project.has_history, sendMessage, playSound]);
+
+        const url = new URL(window.location.href);
+        if (url.searchParams.get('autostart') !== '1') {
+            return;
+        }
+
+        // Remove ?autostart=1 immediately so reloads or browser back/forward never re-trigger it
+        url.searchParams.delete('autostart');
+        window.history.replaceState({}, '', url.toString());
+
+        const storageKey = `project-autostart-sent:${project.id}`;
+        try {
+            if (sessionStorage.getItem(storageKey) === '1') {
+                return;
+            }
+            sessionStorage.setItem(storageKey, '1');
+        } catch {
+            // ignore storage errors
+        }
+
+        initialSent.current = true;
+        playSound('send');
+        setThinkingStartTime(Date.now());
+        setThinkingDuration(null);
+        sendMessage(project.initial_prompt, {
+            fileIds: project.initial_file_ids || [],
+        });
+    }, [
+        project.id,
+        project.initial_prompt,
+        project.initial_file_ids,
+        project.has_history,
+        project.preview_url,
+        project.has_active_session,
+        project.build_status,
+        sendMessage,
+        playSound,
+    ]);
 
     // Auto-rebuild preview for projects with history but no preview
     const autoRebuildTriggered = useRef(false);
