@@ -12,15 +12,39 @@ import { triggerBuildAndDeployToR2, clearProjectPreviewCache } from '@/services/
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
+const SERVER_KEY_CACHE_TTL_MS = 5 * 60 * 1000;
+const validatedServerKeys = new Map<string, number>();
+const TERMINAL_STATUSES = new Set(['failed', 'cancelled', 'credit_limit', 'completed']);
+
+async function isValidServerKey(serverKey: string): Promise<boolean> {
+  if (process.env.BUILDER_SERVER_KEY && serverKey === process.env.BUILDER_SERVER_KEY) {
+    return true;
+  }
+  const now = Date.now();
+  const cachedExp = validatedServerKeys.get(serverKey);
+  if (cachedExp && cachedExp > now) {
+    return true;
+  }
+  if (cachedExp) {
+    validatedServerKeys.delete(serverKey);
+  }
+  await connectDB();
+  const builderExists = await Builder.exists({ server_key: serverKey });
+  if (builderExists) {
+    if (validatedServerKeys.size >= 200) {
+      const oldest = validatedServerKeys.keys().next().value;
+      if (oldest) validatedServerKeys.delete(oldest);
+    }
+    validatedServerKeys.set(serverKey, now + SERVER_KEY_CACHE_TTL_MS);
+    return true;
+  }
+  return false;
+}
+
 export async function POST(req: NextRequest) {
   const serverKey = req.headers.get('x-server-key');
-  await connectDB();
-
-  if (serverKey) {
-    const builderExists = await Builder.exists({ server_key: serverKey });
-    if (!builderExists && serverKey !== process.env.BUILDER_SERVER_KEY) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+  if (serverKey && !(await isValidServerKey(serverKey))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const body = await parseRequestBody<{
@@ -42,6 +66,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'session_id and event_type are required' }, { status: 400 });
   }
 
+  // Fast-path skip: when Pusher already delivered ephemeral events directly from Go Builder,
+  // avoid MongoDB cacheAdd and Project lookups completely.
+  if (pusherActive) {
+    if (
+      eventType === 'thinking' ||
+      eventType === 'tool_call' ||
+      eventType === 'tool_result' ||
+      (eventType === 'status' && !TERMINAL_STATUSES.has(String(data.status || '')))
+    ) {
+      return NextResponse.json({ success: true, skipped: true });
+    }
+  }
+
+  await connectDB();
+
   const eventId = body.event_id || req.headers.get('x-webhook-id');
   if (eventId) {
     const isNew = await cacheAdd(`webhook:evt:${eventId}`, true, 300);
@@ -50,23 +89,24 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const project = await Project.findOne({ build_session_id: sessionId });
-
   // Handle event types
   switch (eventType) {
     case 'status': {
-      const statusVal = data.status || '';
-      if (project && (statusVal === 'failed' || statusVal === 'cancelled')) {
-        project.build_status = statusVal;
+      const statusVal = String(data.status || '');
+      if (statusVal === 'failed' || statusVal === 'cancelled') {
+        const updateOps: Record<string, unknown> = {
+          $set: { build_status: statusVal },
+        };
         if (data.message) {
-          project.conversation_history = project.conversation_history || [];
-          project.conversation_history.push({
-            role: 'assistant',
-            content: `Build ${statusVal}: ${data.message}`,
-            created_at: new Date(),
-          });
+          updateOps.$push = {
+            conversation_history: {
+              role: 'assistant',
+              content: `Build ${statusVal}: ${data.message}`,
+              created_at: new Date(),
+            },
+          };
         }
-        await project.save();
+        await Project.updateOne({ build_session_id: sessionId }, updateOps);
       }
       if (!pusherActive) {
         await broadcastEvent(`session.${sessionId}`, 'status', {
@@ -93,17 +133,29 @@ export async function POST(req: NextRequest) {
       const category = data.category || '';
       const actionText = `${action} ${target}`.trim();
 
-      if (project && actionText) {
-        const history = project.conversation_history || [];
-        const lastEntry = history[history.length - 1];
-        if (!lastEntry || lastEntry.role !== 'action' || lastEntry.content !== actionText) {
-          project.conversation_history.push({
-            role: 'action',
-            content: actionText,
-            category: category || null,
-            created_at: new Date(),
-          });
-          await project.save();
+      if (actionText) {
+        const project = await Project.findOne(
+          { build_session_id: sessionId },
+          { _id: 1, conversation_history: { $slice: -1 } }
+        ).lean();
+        if (project) {
+          const history = project.conversation_history || [];
+          const lastEntry = history[history.length - 1];
+          if (!lastEntry || lastEntry.role !== 'action' || lastEntry.content !== actionText) {
+            await Project.updateOne(
+              { _id: project._id },
+              {
+                $push: {
+                  conversation_history: {
+                    role: 'action',
+                    content: actionText,
+                    category: category || null,
+                    created_at: new Date(),
+                  },
+                },
+              }
+            );
+          }
         }
       }
 
@@ -145,16 +197,28 @@ export async function POST(req: NextRequest) {
 
     case 'message': {
       const content = data.content || '';
-      if (project && content) {
-        const history = project.conversation_history || [];
-        const lastEntry = history[history.length - 1];
-        if (!lastEntry || lastEntry.role !== 'assistant' || lastEntry.content !== content) {
-          project.conversation_history.push({
-            role: 'assistant',
-            content,
-            created_at: new Date(),
-          });
-          await project.save();
+      if (content) {
+        const project = await Project.findOne(
+          { build_session_id: sessionId },
+          { _id: 1, conversation_history: { $slice: -1 } }
+        ).lean();
+        if (project) {
+          const history = project.conversation_history || [];
+          const lastEntry = history[history.length - 1];
+          if (!lastEntry || lastEntry.role !== 'assistant' || lastEntry.content !== content) {
+            await Project.updateOne(
+              { _id: project._id },
+              {
+                $push: {
+                  conversation_history: {
+                    role: 'assistant',
+                    content,
+                    created_at: new Date(),
+                  },
+                },
+              }
+            );
+          }
         }
       }
 
@@ -166,59 +230,67 @@ export async function POST(req: NextRequest) {
 
     case 'error': {
       const errorMsg = data.error || 'Unknown builder error';
+      const project = await Project.findOne(
+        { build_session_id: sessionId },
+        { _id: 1, user_id: 1, name: 1 }
+      ).lean();
+
+      const tasks: Promise<unknown>[] = [];
       if (project) {
-        project.build_status = 'failed';
-        project.conversation_history = project.conversation_history || [];
-        project.conversation_history.push({
-          role: 'assistant',
-          content: `Build failed: ${errorMsg}`,
-          created_at: new Date(),
-        });
-        await project.save();
+        await Project.updateOne(
+          { _id: project._id },
+          {
+            $set: { build_status: 'failed' },
+            $push: {
+              conversation_history: {
+                role: 'assistant',
+                content: `Build failed: ${errorMsg}`,
+                created_at: new Date(),
+              },
+            },
+          }
+        );
 
         if (project.user_id) {
-          await notifyBuildFailed(
-            String(project.user_id),
-            project._id,
-            project.name,
-            errorMsg
+          tasks.push(
+            notifyBuildFailed(String(project.user_id), project._id, project.name, errorMsg)
           );
         }
       }
       if (!pusherActive) {
-        await broadcastEvent(`session.${sessionId}`, 'error', { error: errorMsg });
+        tasks.push(broadcastEvent(`session.${sessionId}`, 'error', { error: errorMsg }));
+      }
+      if (tasks.length > 0) {
+        await Promise.allSettled(tasks);
       }
       break;
     }
 
     case 'complete': {
       const finalMsg = data.message || '';
+      const project = await Project.findOne(
+        { build_session_id: sessionId },
+        { conversation_history: { $slice: -1 } }
+      ).lean();
+
       if (project) {
-        if (finalMsg) {
-          const history = project.conversation_history || [];
-          const lastEntry = history[history.length - 1];
-          if (!lastEntry || lastEntry.role !== 'assistant' || lastEntry.content !== finalMsg) {
-            project.conversation_history.push({
-              role: 'assistant',
-              content: finalMsg,
-              created_at: new Date(),
-            });
-          }
-        }
+        const history = project.conversation_history || [];
+        const lastEntry = history[history.length - 1];
+        const shouldPushFinalMsg = Boolean(
+          finalMsg &&
+            (!lastEntry || lastEntry.role !== 'assistant' || lastEntry.content !== finalMsg)
+        );
+
         const agentFailed = Boolean(
           data.status === 'failed' ||
-          data.build_status === 'failed' ||
-          (!data.files_changed && !data.build_required && data.build_status !== 'completed')
+            data.build_status === 'failed' ||
+            (!data.files_changed && !data.build_required && data.build_status !== 'completed')
         );
         const shouldBuildPreview = Boolean(
           !agentFailed &&
-          (data.files_changed || data.build_status === 'completed' || data.build_required)
+            (data.files_changed || data.build_status === 'completed' || data.build_required)
         );
 
-        if (agentFailed) {
-          project.build_status = 'failed';
-          project.build_completed_at = new Date();
-        }
         const rawTokensUsed = Number(data.tokens_used || data.total_tokens || 0);
         const prevBilled = Number(project.last_billed_session_tokens || 0);
         const deltaTokens =
@@ -227,80 +299,113 @@ export async function POST(req: NextRequest) {
             : prevBilled === 0
               ? rawTokensUsed
               : 0;
-        if (rawTokensUsed > 0) {
-          project.estimated_tokens = rawTokensUsed;
-          if (rawTokensUsed > prevBilled) {
-            project.last_billed_session_tokens = rawTokensUsed;
-          }
-        }
-        await project.save();
 
-        // 1. Deduct credits appropriately and record usage
-        if (project.user_id && deltaTokens > 0) {
-          try {
-            const deterministicEventId =
-              eventId || `complete:${sessionId}:${rawTokensUsed}:${data.iterations || 0}`;
-            await trackBuildCreditUsage({
-              userId: String(project.user_id),
-              projectId: String(project._id),
-              builderEventId: deterministicEventId,
-              model: data.model || 'openrouter/free',
-              promptTokens: Number(data.prompt_tokens || 0),
-              completionTokens: Number(data.completion_tokens || 0),
-              totalTokens: deltaTokens,
-              action: 'build',
-              effort: project.reasoning_effort || 'medium',
-            });
-          } catch (creditErr) {
-            console.error('Error tracking build credit usage:', creditErr);
-          }
-        }
+        // Run R2 build/deploy and credit deduction concurrently
+        const creditTask =
+          project.user_id && deltaTokens > 0
+            ? trackBuildCreditUsage({
+                userId: String(project.user_id),
+                projectId: String(project._id),
+                builderEventId:
+                  eventId || `complete:${sessionId}:${rawTokensUsed}:${data.iterations || 0}`,
+                model: data.model || 'openrouter/free',
+                promptTokens: Number(data.prompt_tokens || 0),
+                completionTokens: Number(data.completion_tokens || 0),
+                totalTokens: deltaTokens,
+                action: 'build',
+                effort: project.reasoning_effort || 'medium',
+              }).catch((creditErr) => {
+                console.error('Error tracking build credit usage:', creditErr);
+              })
+            : Promise.resolve();
 
-        // 2. Build & deploy preview to R2 synchronously BEFORE announcing preview readiness
-        let previewReadyUrl: string | undefined;
-        let buildSyncError: string | undefined;
-        if (shouldBuildPreview) {
-          clearProjectPreviewCache(String(project._id));
+        const deployTask: Promise<{
+          previewReadyUrl?: string;
+          buildSyncError?: string;
+          resolvedBuilderId?: typeof project.builder_id;
+        }> = shouldBuildPreview
+          ? (async () => {
+              clearProjectPreviewCache(String(project._id));
 
-          const builderDoc =
-            (project.builder_id ? await Builder.findById(project.builder_id) : null) ||
-            (await Builder.findOne({ status: 'active' }));
+              const builderDoc =
+                (project.builder_id ? await Builder.findById(project.builder_id).lean() : null) ||
+                (await Builder.findOne({ status: 'active' }).lean());
 
-          if (builderDoc && !project.builder_id) {
-            project.builder_id = builderDoc._id;
-          }
-
-          if (builderDoc) {
-            try {
-              const buildRes = await triggerBuildAndDeployToR2(project, builderDoc);
-              if (buildRes.success && buildRes.preview_url) {
-                previewReadyUrl = buildRes.preview_url;
-              } else {
-                buildSyncError = buildRes.error || 'Preview build failed';
+              if (!builderDoc) {
+                return { buildSyncError: 'No active builder available to compile preview' };
               }
-            } catch (err: any) {
-              buildSyncError = err?.message || 'Error building/syncing preview to R2';
-              console.error('Error building/syncing preview to R2 in webhook:', err);
-            }
-          } else {
-            buildSyncError = 'No active builder available to compile preview';
+
+              try {
+                const buildRes = await triggerBuildAndDeployToR2(project, builderDoc);
+                if (buildRes.success && buildRes.preview_url) {
+                  return {
+                    previewReadyUrl: buildRes.preview_url,
+                    resolvedBuilderId: builderDoc._id,
+                  };
+                }
+                return {
+                  buildSyncError: buildRes.error || 'Preview build failed',
+                  resolvedBuilderId: builderDoc._id,
+                };
+              } catch (err: any) {
+                console.error('Error building/syncing preview to R2 in webhook:', err);
+                return {
+                  buildSyncError: err?.message || 'Error building/syncing preview to R2',
+                  resolvedBuilderId: builderDoc._id,
+                };
+              }
+            })()
+          : Promise.resolve({});
+
+        const [{ previewReadyUrl, buildSyncError, resolvedBuilderId }] = await Promise.all([
+          deployTask,
+          creditTask,
+        ]);
+
+        const finalBuildStatus = shouldBuildPreview
+          ? previewReadyUrl
+            ? 'completed'
+            : 'failed'
+          : agentFailed
+            ? 'failed'
+            : 'completed';
+
+        const setFields: Record<string, unknown> = {
+          build_status: finalBuildStatus,
+          build_completed_at: new Date(),
+        };
+        if (resolvedBuilderId && !project.builder_id) {
+          setFields.builder_id = resolvedBuilderId;
+        }
+        if (rawTokensUsed > 0) {
+          setFields.estimated_tokens = rawTokensUsed;
+          if (rawTokensUsed > prevBilled) {
+            setFields.last_billed_session_tokens = rawTokensUsed;
           }
+        }
 
+        const updateOps: Record<string, unknown> = { $set: setFields };
+        if (shouldPushFinalMsg) {
+          updateOps.$push = {
+            conversation_history: {
+              role: 'assistant',
+              content: finalMsg,
+              created_at: new Date(),
+            },
+          };
+        }
+
+        await Project.updateOne({ _id: project._id }, updateOps);
+
+        // Broadcast terminal session status immediately once deploy finishes
+        if (shouldBuildPreview) {
           if (previewReadyUrl) {
-            project.build_status = 'completed';
-            project.build_completed_at = new Date();
-            await project.save();
-
             await broadcastEvent(`session.${sessionId}`, 'status', {
               status: 'completed',
               preview_url: previewReadyUrl,
               message: 'Build completed successfully',
             });
           } else {
-            project.build_status = 'failed';
-            project.build_completed_at = new Date();
-            await project.save();
-
             await broadcastEvent(`session.${sessionId}`, 'status', {
               status: 'failed',
               message: buildSyncError || 'Preview build failed',
@@ -313,30 +418,60 @@ export async function POST(req: NextRequest) {
           });
         }
 
+        // Run user-level broadcasts, notifications, and fallback complete relay concurrently
+        const postTasks: Promise<unknown>[] = [];
         if (project.user_id) {
-          const finalUserStatus =
-            previewReadyUrl ? 'completed' : project.build_status === 'failed' ? 'failed' : 'completed';
-          await broadcastToUser(String(project.user_id), 'project.status', {
-            project_id: project._id,
-            status: finalUserStatus,
-            message: data.build_message || buildSyncError || null,
-            ...(previewReadyUrl ? { preview_url: previewReadyUrl } : {}),
-          });
+          const finalUserStatus = previewReadyUrl
+            ? 'completed'
+            : finalBuildStatus === 'failed'
+              ? 'failed'
+              : 'completed';
+          postTasks.push(
+            broadcastToUser(String(project.user_id), 'project.status', {
+              project_id: project._id,
+              status: finalUserStatus,
+              message: data.build_message || buildSyncError || null,
+              ...(previewReadyUrl ? { preview_url: previewReadyUrl } : {}),
+            })
+          );
 
           if (finalUserStatus === 'completed') {
-            await notifyBuildComplete(String(project.user_id), project._id, project.name);
+            postTasks.push(
+              notifyBuildComplete(String(project.user_id), project._id, project.name)
+            );
           } else {
-            await notifyBuildFailed(
-              String(project.user_id),
-              project._id,
-              project.name,
-              data.build_message || buildSyncError || 'Build failed'
+            postTasks.push(
+              notifyBuildFailed(
+                String(project.user_id),
+                project._id,
+                project.name,
+                data.build_message || buildSyncError || 'Build failed'
+              )
             );
           }
         }
-      }
 
-      if (!pusherActive) {
+        if (!pusherActive) {
+          postTasks.push(
+            broadcastEvent(`session.${sessionId}`, 'complete', {
+              event_id: eventId,
+              iterations: data.iterations || 0,
+              tokens_used: data.tokens_used || 0,
+              files_changed: Boolean(data.files_changed),
+              prompt_tokens: data.prompt_tokens || null,
+              completion_tokens: data.completion_tokens || null,
+              model: data.model || null,
+              build_status: data.build_status || null,
+              build_message: data.build_message || null,
+              message: finalMsg,
+            })
+          );
+        }
+
+        if (postTasks.length > 0) {
+          await Promise.allSettled(postTasks);
+        }
+      } else if (!pusherActive) {
         await broadcastEvent(`session.${sessionId}`, 'complete', {
           event_id: eventId,
           iterations: data.iterations || 0,
@@ -354,19 +489,27 @@ export async function POST(req: NextRequest) {
     }
 
     case 'token_usage': {
-      if (project && data.total) {
-        await Project.updateOne(
-          { _id: project._id },
-          { $set: { estimated_tokens: Number(data.total) } }
+      const tasks: Promise<unknown>[] = [];
+      if (data.total) {
+        tasks.push(
+          Project.updateOne(
+            { build_session_id: sessionId },
+            { $set: { estimated_tokens: Number(data.total) } }
+          )
         );
       }
       if (!pusherActive) {
-        await broadcastEvent(`session.${sessionId}`, 'token_usage', {
-          prompt: data.prompt || 0,
-          completion: data.completion || 0,
-          total: data.total || 0,
-          context: data.context || 0,
-        });
+        tasks.push(
+          broadcastEvent(`session.${sessionId}`, 'token_usage', {
+            prompt: data.prompt || 0,
+            completion: data.completion || 0,
+            total: data.total || 0,
+            context: data.context || 0,
+          })
+        );
+      }
+      if (tasks.length > 0) {
+        await Promise.allSettled(tasks);
       }
       break;
     }
@@ -377,19 +520,23 @@ export async function POST(req: NextRequest) {
     }
 
     case 'credit_exceeded': {
-      if (project) {
-        project.build_status = 'failed';
-        await project.save();
-      }
-      await broadcastEvent(`session.${sessionId}`, 'credit_exceeded', data);
+      await Promise.allSettled([
+        Project.updateOne(
+          { build_session_id: sessionId },
+          { $set: { build_status: 'failed' } }
+        ),
+        broadcastEvent(`session.${sessionId}`, 'credit_exceeded', data),
+      ]);
       break;
     }
 
     case 'summarization_complete': {
       const compacted = data.compacted_history;
-      if (project && Array.isArray(compacted) && compacted.length > 0) {
-        project.compacted_history = compacted;
-        await project.save();
+      if (Array.isArray(compacted) && compacted.length > 0) {
+        await Project.updateOne(
+          { build_session_id: sessionId },
+          { $set: { compacted_history: compacted } }
+        );
       }
       break;
     }

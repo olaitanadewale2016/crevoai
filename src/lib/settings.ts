@@ -15,8 +15,11 @@ import { isKindeConfigured } from './kinde';
 const CACHE_TTL = 3600;
 const MISSING_SENTINEL = '__SYSTEM_SETTING_NOT_FOUND__';
 const SETTINGS_VERSION_KEY = 'settings:version';
+const VERSION_CHECK_COOLDOWN_MS = 10_000;
 
 let localSettingsVersion = 0;
+let lastVersionCheckAt = 0;
+let invalidationEpoch = 0;
 let inflightVersionCheck: Promise<void> | null = null;
 
 /**
@@ -24,9 +27,13 @@ let inflightVersionCheck: Promise<void> | null = null;
  * serverless instance immediately invalidate in-process RAM caches on all other instances.
  */
 export async function ensureFreshSettingsCache(): Promise<void> {
+  if (lastVersionCheckAt > 0 && Date.now() - lastVersionCheckAt < VERSION_CHECK_COOLDOWN_MS) {
+    return;
+  }
   if (inflightVersionCheck) {
     return inflightVersionCheck;
   }
+  const checkEpoch = invalidationEpoch;
   inflightVersionCheck = (async () => {
     try {
       const dbVersion = await getCacheEntryDirect<number>(SETTINGS_VERSION_KEY);
@@ -40,6 +47,9 @@ export async function ensureFreshSettingsCache(): Promise<void> {
           invalidateSharedContextCache();
         } catch {}
         localSettingsVersion = dbVersion;
+      }
+      if (checkEpoch === invalidationEpoch) {
+        lastVersionCheckAt = Date.now();
       }
     } catch {
       // non-fatal
@@ -117,6 +127,8 @@ export async function getSetting<T = any>(key: string, defaultValue?: T): Promis
 }
 
 export async function invalidateAllSettingsCaches(group?: string): Promise<void> {
+  lastVersionCheckAt = 0;
+  invalidationEpoch++;
   try {
     await clearSettingsCache();
     await cacheForgetPrefix('landing_page:config:');
@@ -124,6 +136,8 @@ export async function invalidateAllSettingsCaches(group?: string): Promise<void>
     const nextVersion = Date.now();
     await setCacheEntryDirect(SETTINGS_VERSION_KEY, nextVersion, 365 * 86400);
     localSettingsVersion = nextVersion;
+    lastVersionCheckAt = 0;
+    invalidationEpoch++;
     try {
       const { invalidateSharedContextCache } = await import('@/services/shared-context');
       invalidateSharedContextCache();
@@ -214,6 +228,8 @@ export async function removeSetting(key: string): Promise<void> {
 }
 
 export async function clearSettingsCache(): Promise<void> {
+  lastVersionCheckAt = 0;
+  invalidationEpoch++;
   await cacheForgetPrefix('setting.');
   await cacheForgetPrefix('settings.group.');
 }

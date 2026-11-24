@@ -103,6 +103,13 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     const triggerBuildRef = useRef<(opts?: { silent?: boolean }) => Promise<void>>(() => Promise.resolve());
     const pendingMessageRef = useRef<string | null>(null);
     const buildTriggeredRef = useRef(false);
+    const fallbackBuildTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const clearFallbackBuildTimer = useCallback(() => {
+        if (fallbackBuildTimerRef.current) {
+            clearTimeout(fallbackBuildTimerRef.current);
+            fallbackBuildTimerRef.current = null;
+        }
+    }, []);
     const lastEventTimeRef = useRef<number>(0);
     const lastPollTimeRef = useRef<number>(0);
     // Ref-based dedup: tracks content of assistant messages already added to history.
@@ -171,7 +178,10 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         const resolvedPreviewUrl = (data as any).preview_url || null;
 
         if (resolvedPreviewUrl) {
+            clearFallbackBuildTimer();
             buildTriggeredRef.current = true;
+        } else if (data.status === 'failed' || data.status === 'cancelled') {
+            clearFallbackBuildTimer();
         }
 
         setProgress(prev => ({
@@ -188,7 +198,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         if (data.status === 'completed' && resolvedPreviewUrl) {
             onBuildComplete?.(resolvedPreviewUrl);
         }
-    }, [history, onBuildComplete]);
+    }, [history, onBuildComplete, clearFallbackBuildTimer]);
 
     const handleThinking = useCallback((data: ThinkingEvent) => {
         // Dedup: skip exact duplicate thinking content
@@ -312,6 +322,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         const resolvedPreviewUrl = (data as any).preview_url || null;
 
         if (resolvedPreviewUrl) {
+            clearFallbackBuildTimer();
             buildTriggeredRef.current = true;
         }
 
@@ -354,7 +365,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                 .catch(() => {});
         }
         onComplete?.(data);
-    }, [history, projectId, onBuildComplete, onComplete]);
+    }, [history, projectId, onBuildComplete, onComplete, clearFallbackBuildTimer]);
 
     const handleSummarizationComplete = useCallback((data: SummarizationCompleteEvent) => {
         // Show completion activity message with results
@@ -383,6 +394,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             if (status === 'completed' || status === 'failed') {
                 const previewUrl = response.data.preview_url || undefined;
                 if (previewUrl) {
+                    clearFallbackBuildTimer();
                     buildTriggeredRef.current = true;
                 }
                 setProgress(prev => ({
@@ -405,7 +417,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         } catch {
             // Silent - regular polling will catch it
         }
-    }, [progress.status, sessionId, projectId, autoBuild, onBuildStart, onBuildComplete]);
+    }, [progress.status, sessionId, projectId, autoBuild, onBuildStart, onBuildComplete, clearFallbackBuildTimer]);
 
     const isReverb = pusherConfig.provider === 'reverb';
 
@@ -533,7 +545,10 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             if (status === 'completed' || status === 'failed' || status === 'cancelled') {
                 const previewUrl = response.data.preview_url || undefined;
                 if (previewUrl) {
+                    clearFallbackBuildTimer();
                     buildTriggeredRef.current = true;
+                } else if (status === 'failed' || status === 'cancelled') {
+                    clearFallbackBuildTimer();
                 }
                 setProgress(prev => ({
                     ...prev,
@@ -555,7 +570,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         } catch {
             // Silent - will retry on next interval
         }
-    }, [projectId, autoBuild, onBuildComplete]);
+    }, [projectId, autoBuild, onBuildComplete, clearFallbackBuildTimer]);
 
     // Safety & streaming fallback: poll status while running whenever Pusher hasn't delivered an event recently.
     // Keeps UI streaming live actions/messages even if Pusher is disconnected, blocked, or misconfigured.
@@ -575,6 +590,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
     // Reset progress when starting new build
     const resetProgress = useCallback(() => {
+        clearFallbackBuildTimer();
         addedMessagesRef.current.clear();
         addedActionsRef.current.clear();
         seenActionTextsRef.current.clear();
@@ -589,7 +605,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             ...initialProgress,
             previewUrl: prev.previewUrl,  // Preserve existing preview if any, otherwise null
         }));
-    }, []);
+    }, [clearFallbackBuildTimer]);
 
     const sendMessage = useCallback(async (content: string, sendOptions?: SendMessageOptions) => {
         if (!content.trim()) return;
@@ -682,6 +698,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
     // Trigger a preview build (works with or without active session)
     const triggerBuild = useCallback(async (opts?: { silent?: boolean }) => {
+        clearFallbackBuildTimer();
         if (isBuildingPreviewRef.current) return;
         const silent = Boolean(opts?.silent);
         isBuildingPreviewRef.current = true;
@@ -713,19 +730,32 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                 setIsBuildingPreview(false);
             }
         }
-    }, [projectId, onBuildStart, onBuildComplete, onBuildError]);
+    }, [projectId, onBuildStart, onBuildComplete, onBuildError, clearFallbackBuildTimer]);
 
     useEffect(() => {
         triggerBuildRef.current = triggerBuild;
     }, [triggerBuild]);
 
-    // Auto-trigger build when agent completes with file changes (only once per session, matching PHP)
+    // Auto-trigger build as a 5s fallback when agent completes with file changes,
+    // giving the webhook's single R2 deploy time to deliver status:completed + preview_url
+    // without build_lock contention (cancelled immediately if handleStatus or pollStatus receives preview_url).
     useEffect(() => {
         if (autoBuild && progress.status === 'completed' && progress.hasFileChanges && !buildTriggeredRef.current) {
-            buildTriggeredRef.current = true;
-            void triggerBuild();
+            clearFallbackBuildTimer();
+            fallbackBuildTimerRef.current = setTimeout(() => {
+                fallbackBuildTimerRef.current = null;
+                if (!buildTriggeredRef.current) {
+                    buildTriggeredRef.current = true;
+                    void triggerBuildRef.current();
+                }
+            }, 5000);
+
+            return () => {
+                clearFallbackBuildTimer();
+            };
         }
-    }, [autoBuild, progress.status, progress.hasFileChanges, triggerBuild]);
+        return undefined;
+    }, [autoBuild, progress.status, progress.hasFileChanges, clearFallbackBuildTimer]);
 
     // Compute loading state
     const isLoading = isStarting || progress.status === 'running' || progress.status === 'connecting';

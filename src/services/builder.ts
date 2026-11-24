@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { after } from 'next/server';
 import { unzipSync, strFromU8 } from 'fflate';
 import { connectDB } from '@/lib/db';
 import { cacheAdd, cacheForget } from '@/lib/cache';
@@ -17,9 +18,10 @@ import {
 import { getPusherConfigForBuilder } from '@/lib/broadcast';
 import { getProjectFirebaseConfig } from '@/lib/firebase-admin';
 import { getUserCurrentPlan } from '@/lib/auth';
-import { resolvePlanAiProvider, resolvePlanBuilder, isUserUsingOwnAiKey } from './credits';
+import { resolvePlanAiProvider, resolvePlanBuilder } from './credits';
 import { Project, Template, IProject, IConversationEntry } from '@/models/Project';
 import { UserAiSettings, IUser } from '@/models/User';
+import type { IPlan } from '@/models/Billing';
 import {
   Builder,
   IBuilder,
@@ -111,16 +113,28 @@ function resolveEffortMaxTokens(baseMaxTokens: number, effort: ReasoningEffort):
   }
 }
 
-export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) {
-  const plan = await getUserCurrentPlan(user);
-  const usingOwnKey = await isUserUsingOwnAiKey(user, plan);
-  const aiSettings = await UserAiSettings.findOne({ user_id: user._id }).lean();
-  const resolvedEffort: ReasoningEffort =
-    effort && ['low', 'medium', 'high'].includes(effort)
-      ? effort
-      : aiSettings?.preferred_effort && ['low', 'medium', 'high'].includes(aiSettings.preferred_effort)
-        ? aiSettings.preferred_effort
-        : 'medium';
+export async function getAiConfigForUser(
+  user: IUser,
+  effort?: ReasoningEffort,
+  preResolvedPlan?: IPlan | null
+) {
+  const plan = preResolvedPlan !== undefined ? preResolvedPlan : await getUserCurrentPlan(user);
+  const hasExplicitEffort = Boolean(effort && ['low', 'medium', 'high'].includes(effort));
+  const needsUserSettings = Boolean(plan?.allow_user_ai_api_key) || !hasExplicitEffort;
+  const aiSettings = needsUserSettings
+    ? await UserAiSettings.findOne({ user_id: user._id }).lean()
+    : null;
+  const usingOwnKey = Boolean(
+    plan?.allow_user_ai_api_key &&
+      aiSettings &&
+      aiSettings.preferred_provider !== 'system' &&
+      aiSettings[`${aiSettings.preferred_provider}_api_key` as keyof typeof aiSettings]
+  );
+  const resolvedEffort: ReasoningEffort = hasExplicitEffort
+    ? (effort as ReasoningEffort)
+    : aiSettings?.preferred_effort && ['low', 'medium', 'high'].includes(aiSettings.preferred_effort)
+      ? aiSettings.preferred_effort
+      : 'medium';
 
   if (usingOwnKey) {
     const pType = (aiSettings?.preferred_provider || 'openai') as AiProviderType;
@@ -128,6 +142,7 @@ export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) 
     const apiKey = decryptString(encKey) || '';
     const model = aiSettings?.preferred_model || AI_DEFAULT_MODELS[pType]?.[0] || 'gpt-4o';
     const baseUrl = AI_DEFAULT_BASE_URLS[pType] || AI_DEFAULT_BASE_URLS.openai;
+    const supportsPromptCaching = pType === 'anthropic' || pType === 'abhibots';
     return {
       agent: {
         api_key: apiKey,
@@ -137,6 +152,7 @@ export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) 
         reasoning_effort: resolvedEffort,
         provider_type: pType,
         remaining_build_credits: 0, // 0 = unlimited / own key
+        ...(supportsPromptCaching ? { enable_prompt_caching: true } : {}),
       },
       summarizer: {
         api_key: apiKey,
@@ -160,6 +176,7 @@ export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) 
   const effectiveMaxTokens = resolveEffortMaxTokens(baseMaxTokens, resolvedEffort);
   const summTokens = Number(provider.config?.summarizer_max_tokens || 1500);
   const unlimited = user.role === 'admin' || plan?.monthly_build_credits === -1;
+  const supportsPromptCaching = pType === 'anthropic' || pType === 'abhibots';
 
   return {
     agent: {
@@ -170,6 +187,7 @@ export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) 
       reasoning_effort: resolvedEffort,
       provider_type: pType,
       remaining_build_credits: unlimited ? 0 : Math.max(1, user.build_credits ?? 0),
+      ...(supportsPromptCaching ? { enable_prompt_caching: true } : {}),
     },
     summarizer: {
       api_key: apiKey,
@@ -181,6 +199,8 @@ export async function getAiConfigForUser(user: IUser, effort?: ReasoningEffort) 
     using_own_key: false,
   };
 }
+
+export type ResolvedAiConfig = NonNullable<Awaited<ReturnType<typeof getAiConfigForUser>>>;
 
 export async function resolveBlockingBuild(userId: string): Promise<IProject | null> {
   await connectDB();
@@ -196,7 +216,7 @@ export async function resolveBlockingBuild(userId: string): Promise<IProject | n
     if (builder) {
       try {
         const res = await builderFetch(builder, `/api/status/${building.build_session_id}`, {
-          timeoutMs: 5000,
+          timeoutMs: 2500,
         });
         if (res.status === 404) {
           await Project.updateOne(
@@ -303,6 +323,8 @@ export async function startBuilderSession(params: {
   templateUrl?: string | null;
   effort?: ReasoningEffort;
   appUrl?: string;
+  aiConfig?: ResolvedAiConfig | null;
+  plan?: IPlan | null;
 }) {
   const { project, user, builder, goal, templateId, templateName, templateUrl } = params;
   const rawAppUrl = params.appUrl || process.env.APP_URL || '';
@@ -310,13 +332,18 @@ export async function startBuilderSession(params: {
     (rawAppUrl && !rawAppUrl.includes('crevoai.vercel.app') ? rawAppUrl : '') ||
     'https://crevoai-web.vercel.app'
   ).replace(/\/+$/, '');
-  const aiConfig = await getAiConfigForUser(user, params.effort);
-  if (!aiConfig) throw new Error('No active AI provider configured.');
 
-  const pusher = await getPusherConfigForBuilder();
-  const plan = await getUserCurrentPlan(user);
-  const prompts = await getSettingGroup('prompts');
-  const firebaseCfg = await getProjectFirebaseConfig(project);
+  const [plan, pusher, prompts, firebaseCfg] = await Promise.all([
+    params.plan !== undefined ? Promise.resolve(params.plan) : getUserCurrentPlan(user),
+    getPusherConfigForBuilder(),
+    getSettingGroup('prompts'),
+    getProjectFirebaseConfig(project),
+  ]);
+  const aiConfig =
+    params.aiConfig !== undefined && params.aiConfig !== null
+      ? params.aiConfig
+      : await getAiConfigForUser(user, params.effort, plan);
+  if (!aiConfig) throw new Error('No active AI provider configured.');
   const supabaseCfg = project.supabase_config
     ? decryptJson<{ url?: string; anonKey?: string }>(project.supabase_config)
     : null;
@@ -337,7 +364,7 @@ export async function startBuilderSession(params: {
     !(project.compacted_history && project.compacted_history.length > 0);
   let enrichedGoal = goal;
   if (!isFirstPrompt) {
-    enrichedGoal += `\n\n[Follow-Up Edit Mode — Preserve Existing Website & Design System]\nAn existing website is ALREADY built in this workspace.\n1. Do NOT call fetchTemplates or useTemplate.\n2. Do NOT redesign, wipe, or rebuild the entire app unless the user explicitly asks to start over or create a completely new site from scratch.\n3. Call readSiteMemory/readDesignIntelligence and readFile on the specific existing file(s) relevant to the request (e.g. src/pages/Home.tsx, src/custom.css, src/routes.tsx, or the mentioned component/page), then make surgical editFile changes that preserve the existing brand, layout, palette, and typography.`;
+    enrichedGoal += `\n\n[Follow-Up Edit Mode — Preserve Existing Website & Design System]\nAn existing website is ALREADY built in this workspace.\n1. Do NOT call fetchTemplates or useTemplate.\n2. Do NOT redesign, wipe, or rebuild the entire app unless the user explicitly asks to start over or create a completely new site from scratch.\n3. Use readFiles only on the specific page/component you need to modify — NEVER call readFile on src/components/ui/*, src/index.css, src/main.tsx, or package.json. Make surgical editFile changes that preserve the existing brand, layout, palette, and typography.`;
   }
   if (supabaseEnabled) {
     enrichedGoal += `\n\n[Supabase Database Active]\nSupabase is pre-configured and injected at runtime via \`window.__APP_CONFIG__.supabase\` (\`{ url: "${supabaseCfg?.url}", anonKey: "...", tablePrefix: "${supabaseTablePrefix}" }\`). You can use \`@supabase/supabase-js\` or \`fetch("\${window.__APP_CONFIG__.supabase.url}/rest/v1/...", { headers: { apikey: window.__APP_CONFIG__.supabase.anonKey, Authorization: "Bearer " + window.__APP_CONFIG__.supabase.anonKey } })\` for database persistence and auth.`;
@@ -669,25 +696,37 @@ export async function triggerBuildAndDeployToR2(
   try {
     clearProjectPreviewCache(String(project._id));
 
-    const buildRes = await builderFetch(builder, `/api/build-workspace/${project._id}`, {
-      method: 'POST',
-      timeoutMs: 300_000,
-    });
+    // Try single round-trip build+download first; fall back to legacy 2-step build + download
+    let zipRes = await builderFetch(
+      builder,
+      `/api/build-output-workspace/${project._id}?ensure_build=1`,
+      {
+        method: 'GET',
+        timeoutMs: 300_000,
+      }
+    );
 
-    if (!buildRes.ok) {
-      const errJson = await buildRes.json().catch(() => ({}));
-      return {
-        success: false,
-        error: (errJson as any)?.error || `Build failed (HTTP ${buildRes.status})`,
-      };
-    }
-
-    const zipRes = await builderFetch(builder, `/api/build-output-workspace/${project._id}`, {
-      method: 'GET',
-      timeoutMs: 120_000,
-    });
     if (!zipRes.ok) {
-      return { success: false, error: `Failed to download build output (HTTP ${zipRes.status})` };
+      const buildRes = await builderFetch(builder, `/api/build-workspace/${project._id}`, {
+        method: 'POST',
+        timeoutMs: 300_000,
+      });
+
+      if (!buildRes.ok) {
+        const errJson = await buildRes.json().catch(() => ({}));
+        return {
+          success: false,
+          error: (errJson as any)?.error || `Build failed (HTTP ${buildRes.status})`,
+        };
+      }
+
+      zipRes = await builderFetch(builder, `/api/build-output-workspace/${project._id}`, {
+        method: 'GET',
+        timeoutMs: 120_000,
+      });
+      if (!zipRes.ok) {
+        return { success: false, error: `Failed to download build output (HTTP ${zipRes.status})` };
+      }
     }
 
     const zipBuf = new Uint8Array(await zipRes.arrayBuffer());
@@ -761,12 +800,17 @@ export async function triggerBuildAndDeployToR2(
       }
     );
 
-    // 4. Clean up previous build prefix bounded cleanly so slow R2 deletes never delay preview readiness
+    // 4. Clean up previous build prefix asynchronously so R2 deletes never delay preview readiness
     if (r2Uploaded && oldBuildId && oldBuildId !== newBuildId) {
-      await Promise.race([
-        r2DeletePrefix('private', `sites/${project._id}/${oldBuildId}/`).catch(() => {}),
-        new Promise((resolve) => setTimeout(resolve, 600)),
-      ]);
+      const oldPrefix = `sites/${project._id}/${oldBuildId}/`;
+      try {
+        after(async () => {
+          await r2DeletePrefix('private', oldPrefix).catch(() => {});
+        });
+      } catch {
+        // Fallback if invoked outside a Next.js request scope
+        r2DeletePrefix('private', oldPrefix).catch(() => {});
+      }
     }
 
     return {
@@ -782,6 +826,14 @@ export async function triggerBuildAndDeployToR2(
 export async function projectPreviewExists(project: IProject): Promise<boolean> {
   if (project.active_build_id) return true;
   if (project.build_status === 'completed') return true;
+  if (
+    !project.active_build_id &&
+    (project.build_status === 'building' ||
+      project.build_status === 'pending' ||
+      project.build_status === 'idle')
+  ) {
+    return false;
+  }
 
   // 1. Check if a built snapshot exists in Cloudflare R2 and heal missing active_build_id
   try {
