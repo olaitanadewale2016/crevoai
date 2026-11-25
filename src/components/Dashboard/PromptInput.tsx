@@ -175,7 +175,7 @@ export function PromptInput({
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (prompt.trim() && !disabled && !isLoading) {
+        if ((prompt.trim() || attachedImages.length > 0) && !disabled && !isLoading) {
             const themeToSubmit = selectedThemePreset === 'automatic' ? null : selectedThemePreset;
             onSubmit(
                 prompt.trim(),
@@ -401,7 +401,7 @@ export function PromptInput({
                             </Select>
                             <Button
                                 type="submit"
-                                disabled={!prompt.trim() || disabled || isLoading}
+                                disabled={(!prompt.trim() && attachedImages.length === 0) || disabled || isLoading}
                                 className="shrink-0"
                             >
                                 {isLoading ? (

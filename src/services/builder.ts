@@ -306,7 +306,16 @@ export function buildOptimizedHistoryForBuilder(project: IProject): {
 
   const raw = (project.conversation_history || [])
     .filter((h) => h.role === 'user' || h.role === 'assistant')
-    .map((h) => ({ role: h.role, content: h.content }));
+    .map((h) => {
+      let content = h.content || '';
+      if (h.role === 'user' && Array.isArray(h.files) && h.files.length > 0) {
+        const fileList = h.files
+          .map((f) => `"${f.original_filename || f.filename}"${f.url ? ` (${f.url})` : ''}`)
+          .join(', ');
+        content += `\n[Attached files in this message: ${fileList}]`;
+      }
+      return { role: h.role, content };
+    });
 
   return {
     history: [...result, ...raw],
@@ -361,8 +370,16 @@ export async function startBuilderSession(params: {
 
   const maxIterations = builder.max_iterations || 20;
 
+  const priorHistory = project.conversation_history || [];
+  const hasBuiltAssistantTurn = priorHistory.some(
+    (h) =>
+      h.role === 'assistant' &&
+      !/^(?:Build\s+(?:cancelled|failed)|AI\s+provider\s+error)/i.test(h.content || '')
+  );
   const isFirstPrompt =
-    (project.conversation_history || []).length === 0 &&
+    !project.active_build_id &&
+    !project.build_path &&
+    !hasBuiltAssistantTurn &&
     !(project.compacted_history && project.compacted_history.length > 0);
   let enrichedGoal = goal;
   if (!isFirstPrompt) {

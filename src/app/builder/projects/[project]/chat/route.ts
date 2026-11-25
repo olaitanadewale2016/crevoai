@@ -10,8 +10,10 @@ import { parseRequestBody, validationError } from '@/lib/http';
 import { Project, IConversationEntry } from '@/models/Project';
 import { Builder } from '@/models/BuilderAi';
 import {
+  analyzeAttachedImagesDesign,
   buildAttachedFilesPromptSection,
   resolveAttachedProjectFiles,
+  selectEffectiveFileIdsForPrompt,
 } from '@/services/attached-images';
 import {
   builderFetch,
@@ -73,12 +75,19 @@ export async function POST(
     /\/+$/,
     ''
   );
-  const plan = fileIds.length > 0 ? await getUserCurrentPlan(ctx.user) : null;
+  const priorHistory = project.conversation_history || [];
+  const { fileIds: effectiveFileIds, reusedFromHistory } = selectEffectiveFileIdsForPrompt({
+    explicitFileIds: fileIds,
+    prompt: rawMessage,
+    priorHistory,
+  });
+
+  const plan = effectiveFileIds.length > 0 ? await getUserCurrentPlan(ctx.user) : null;
   const { attachedFiles, fileRefs, attachedImages } = await resolveAttachedProjectFiles({
     projectId: String(project._id),
     user: ctx.user,
     plan,
-    fileIds,
+    fileIds: effectiveFileIds,
     appUrl,
   });
 
@@ -86,12 +95,22 @@ export async function POST(
     return validationError({ message: 'The message field is required.' });
   }
 
+  const visualAnalysis =
+    attachedImages.length > 0
+      ? await analyzeAttachedImagesDesign({
+          projectId: String(project._id),
+          attachedFiles,
+          attachedImages,
+          userPrompt: rawMessage,
+        })
+      : null;
+
   try {
     const trimmedMessage = rawMessage.trim();
     let messageToSend =
       trimmedMessage ||
       'Analyze the attached file(s)/image(s) and apply them only to the requested area of the existing site without changing unrelated pages or global styles.';
-    if (trimmedMessage && detectRepeatedPrompt(project.conversation_history || [], rawMessage)) {
+    if (trimmedMessage && detectRepeatedPrompt(priorHistory, rawMessage)) {
       messageToSend +=
         '\n\nNOTE: The user has asked about this issue multiple times before. Previous attempts may not have fully resolved it. Try a fundamentally different approach.';
     }
@@ -100,9 +119,8 @@ export async function POST(
       role: 'user',
       content: trimmedMessage ? rawMessage : 'Attached file(s)',
       timestamp: new Date().toISOString(),
-      ...(fileRefs.length > 0 ? { files: fileRefs } : {}),
+      ...(!reusedFromHistory && fileRefs.length > 0 ? { files: fileRefs } : {}),
     };
-    const priorHistory = project.conversation_history || [];
     const priorCompacted = project.compacted_history || null;
     const addedTokens = Math.ceil(userEntry.content.length / 4);
 
@@ -119,6 +137,7 @@ export async function POST(
       messageToSend += buildAttachedFilesPromptSection({
         attachedFiles,
         isFirstPrompt: false,
+        visualAnalysis,
       });
     }
 

@@ -12,8 +12,10 @@ import { Project, Template, IConversationEntry } from '@/models/Project';
 import { Builder, IBuilder } from '@/models/BuilderAi';
 import { resolvePlanBuilder } from '@/services/credits';
 import {
+  analyzeAttachedImagesDesign,
   buildAttachedFilesPromptSection,
   resolveAttachedProjectFiles,
+  selectEffectiveFileIdsForPrompt,
 } from '@/services/attached-images';
 import {
   resolveBlockingBuild,
@@ -148,7 +150,14 @@ export async function POST(
       ? body.template_id.trim()
       : null;
 
-  // Run AI config, builder selection, attached files, and template lookup concurrently
+  const priorHistory = project.conversation_history || [];
+  const { fileIds: effectiveFileIds, reusedFromHistory } = selectEffectiveFileIdsForPrompt({
+    explicitFileIds: fileIds,
+    prompt: rawPrompt,
+    priorHistory,
+  });
+
+  // Run AI config, builder selection, attached files (+ cached vision blueprint), and template lookup concurrently
   const [aiConfig, builderResolution, filesResult, templateResult] = await Promise.all([
     getAiConfigForUser(ctx.user, effort, plan),
 
@@ -179,13 +188,25 @@ export async function POST(
       return { builder: resolved };
     })(),
 
-    resolveAttachedProjectFiles({
-      projectId: String(project._id),
-      user: ctx.user,
-      plan,
-      fileIds,
-      appUrl,
-    }),
+    (async () => {
+      const resolved = await resolveAttachedProjectFiles({
+        projectId: String(project._id),
+        user: ctx.user,
+        plan,
+        fileIds: effectiveFileIds,
+        appUrl,
+      });
+      const visualAnalysis =
+        resolved.attachedImages.length > 0
+          ? await analyzeAttachedImagesDesign({
+              projectId: String(project._id),
+              attachedFiles: resolved.attachedFiles,
+              attachedImages: resolved.attachedImages,
+              userPrompt: rawPrompt,
+            })
+          : null;
+      return { ...resolved, visualAnalysis };
+    })(),
 
     (async () => {
       let templateId = requestedTemplateId;
@@ -212,7 +233,8 @@ export async function POST(
             (t) => !t.is_system && t.slug !== 'default'
           );
 
-          if (specialized.length > 0) {
+          // Skip unrelated keyword template matching when images are attached so clones/inspo start on a neutral canvas
+          if (specialized.length > 0 && effectiveFileIds.length === 0) {
             const promptLower = rawPrompt.toLowerCase();
             const promptWords = new Set(
               promptLower.split(/[^a-z0-9]+/).filter((w) => w.length >= 3)
@@ -360,24 +382,30 @@ export async function POST(
     );
   }
 
-  const { attachedFiles, fileRefs, attachedImages } = filesResult;
+  const { attachedFiles, fileRefs, attachedImages, visualAnalysis } = filesResult;
   if (!rawPrompt.trim() && attachedFiles.length === 0) {
     await clearInitialPromptOnEarlyExit();
     return validationError({ prompt: 'The prompt field is required.' });
   }
   const { templateId, templateName, autoMatchedTemplateId } = templateResult;
 
-  const priorHistory = project.conversation_history || [];
   const priorCompacted = project.compacted_history || null;
-  const isFirstPrompt =
-    priorHistory.length === 0 && !(priorCompacted && priorCompacted.length > 0);
+  const hasExistingBuiltSite =
+    Boolean(project.active_build_id || project.build_path) ||
+    Boolean(priorCompacted && priorCompacted.length > 0) ||
+    priorHistory.some(
+      (h) =>
+        h.role === 'assistant' &&
+        !/^(?:Build\s+(?:cancelled|failed)|AI\s+provider\s+error)/i.test(h.content || '')
+    );
+  const isFirstPrompt = !hasExistingBuiltSite;
   const trimmedPrompt = rawPrompt.trim();
 
   const userEntry: IConversationEntry = {
     role: 'user',
     content: trimmedPrompt ? rawPrompt : 'Attached file(s)',
     timestamp: new Date().toISOString(),
-    ...(fileRefs.length > 0 ? { files: fileRefs } : {}),
+    ...(!reusedFromHistory && fileRefs.length > 0 ? { files: fileRefs } : {}),
   };
   const addedTokens = Math.ceil(userEntry.content.length / 4);
 
@@ -439,11 +467,12 @@ export async function POST(
         '\n\nNOTE: The user has asked about this issue multiple times before. Previous attempts may not have fully resolved it. Try a fundamentally different approach.';
     }
 
-    // Enrich goal sent to Go Builder with attached file roles, scope rules, and vision pixels
+    // Enrich goal sent to Go Builder with attached file roles, scope rules, visual blueprint, and vision pixels
     if (attachedFiles.length > 0) {
       promptToSend += buildAttachedFilesPromptSection({
         attachedFiles,
         isFirstPrompt,
+        visualAnalysis,
       });
     }
 

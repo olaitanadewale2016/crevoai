@@ -240,7 +240,7 @@ export function HeroSection({
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!prompt.trim() || isDisabled || isSubmitting) return;
+        if ((!prompt.trim() && attachedImages.length === 0) || isDisabled || isSubmitting) return;
 
         if (!auth.user) {
             // Save prompt for post-registration retrieval
@@ -454,7 +454,7 @@ export function HeroSection({
                                 <div className="flex items-center gap-2 ms-auto">
                                     <Button
                                         type="submit"
-                                        disabled={!prompt.trim() || isDisabled || isSubmitting}
+                                        disabled={(!prompt.trim() && attachedImages.length === 0) || isDisabled || isSubmitting}
                                         className="shrink-0 h-10 min-w-[100px] transition-all hover:scale-[1.02] hover:shadow-md cursor-pointer"
                                     >
                                         {isSubmitting ? (

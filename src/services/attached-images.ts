@@ -1,7 +1,17 @@
+import crypto from 'crypto';
+import { cacheGet, cacheSet } from '@/lib/cache';
+import { decryptJson } from '@/lib/crypto';
 import { isValidObjectId } from '@/lib/db';
 import { formatHumanFileSize } from '@/lib/http';
+import {
+  resolveAnthropicMessagesEndpoint,
+  resolveOpenAIChatEndpoint,
+  usesAnthropicProtocol,
+} from '@/lib/ai-provider-url';
 import { r2GetBuffer } from '@/lib/r2';
+import { getSettingGroup } from '@/lib/settings';
 import type { IPlan } from '@/models/Billing';
+import { AiProvider, AI_DEFAULT_BASE_URLS, type AiProviderType } from '@/models/BuilderAi';
 import { ProjectFile, type IConversationEntry } from '@/models/Project';
 import type { IUser } from '@/models/User';
 
@@ -59,6 +69,298 @@ export function getMaxImagesPerPrompt(user: IUser, plan?: IPlan | null): number 
     return 10;
   }
   return plan?.max_images_per_prompt || ((plan?.price ?? 0) > 0 ? 6 : 2);
+}
+
+const CONTINUATION_PROMPT_RE =
+  /^(?:please\s+)?(?:continue|resume|proceed|keep\s+going|go\s+on|carry\s+on|go\s+ahead|try\s+again|retry|finish(?:\s+it)?)\.?$/i;
+
+const VISUAL_BACKREF_RE =
+  /\b(?:attached|uploaded|above|previous|prior|reference|inspo|inspiration|clone|replicate|copy|screenshot|screenshots|mockup|mockups|image|images|photo|photos|logo|picture|pictures|match\s+it|same\s+design|like\s+that|from\s+before)\b/i;
+
+/**
+ * Determine which ProjectFile IDs should apply to this turn:
+ * - Always uses explicit file IDs sent with this request.
+ * - On "Continue"/retry turns after a cancelled/failed image prompt, or when the user
+ *   explicitly refers back to previously uploaded images, automatically re-attaches the
+ *   most recent user turn's files so vision context is never lost mid-session.
+ */
+export function selectEffectiveFileIdsForPrompt(params: {
+  explicitFileIds: string[];
+  prompt: string;
+  priorHistory: IConversationEntry[];
+}): { fileIds: string[]; reusedFromHistory: boolean } {
+  const { explicitFileIds, prompt, priorHistory } = params;
+  if (explicitFileIds.length > 0) {
+    return { fileIds: explicitFileIds, reusedFromHistory: false };
+  }
+
+  if (!priorHistory.length) {
+    return { fileIds: [], reusedFromHistory: false };
+  }
+
+  let latestFileEntryIdx = -1;
+  for (let i = priorHistory.length - 1; i >= 0; i--) {
+    const entry = priorHistory[i];
+    if (entry?.role === 'user' && Array.isArray(entry.files) && entry.files.length > 0) {
+      latestFileEntryIdx = i;
+      break;
+    }
+  }
+
+  if (latestFileEntryIdx === -1) {
+    return { fileIds: [], reusedFromHistory: false };
+  }
+
+  const trimmedPrompt = prompt.trim();
+  const isContinuation = !trimmedPrompt || CONTINUATION_PROMPT_RE.test(trimmedPrompt);
+  const refersToVisuals = VISUAL_BACKREF_RE.test(trimmedPrompt);
+
+  // Check if the most recent assistant message right after those files was stopped/failed
+  const tailEntries = priorHistory.slice(latestFileEntryIdx + 1);
+  const lastAssistant = [...tailEntries].reverse().find((e) => e.role === 'assistant');
+  const prevWasStoppedOrFailed = Boolean(
+    lastAssistant &&
+      /^(?:Build\s+(?:cancelled|failed)|AI\s+provider\s+error)/i.test(lastAssistant.content || '')
+  );
+
+  // Also check if no assistant build has succeeded yet since those files were attached
+  const hasSuccessfulBuildAfter = tailEntries.some(
+    (e) =>
+      e.role === 'assistant' &&
+      !/^(?:Build\s+(?:cancelled|failed)|AI\s+provider\s+error)/i.test(e.content || '')
+  );
+
+  const shouldReattach =
+    (isContinuation && (prevWasStoppedOrFailed || !hasSuccessfulBuildAfter)) || refersToVisuals;
+
+  if (!shouldReattach) {
+    return { fileIds: [], reusedFromHistory: false };
+  }
+
+  const reusedIds = (priorHistory[latestFileEntryIdx].files || [])
+    .map((f) => String(f.id || '').trim())
+    .filter(Boolean);
+
+  return {
+    fileIds: reusedIds,
+    reusedFromHistory: reusedIds.length > 0,
+  };
+}
+
+const KNOWN_VISION_MODEL_PATTERNS = [
+  'gemini',
+  'gemma-4',
+  'gpt-4o',
+  'gpt-4.1',
+  'gpt-5',
+  'o1',
+  'o3',
+  'o4',
+  'claude-3',
+  'claude-sonnet-4',
+  'claude-opus-4',
+  'claude-haiku-4',
+  '-vl',
+  'vision',
+  'omni',
+];
+
+function isLikelyVisionCapableModel(model: string, type: AiProviderType): boolean {
+  const m = (model || '').toLowerCase();
+  if (!m) return type === 'gemini' || type === 'anthropic' || type === 'openai';
+  if (m.includes('deepseek-chat') || m.includes('deepseek-reasoner') || m.includes('deepseek-r1') || m.includes('qwen4-max')) {
+    return false;
+  }
+  return (
+    type === 'gemini' ||
+    KNOWN_VISION_MODEL_PATTERNS.some((p) => m.includes(p))
+  );
+}
+
+/**
+ * Extract a concise, cached visual design specification (exact hex colors, theme polarity,
+ * layout architecture, typography, and visible copy) from attached raster images using a
+ * fast vision-capable provider. Ensures accurate clones & inspiration even when downstream
+ * coding models are text-only, rate-limited, or distracted by default templates.
+ */
+export async function analyzeAttachedImagesDesign(params: {
+  projectId: string;
+  attachedFiles: AttachedFileMeta[];
+  attachedImages: AttachedImageVisionPayload[];
+  userPrompt: string;
+}): Promise<string | null> {
+  const { projectId, attachedFiles, attachedImages, userPrompt } = params;
+  const visionImgs = attachedImages.filter((img) => Boolean(img.data_base64)).slice(0, 4);
+  if (!visionImgs.length) return null;
+
+  const sig = attachedFiles
+    .filter((f) => f.vision_attached)
+    .map((f) => `${f.id}:${f.size}:${f.mime_type}`)
+    .join('|');
+  const cacheKey = `vision_blueprint:v1:${crypto
+    .createHash('sha256')
+    .update(`${projectId}:${sig}`)
+    .digest('hex')
+    .slice(0, 32)}`;
+
+  const cached = await cacheGet<string>(cacheKey);
+  if (cached && typeof cached === 'string' && cached.trim()) {
+    return cached;
+  }
+
+  try {
+    const integrations = await getSettingGroup('integrations').catch(
+      () => ({} as Record<string, string>)
+    );
+    const preferredProviderId = integrations.internal_ai_provider_id;
+    let chosenProvider: {
+      type: AiProviderType;
+      apiKey: string;
+      baseUrl: string;
+      model: string;
+    } | null = null;
+
+    const tryLoadProvider = async (query: Record<string, unknown>, modelOverride?: string) => {
+      const doc = await AiProvider.findOne({ ...query, status: 'active' }).lean();
+      if (!doc) return null;
+      const creds = decryptJson<{ api_key?: string }>(doc.credentials);
+      const apiKey = creds?.api_key || '';
+      if (!apiKey) return null;
+      const customBase = (doc.config?.base_url || '').trim().replace(/\/+$/, '');
+      const baseUrl = customBase || AI_DEFAULT_BASE_URLS[doc.type] || '';
+      const candidateModels = [
+        modelOverride,
+        doc.config?.default_model,
+        ...(doc.available_models || []),
+      ]
+        .map((m) => String(m || '').trim())
+        .filter(Boolean);
+
+      const visionModel =
+        candidateModels.find((m) => isLikelyVisionCapableModel(m, doc.type)) || candidateModels[0] || '';
+      if (!visionModel || !isLikelyVisionCapableModel(visionModel, doc.type)) {
+        return null;
+      }
+      return { type: doc.type, apiKey, baseUrl, model: visionModel };
+    };
+
+    if (preferredProviderId && isValidObjectId(preferredProviderId)) {
+      chosenProvider = await tryLoadProvider(
+        { _id: preferredProviderId },
+        integrations.internal_ai_model
+      );
+    }
+    if (!chosenProvider) {
+      chosenProvider =
+        (await tryLoadProvider({ type: 'gemini' })) ||
+        (await tryLoadProvider({ type: 'openai' })) ||
+        (await tryLoadProvider({ type: 'anthropic' }));
+    }
+    if (!chosenProvider) return null;
+
+    const analysisPrompt = `Analyze the ${visionImgs.length} attached image(s) for a UI/web developer.
+User request context: "${userPrompt.slice(0, 300)}"
+
+For EACH attached image (by filename/index), output concise, concrete facts (NO fluff):
+1. Classification: "UI Screenshot / Mockup" OR "Brand Logo / Photo Asset".
+2. Theme & Exact Colors: Light or Dark polarity + exact hex palette (page background, card/panel surface, primary text, muted text, borders, primary accent/CTA button).
+3. Typography & Shape: sans-serif vs serif vs mono, weight hierarchy, corner radius (sharp/rounded-xl/pill), shadow/border style.
+4. Layout Shell & Regions: Exact structure visible (e.g., fixed left sidebar + top header + center workspace/chat vs full-bleed hero landing page + sections). List sections/panels top-to-bottom or left-to-right.
+5. Visible Brand Name, Headlines, Navigation Labels & Key Interactive UI Elements: Quote actual visible labels, tabs, buttons, cards, and modals so the developer can reproduce or draw exact inspiration from them.`;
+
+    let extracted = '';
+    const { type, apiKey, baseUrl, model } = chosenProvider;
+
+    if (usesAnthropicProtocol(type, baseUrl)) {
+      const endpoint = resolveAnthropicMessagesEndpoint(baseUrl);
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 1400,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                ...visionImgs.map((img) => ({
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: img.mime_type,
+                    data: img.data_base64,
+                  },
+                })),
+                { type: 'text', text: analysisPrompt },
+              ],
+            },
+          ],
+        }),
+        signal: AbortSignal.timeout(14_000),
+      });
+      if (res.ok) {
+        const json = (await res.json()) as {
+          content?: Array<{ type?: string; text?: string }>;
+        };
+        extracted = (json.content || [])
+          .filter((b) => b.type === 'text' && b.text)
+          .map((b) => b.text)
+          .join('\n')
+          .trim();
+      }
+    } else {
+      const { primary } = resolveOpenAIChatEndpoint(baseUrl);
+      const isGeminiModel = model.toLowerCase().includes('gemini');
+      const payload: Record<string, unknown> = {
+        model,
+        max_tokens: 1400,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: analysisPrompt },
+              ...visionImgs.map((img) => ({
+                type: 'image_url',
+                image_url: {
+                  url: `data:${img.mime_type};base64,${img.data_base64}`,
+                },
+              })),
+            ],
+          },
+        ],
+      };
+      if (isGeminiModel && !model.toLowerCase().includes('lite')) {
+        payload.reasoning_effort = 'low';
+      }
+      const res = await fetch(primary, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(14_000),
+      });
+      if (res.ok) {
+        const json = (await res.json()) as {
+          choices?: Array<{ message?: { content?: string } }>;
+        };
+        extracted = String(json.choices?.[0]?.message?.content || '').trim();
+      }
+    }
+
+    if (extracted) {
+      await cacheSet(cacheKey, extracted, 7 * 24 * 3600).catch(() => {});
+      return extracted;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -200,8 +502,9 @@ export async function resolveAttachedProjectFiles(params: {
 export function buildAttachedFilesPromptSection(params: {
   attachedFiles: AttachedFileMeta[];
   isFirstPrompt: boolean;
+  visualAnalysis?: string | null;
 }): string {
-  const { attachedFiles, isFirstPrompt } = params;
+  const { attachedFiles, isFirstPrompt, visualAnalysis } = params;
   if (!attachedFiles.length) return '';
 
   const allImages = attachedFiles.every((f) => f.is_image);
@@ -221,20 +524,24 @@ export function buildAttachedFilesPromptSection(params: {
     return line;
   });
 
+  const blueprintBlock = visualAnalysis
+    ? `\n\n[Visual Design Blueprint — Extracted from Attached Images]\n${visualAnalysis}`
+    : '';
+
   const scopeRule = isFirstPrompt
-    ? `4. APP SCOPE (NEW BUILD): Apply inspiration or clone structure across the whole site unless the user targets only specific section(s)/page(s).`
+    ? `4. APP SCOPE (NEW BUILD): Apply inspiration or clone structure across the whole site unless the user targets only specific section(s)/page(s). OVERRIDE DEFAULT SCAFFOLDING: when cloning or matching a UI screenshot (e.g., app workspace, sidebar+chat shell, dashboard, or specific landing layout), match that screenshot's exact light/dark polarity, exact hex->HSL colors in \`src/custom.css\`, layout shell, typography, and components instead of forcing unrelated warm palettes, marketing navbars/footers, or stock photography unless visible in the reference.`
     : `4. STRICT APP SCOPE PRESERVATION (EXISTING APP EDIT): Modify ONLY the specific page, section, component, logo, or slot the user asked about. Do NOT redesign or alter unrelated pages, global theme tokens/colors in \`src/custom.css\`, fonts, header/footer, or untouched sections unless the user explicitly asks to redesign the entire app/site. If taking inspo or cloning a section from an image here, apply it ONLY to that requested section/page so it blends cleanly with the existing app.`;
 
   return `\n\n${header}
-${fileLines.join('\n')}
+${fileLines.join('\n')}${blueprintBlock}
 
 HOW TO INTERPRET ATTACHED FILES & SCOPE:
 1. VISUAL INSPIRATION ("inspo", "vibe", "style like this", "inspired by"):
-   - Inspect the attached image visually for color palette, layout rhythm, spacing, typography, cards, and visual mood, and adapt those cues only within the requested scope.
-   - NEVER embed an inspiration/reference screenshot's own \`URL\` inside \`<img src>\` or \`backgroundImage\`. Use verified stock images or user-provided asset photos for rendered media.
+   - Match the exact color polarity (light vs dark), palette hex/HSL values, layout shell/rhythm, spacing, typography, cards, and visual mood from the attached image(s) / Visual Design Blueprint above within the requested scope.
+   - NEVER embed an inspiration/reference screenshot's own \`URL\` inside \`<img src>\` or \`backgroundImage\`.
 2. DESIGN CLONE ("clone", "replicate", "copy this UI/layout", "build this screenshot"):
-   - Recreate the visible layout hierarchy, sections, grids, alignment, typography scale, borders/shadows, and colors cleanly as real interactive React/Tailwind code.
-   - NEVER paste a full UI screenshot as a single \`<img>\`; use clean HTML/JSX components and populate inner photo slots with real stock/asset images.
+   - Reproduce the visible layout hierarchy, sidebar/header/panels/sections, grids, typography, borders/shadows, and exact colors cleanly as interactive React/Tailwind code. Do NOT call \`listImages\` unless real photographs are actually visible in the cloned layout.
+   - NEVER paste a full UI screenshot as a single \`<img>\`; build real components and populate any inner photo slots with real stock/asset images.
 3. DIRECT USAGE IN DESIGN ("use this image/logo/photo", "put this in hero/card/background", or brand logo/product photo):
    - Embed the exact \`URL\` listed above directly in \`<img src="..." />\` or CSS \`backgroundImage\` at the exact requested slot(s). Do NOT swap user assets for stock photos.
    - Mixed attachments: treat each image according to the prompt's instructions (or visually: UI screenshot/mockup = inspo/clone; logo/photo/product asset = direct \`<img>\` usage). Non-image files: reference or serve via \`URL\` as appropriate.

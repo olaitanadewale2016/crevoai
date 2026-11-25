@@ -305,7 +305,7 @@ export default async function ProjectChatPage({
   // Opening any recent/existing project must simply open it without re-sending the first prompt.
   const shouldAutoStartInitialPrompt = Boolean(
     autostart === '1' &&
-      project.initial_prompt &&
+      (project.initial_prompt || (project.initial_file_ids && project.initial_file_ids.length > 0)) &&
       conversationHistory.length === 0 &&
       !previewExists &&
       !project.active_build_id &&

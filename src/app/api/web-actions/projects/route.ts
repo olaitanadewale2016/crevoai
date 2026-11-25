@@ -66,11 +66,8 @@ export async function POST(req: NextRequest) {
   }>(req);
 
   const prompt = (body.prompt || '').trim();
-  if (!prompt) {
-    return NextResponse.json({ errors: { prompt: 'The prompt field is required.' } }, { status: 422 });
-  }
-
-  const name = prompt.length > 50 ? `${prompt.slice(0, 50)}...` : prompt;
+  const nameSource = prompt || 'Design from Attached Image(s)';
+  const name = nameSource.length > 50 ? `${nameSource.slice(0, 50)}...` : nameSource;
   const projectId = generateUuidV7();
 
   // Match PHP ProjectController::store — keep template_id and theme_preset null when user
@@ -92,7 +89,7 @@ export async function POST(req: NextRequest) {
   const initialFileIds: string[] = [];
   let totalUploadedBytes = 0;
 
-  // Extract uploaded files from FormData if present
+  // Extract uploaded files from FormData if present BEFORE validating empty prompt (supports image-only builds)
   const fd = (body as any).formData as FormData | undefined;
   if (fd) {
     const uploadedImages = [
@@ -101,6 +98,10 @@ export async function POST(req: NextRequest) {
       ...fd.getAll('files'),
       ...fd.getAll('files[]'),
     ].filter((item): item is File => typeof File !== 'undefined' && item instanceof File && item.size > 0);
+
+    if (!prompt && uploadedImages.length === 0) {
+      return NextResponse.json({ errors: { prompt: 'The prompt field is required.' } }, { status: 422 });
+    }
 
     const maxImagesForPlan =
       user.role === 'admin' || plan?.monthly_build_credits === -1
@@ -155,11 +156,18 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  if (!prompt && initialFileIds.length === 0) {
+    return NextResponse.json({ errors: { prompt: 'The prompt field is required.' } }, { status: 422 });
+  }
+
+  const effectiveInitialPrompt =
+    prompt || 'Analyze the attached image(s) and build the website/UI matching them accurately.';
+
   const project = await Project.create({
     _id: projectId,
     user_id: user._id,
     name,
-    initial_prompt: prompt,
+    initial_prompt: effectiveInitialPrompt,
     initial_file_ids: initialFileIds,
     template_id: templateId,
     theme_preset: resolvedThemePreset,
