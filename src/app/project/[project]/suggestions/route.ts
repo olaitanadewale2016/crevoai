@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { getSessionContext } from '@/lib/auth';
+import { getSessionContext, getUserCurrentPlan } from '@/lib/auth';
+import { getProjectFirebaseConfig } from '@/lib/firebase-admin';
 import { Project } from '@/models/Project';
 import { getChatFollowUpSuggestions } from '@/services/internal-ai';
 
@@ -26,6 +27,44 @@ export async function GET(
     return NextResponse.json({ error: 'Project not found' }, { status: 404 });
   }
 
+  const historyList = (project.conversation_history || []) as Array<{ role: string; content: string }>;
+  const lastAssistantMsg = historyList
+    .filter((m) => m.role === 'assistant')
+    .slice(-1)[0]?.content || '';
+  const isStorageClarification =
+    /\?/.test(lastAssistantMsg) &&
+    /\b(?:firebase|supabase|localstorage|local\s+storage|database|backend)\b/i.test(
+      lastAssistantMsg
+    );
+
+  if (isStorageClarification) {
+    const [plan, firebaseCfg] = await Promise.all([
+      getUserCurrentPlan(ctx.user),
+      getProjectFirebaseConfig(project).catch(() => null),
+    ]);
+    const canFirebase = Boolean(ctx.user.role === 'admin' || plan?.enable_firebase);
+    const canSupabase = Boolean(
+      ctx.user.role === 'admin' || plan?.enable_firebase || plan?.enable_supabase
+    );
+    const storageChoices: string[] = [
+      'Use localStorage (interactive demo — start building now)',
+    ];
+    if (project.supabase_config) {
+      storageChoices.push('Use my connected Supabase database (start building)');
+    } else if (canSupabase) {
+      storageChoices.push("I'll connect Supabase in Settings -> Database first");
+    }
+    if (firebaseCfg) {
+      storageChoices.push('Use Firebase Firestore & Auth (start building)');
+    } else if (canFirebase) {
+      storageChoices.push("I'll connect Firebase in Settings -> Database first");
+    }
+    if (storageChoices.length < 3) {
+      storageChoices.push('Use custom REST API / backend hooks');
+    }
+    return NextResponse.json({ suggestions: storageChoices.slice(0, 3) });
+  }
+
   const suggestions = await getChatFollowUpSuggestions(
     project.conversation_history || [],
     3
@@ -35,14 +74,24 @@ export async function GET(
 
   // Reliable contextual fallback so users ALWAYS get relevant actionable next-step suggestions
   if (finalSuggestions.length < 3) {
-    const historyList = (project.conversation_history || []) as Array<{ role: string; content: string }>;
     const lastUserMsg = historyList
       .filter((m) => m.role === 'user')
       .slice(-1)[0]?.content?.toLowerCase() || '';
     const projectName = (project.name || '').toLowerCase();
 
     const contextualPool: string[] = [];
-    if (lastUserMsg.includes('task') || lastUserMsg.includes('todo') || projectName.includes('task')) {
+    if (
+      /\b(?:facebook|social|feed|community|post|comment|chat|forum)\b/.test(
+        `${lastUserMsg} ${projectName}`
+      )
+    ) {
+      contextualPool.push(
+        'Add Stories bar & story viewer modal',
+        'Add notifications & friend requests view',
+        'Add Messenger-style direct chat drawer',
+        'Connect persistent database in Settings -> Database'
+      );
+    } else if (lastUserMsg.includes('task') || lastUserMsg.includes('todo') || projectName.includes('task')) {
       contextualPool.push(
         'Add task priority filter (High, Med, Low)',
         'Add due date reminders and calendar view',

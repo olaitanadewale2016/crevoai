@@ -43,7 +43,8 @@ export async function GET(
       project.build_status === 'building' ||
       project.build_status === 'completed' ||
       project.build_status === 'failed' ||
-      project.build_status === 'cancelled'
+      project.build_status === 'cancelled' ||
+      (project.build_status === 'idle' && (project.conversation_history?.length ?? 0) > 0)
     ) {
       data.recent_messages = (project.conversation_history || []).slice(-30).map((entry: any) => ({
         role: entry.role,
@@ -112,10 +113,12 @@ export async function GET(
 
         const nextStatus =
           previewExists ||
-          hasCompiledCustomPreview ||
-          (lastEntry?.role === 'assistant' && !lastLooksLikeFailure && Boolean(project.active_build_id))
+            hasCompiledCustomPreview ||
+            (lastEntry?.role === 'assistant' && !lastLooksLikeFailure && Boolean(project.active_build_id))
             ? 'completed'
-            : 'failed';
+            : lastEntry?.role === 'assistant' && !lastLooksLikeFailure
+              ? 'idle'
+              : 'failed';
         await Project.updateOne(
           { _id: project._id },
           {

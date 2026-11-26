@@ -282,12 +282,17 @@ export async function POST(req: NextRequest) {
         );
 
         const agentFailed = Boolean(
-          data.status === 'failed' ||
-            data.build_status === 'failed' ||
-            (!data.files_changed && !data.build_required && data.build_status !== 'completed')
+          data.status === 'failed' || data.build_status === 'failed'
+        );
+        const isClarifyingOrChatOnly = Boolean(
+          !agentFailed &&
+            !data.files_changed &&
+            !data.build_required &&
+            data.build_status !== 'completed'
         );
         const shouldBuildPreview = Boolean(
           !agentFailed &&
+            !isClarifyingOrChatOnly &&
             (data.files_changed || data.build_status === 'completed' || data.build_required)
         );
 
@@ -362,13 +367,17 @@ export async function POST(req: NextRequest) {
           creditTask,
         ]);
 
+        const preservedProjectStatus =
+          project.active_build_id || project.build_path ? 'completed' : 'idle';
         const finalBuildStatus = shouldBuildPreview
           ? previewReadyUrl
             ? 'completed'
             : 'failed'
           : agentFailed
             ? 'failed'
-            : 'completed';
+            : isClarifyingOrChatOnly
+              ? preservedProjectStatus
+              : 'completed';
 
         const setFields: Record<string, unknown> = {
           build_status: finalBuildStatus,
@@ -416,6 +425,12 @@ export async function POST(req: NextRequest) {
             status: 'failed',
             message: data.build_message || 'Build failed',
           });
+        } else if (isClarifyingOrChatOnly) {
+          await broadcastEvent(`session.${sessionId}`, 'status', {
+            status: finalBuildStatus,
+            message: data.build_message || 'Waiting for user response',
+            ...(project.active_build_id ? { preview_url: `/preview/${project._id}` } : {}),
+          });
         }
 
         // Run user-level broadcasts, notifications, and fallback complete relay concurrently
@@ -425,7 +440,7 @@ export async function POST(req: NextRequest) {
             ? 'completed'
             : finalBuildStatus === 'failed'
               ? 'failed'
-              : 'completed';
+              : finalBuildStatus;
           postTasks.push(
             broadcastToUser(String(project.user_id), 'project.status', {
               project_id: project._id,
@@ -435,19 +450,21 @@ export async function POST(req: NextRequest) {
             })
           );
 
-          if (finalUserStatus === 'completed') {
-            postTasks.push(
-              notifyBuildComplete(String(project.user_id), project._id, project.name)
-            );
-          } else {
-            postTasks.push(
-              notifyBuildFailed(
-                String(project.user_id),
-                project._id,
-                project.name,
-                data.build_message || buildSyncError || 'Build failed'
-              )
-            );
+          if (!isClarifyingOrChatOnly) {
+            if (finalUserStatus === 'completed') {
+              postTasks.push(
+                notifyBuildComplete(String(project.user_id), project._id, project.name)
+              );
+            } else {
+              postTasks.push(
+                notifyBuildFailed(
+                  String(project.user_id),
+                  project._id,
+                  project.name,
+                  data.build_message || buildSyncError || 'Build failed'
+                )
+              );
+            }
           }
         }
 

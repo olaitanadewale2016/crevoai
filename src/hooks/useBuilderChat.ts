@@ -174,13 +174,13 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         }
 
         // Check if this is a terminal status that should clear thinking state
-        const isTerminalStatus = ['cancelled', 'completed', 'failed'].includes(data.status);
+        const isTerminalStatus = ['cancelled', 'completed', 'failed', 'idle'].includes(data.status);
         const resolvedPreviewUrl = (data as any).preview_url || null;
 
         if (resolvedPreviewUrl) {
             clearFallbackBuildTimer();
             buildTriggeredRef.current = true;
-        } else if (data.status === 'failed' || data.status === 'cancelled') {
+        } else if (data.status === 'failed' || data.status === 'cancelled' || data.status === 'idle') {
             clearFallbackBuildTimer();
         }
 
@@ -318,18 +318,22 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         if (completedSessionRef.current) return;
         completedSessionRef.current = true;
 
-        const hasFiles = data.files_changed ?? true;
+        const isClarifyingOrChatOnly =
+            data.files_changed === false && data.build_status === 'skipped';
+        const hasFiles = isClarifyingOrChatOnly ? false : (data.files_changed ?? true);
         const resolvedPreviewUrl = (data as any).preview_url || null;
 
-        if (resolvedPreviewUrl) {
+        if (resolvedPreviewUrl || isClarifyingOrChatOnly) {
             clearFallbackBuildTimer();
-            buildTriggeredRef.current = true;
+            if (resolvedPreviewUrl) {
+                buildTriggeredRef.current = true;
+            }
         }
 
-        // Update progress state; previewUrl is only set once a verified preview artifact exists
+        // Update progress state; clarifying/chat-only replies return to idle without triggering builds
         setProgress(prev => ({
             ...prev,
-            status: 'completed',
+            status: isClarifyingOrChatOnly ? 'idle' : 'completed',
             ...(resolvedPreviewUrl ? { previewUrl: resolvedPreviewUrl } : {}),
             iterations: data.iterations,
             tokensUsed: data.tokens_used,
@@ -353,7 +357,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
         if (resolvedPreviewUrl) {
             onBuildComplete?.(resolvedPreviewUrl);
-        } else if (!hasFiles && !buildTriggeredRef.current) {
+        } else if (!hasFiles && !isClarifyingOrChatOnly && !buildTriggeredRef.current) {
             axios
                 .get(`/preview/${projectId}/exists`)
                 .then((res) => {
@@ -542,18 +546,29 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                 }));
             }
 
-            if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+            const hasAssistantReply = currentTurnEntries.some(msg => msg.role === 'assistant');
+            const hasBuildAction = currentTurnEntries.some(msg => msg.role === 'action');
+
+            if (
+                status === 'completed' ||
+                status === 'failed' ||
+                status === 'cancelled' ||
+                (status === 'idle' && hasAssistantReply)
+            ) {
                 const previewUrl = response.data.preview_url || undefined;
                 if (previewUrl) {
                     clearFallbackBuildTimer();
                     buildTriggeredRef.current = true;
-                } else if (status === 'failed' || status === 'cancelled') {
+                } else if (status === 'failed' || status === 'cancelled' || status === 'idle') {
                     clearFallbackBuildTimer();
                 }
                 setProgress(prev => ({
                     ...prev,
                     status: status as BuildProgress['status'],
-                    hasFileChanges: status === 'completed' && !previewUrl ? true : prev.hasFileChanges,
+                    hasFileChanges:
+                        status === 'completed' && !previewUrl && hasBuildAction
+                            ? true
+                            : prev.hasFileChanges,
                     ...(previewUrl && { previewUrl }),
                     thinkingContent: null,
                     thinkingStartTime: null,
@@ -561,7 +576,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                 if (status === 'completed') {
                     if (previewUrl) {
                         onBuildComplete?.(previewUrl);
-                    } else if (autoBuild && !buildTriggeredRef.current) {
+                    } else if (hasBuildAction && autoBuild && !buildTriggeredRef.current) {
                         buildTriggeredRef.current = true;
                         void triggerBuildRef.current();
                     }

@@ -37,6 +37,51 @@ import { getInspectorScript } from '@/lib/inspector-script';
 const BUILDER_UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36';
 
+/** Build the deterministic per-project Supabase table prefix. */
+export function getSupabaseTablePrefix(projectId: unknown): string {
+  return `proj_${String(projectId).replace(/[^a-zA-Z0-9]/g, '_').slice(0, 12)}_`;
+}
+
+/**
+ * Determine whether a project already has a built site in its workspace.
+ * Clarifying questions or cancelled/failed first-turn attempts keep Initial Build Mode active.
+ */
+export function hasCompletedSiteBuild(
+  project: Pick<
+    IProject,
+    'active_build_id' | 'build_path' | 'compacted_history' | 'conversation_history'
+  >,
+  historyOverride?: IConversationEntry[] | null,
+  compactedOverride?: unknown[] | null
+): boolean {
+  if (project.active_build_id || project.build_path) {
+    return true;
+  }
+  const compacted = compactedOverride ?? project.compacted_history;
+  if (Array.isArray(compacted) && compacted.length > 0) {
+    return true;
+  }
+  const history = historyOverride ?? project.conversation_history ?? [];
+  return history.some((entry) => {
+    if (entry.role === 'action') {
+      const actionText = `${(entry as { action?: string }).action || ''} ${entry.content || ''}`;
+      return /(?:verifying build|finalizing preview|write_?files?|edit_?file|create_?file|building preview)/i.test(
+        actionText
+      );
+    }
+    if (entry.role === 'assistant') {
+      const text = entry.content || '';
+      if (/^(?:Build\s+(?:cancelled|failed)|AI\s+provider\s+error)/i.test(text)) {
+        return false;
+      }
+      return /(?:##\s*(?:What I Built|Website Build Complete|Changes Made|Build Complete)|files?_(?:created|updated)|Created\s+`?src\/)/i.test(
+        text
+      );
+    }
+    return false;
+  });
+}
+
 export async function builderFetch(
   builder: { url: string; port: number; server_key: string },
   path: string,
@@ -127,9 +172,9 @@ export async function getAiConfigForUser(
     : null;
   const usingOwnKey = Boolean(
     plan?.allow_user_ai_api_key &&
-      aiSettings &&
-      aiSettings.preferred_provider !== 'system' &&
-      aiSettings[`${aiSettings.preferred_provider}_api_key` as keyof typeof aiSettings]
+    aiSettings &&
+    aiSettings.preferred_provider !== 'system' &&
+    aiSettings[`${aiSettings.preferred_provider}_api_key` as keyof typeof aiSettings]
   );
   const resolvedEffort: ReasoningEffort = hasExplicitEffort
     ? (effort as ReasoningEffort)
@@ -355,13 +400,18 @@ export async function startBuilderSession(params: {
       ? params.aiConfig
       : await getAiConfigForUser(user, params.effort, plan);
   if (!aiConfig) throw new Error('No active AI provider configured.');
+  const firebaseAvailable = Boolean(user.role === 'admin' || plan?.enable_firebase);
+  const firebaseEnabled = firebaseAvailable && Boolean(firebaseCfg);
+  const supabaseAvailable = Boolean(
+    user.role === 'admin' || plan?.enable_firebase || plan?.enable_supabase
+  );
   const supabaseCfg = project.supabase_config
     ? decryptJson<{ url?: string; anonKey?: string }>(project.supabase_config)
     : null;
   const supabaseEnabled =
-    Boolean(plan?.enable_firebase || plan?.enable_supabase) &&
+    supabaseAvailable &&
     Boolean(supabaseCfg?.url && supabaseCfg?.anonKey);
-  const supabaseTablePrefix = `proj_${String(project._id).replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}_`;
+  const supabaseTablePrefix = getSupabaseTablePrefix(project._id);
   const { history, isCompacted } = buildOptimizedHistoryForBuilder(project);
 
   const themeObj = project.theme_preset
@@ -371,16 +421,7 @@ export async function startBuilderSession(params: {
   const maxIterations = builder.max_iterations || 20;
 
   const priorHistory = project.conversation_history || [];
-  const hasBuiltAssistantTurn = priorHistory.some(
-    (h) =>
-      h.role === 'assistant' &&
-      !/^(?:Build\s+(?:cancelled|failed)|AI\s+provider\s+error)/i.test(h.content || '')
-  );
-  const isFirstPrompt =
-    !project.active_build_id &&
-    !project.build_path &&
-    !hasBuiltAssistantTurn &&
-    !(project.compacted_history && project.compacted_history.length > 0);
+  const isFirstPrompt = !hasCompletedSiteBuild(project, priorHistory, project.compacted_history);
   let enrichedGoal = goal;
   if (!isFirstPrompt) {
     enrichedGoal += `\n\n[Follow-Up Edit Mode — Preserve Existing Website & Design System]\nAn existing website is ALREADY built in this workspace.\n1. Do NOT call fetchTemplates or useTemplate.\n2. Do NOT redesign, wipe, or rebuild the entire app unless the user explicitly asks to start over or create a completely new site from scratch.\n3. Use readFiles only on the specific page/component you need to modify — NEVER call readFile on src/components/ui/*, src/index.css, src/main.tsx, or package.json. Make surgical editFile changes that preserve the existing brand, layout, palette, and typography.`;
@@ -411,11 +452,13 @@ export async function startBuilderSession(params: {
     },
     project_capabilities: {
       firebase: {
-        enabled: Boolean(plan?.enable_firebase) && Boolean(firebaseCfg),
+        enabled: firebaseEnabled,
+        available: firebaseAvailable,
         collection_prefix: `projects/${project._id}`,
       },
       supabase: {
         enabled: supabaseEnabled,
+        available: supabaseAvailable,
         url: supabaseEnabled ? supabaseCfg?.url : null,
         table_prefix: supabaseTablePrefix,
       },
@@ -827,11 +870,11 @@ export async function triggerBuildAndDeployToR2(
       const oldPrefix = `sites/${project._id}/${oldBuildId}/`;
       try {
         after(async () => {
-          await r2DeletePrefix('private', oldPrefix).catch(() => {});
+          await r2DeletePrefix('private', oldPrefix).catch(() => { });
         });
       } catch {
         // Fallback if invoked outside a Next.js request scope
-        r2DeletePrefix('private', oldPrefix).catch(() => {});
+        r2DeletePrefix('private', oldPrefix).catch(() => { });
       }
     }
 
@@ -943,7 +986,7 @@ export async function buildDynamicHtml(
       appConfig.supabase = {
         url: supa.url,
         anonKey: supa.anonKey,
-        tablePrefix: `proj_${String(project._id).replace(/[^a-zA-Z0-9]/g, '_').slice(0, 12)}_`,
+        tablePrefix: getSupabaseTablePrefix(project._id),
       };
     }
   }

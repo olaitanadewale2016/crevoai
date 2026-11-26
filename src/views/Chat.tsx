@@ -373,20 +373,25 @@ export default function Chat({
     }, [project.id]);
 
     const handleComplete = useCallback((event: CompleteEvent) => {
-        playSound('complete');
-        confetti({
-            particleCount: 80,
-            spread: 60,
-            origin: { y: 0.7 },
-        });
-        setPreviewRefreshTrigger(Date.now());
-        setFileRefreshTrigger(tf => tf + 1);
-        if (event.files_changed) {
-            toast.success(t('Build complete! Files have been updated.'));
-        } else {
-            toast.success(t('Build complete!'));
+        const isClarifyingOrChatOnly =
+            event.files_changed === false && event.build_status === 'skipped';
+
+        if (!isClarifyingOrChatOnly) {
+            playSound('complete');
+            confetti({
+                particleCount: 80,
+                spread: 60,
+                origin: { y: 0.7 },
+            });
+            setPreviewRefreshTrigger(Date.now());
+            setFileRefreshTrigger(tf => tf + 1);
+            if (event.files_changed) {
+                toast.success(t('Build complete! Files have been updated.'));
+            } else {
+                toast.success(t('Build complete!'));
+            }
         }
-        // Fetch AI suggestions immediately after build completes
+        // Fetch AI suggestions immediately after turn completes (including storage choices)
         fetchSuggestions();
         // Ensure credit deduction & status sync even if webhook is delayed
         axios
@@ -675,10 +680,15 @@ export default function Chat({
         playSound,
     ]);
 
-    // Auto-rebuild preview for projects with history but no preview
+    // Auto-rebuild preview for completed projects with history but no preview
     const autoRebuildTriggered = useRef(false);
     useEffect(() => {
-        if (project.has_history && !project.preview_url && project.build_status !== 'building' && !autoRebuildTriggered.current) {
+        if (
+            project.has_history &&
+            !project.preview_url &&
+            project.build_status === 'completed' &&
+            !autoRebuildTriggered.current
+        ) {
             autoRebuildTriggered.current = true;
             triggerBuild();
         }

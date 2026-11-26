@@ -4,6 +4,7 @@ import { getSessionContext, getUserCurrentPlan, canUpdateProject } from '@/lib/a
 import { parseRequestBody } from '@/lib/http';
 import { Project } from '@/models/Project';
 import { encryptJson, decryptJson } from '@/lib/crypto';
+import { getSupabaseTablePrefix } from '@/services/builder';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,7 +38,7 @@ export async function GET(
     ? decryptJson<SupabaseWebConfig>(project.supabase_config)
     : null;
 
-  const tablePrefix = `proj_${String(project._id).replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}_`;
+  const tablePrefix = getSupabaseTablePrefix(project._id);
 
   return NextResponse.json({
     enabled: supabaseEnabled,

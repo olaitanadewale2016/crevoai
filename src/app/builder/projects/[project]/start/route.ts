@@ -21,6 +21,7 @@ import {
   resolveBlockingBuild,
   detectRepeatedPrompt,
   getAiConfigForUser,
+  hasCompletedSiteBuild,
   startBuilderSession,
 } from '@/services/builder';
 
@@ -53,7 +54,7 @@ export async function POST(
       await Project.updateOne(
         { _id: project._id },
         { $set: { initial_prompt: null, initial_file_ids: [] } }
-      ).catch(() => {});
+      ).catch(() => { });
     }
   };
 
@@ -199,11 +200,11 @@ export async function POST(
       const visualAnalysis =
         resolved.attachedImages.length > 0
           ? await analyzeAttachedImagesDesign({
-              projectId: String(project._id),
-              attachedFiles: resolved.attachedFiles,
-              attachedImages: resolved.attachedImages,
-              userPrompt: rawPrompt,
-            })
+            projectId: String(project._id),
+            attachedFiles: resolved.attachedFiles,
+            attachedImages: resolved.attachedImages,
+            userPrompt: rawPrompt,
+          })
           : null;
       return { ...resolved, visualAnalysis };
     })(),
@@ -303,8 +304,8 @@ export async function POST(
         matchedTemplate = isValidObjectId(templateId)
           ? await Template.findById(templateId).select('_id name is_system plan_ids').lean()
           : await Template.findOne({ slug: templateId })
-              .select('_id name is_system plan_ids')
-              .lean();
+            .select('_id name is_system plan_ids')
+            .lean();
       }
 
       if (matchedTemplate) {
@@ -390,15 +391,7 @@ export async function POST(
   const { templateId, templateName, autoMatchedTemplateId } = templateResult;
 
   const priorCompacted = project.compacted_history || null;
-  const hasExistingBuiltSite =
-    Boolean(project.active_build_id || project.build_path) ||
-    Boolean(priorCompacted && priorCompacted.length > 0) ||
-    priorHistory.some(
-      (h) =>
-        h.role === 'assistant' &&
-        !/^(?:Build\s+(?:cancelled|failed)|AI\s+provider\s+error)/i.test(h.content || '')
-    );
-  const isFirstPrompt = !hasExistingBuiltSite;
+  const isFirstPrompt = !hasCompletedSiteBuild(project, priorHistory, priorCompacted);
   const trimmedPrompt = rawPrompt.trim();
 
   const userEntry: IConversationEntry = {

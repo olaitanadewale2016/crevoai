@@ -29,13 +29,21 @@ export async function POST(
   }
 
   const { body } = await parseRequestBody(req).catch(() => ({ body: {} as Record<string, any> }));
+  const isClarifyingOrChatOnly =
+    body.files_changed === false && body.build_status === 'skipped';
   const rawTokensUsed = Number(body.tokens_used || 0);
   const prevBilled = Number(project.last_billed_session_tokens || 0);
   const deltaTokens =
     rawTokensUsed > prevBilled ? rawTokensUsed - prevBilled : prevBilled === 0 ? rawTokensUsed : 0;
 
-  project.build_status = 'completed';
-  project.build_completed_at = new Date();
+  project.build_status = isClarifyingOrChatOnly
+    ? project.active_build_id || project.build_path
+      ? 'completed'
+      : 'idle'
+    : 'completed';
+  if (!isClarifyingOrChatOnly) {
+    project.build_completed_at = new Date();
+  }
   if (rawTokensUsed > 0) {
     project.estimated_tokens = rawTokensUsed;
     if (rawTokensUsed > prevBilled) {
