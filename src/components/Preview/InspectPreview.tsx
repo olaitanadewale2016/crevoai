@@ -28,6 +28,7 @@ interface InspectPreviewProps {
     mode?: PreviewMode;
     onModeChange?: (mode: PreviewMode) => void;
     projectId?: string;  // For thumbnail capture
+    hasThumbnail?: boolean;
     captureThumbnailTrigger?: number;  // Change this value to trigger thumbnail capture
     // Inspect mode callbacks (optional when mode !== 'inspect')
     onElementSelect?: (element: ElementMention) => void;
@@ -85,6 +86,7 @@ export function InspectPreview({
     mode = 'preview',
     onModeChange,
     projectId,
+    hasThumbnail = true,
     captureThumbnailTrigger,
     onElementSelect,
     onElementEdit,
@@ -110,6 +112,7 @@ export function InspectPreview({
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const wasBuilding = useRef(false);
+    const pendingCaptureRef = useRef(!hasThumbnail);
     const previousMode = useRef<PreviewMode>(mode);
     const [isSaving, setIsSaving] = useState(false);
     const [iframeReady, setIframeReady] = useState(false);
@@ -249,26 +252,32 @@ export function InspectPreview({
             };
             frame();
 
-            // Capture thumbnail after iframe has fully rendered (fire-and-forget)
-            // 2s delay to allow external resources (fonts, images) to load
-            setTimeout(() => {
-                captureAndUpload();
-            }, 2000);
+            // Mark pending thumbnail capture once iframe finishes rendering
+            pendingCaptureRef.current = true;
         }
         wasBuilding.current = isBuilding;
-    }, [isBuilding, captureAndUpload]);
+    }, [isBuilding]);
 
-    // Capture thumbnail when trigger prop changes (e.g., after theme apply)
+    // Queue thumbnail capture when trigger prop changes (e.g., after build or theme apply)
     const lastCaptureTrigger = useRef(0);
     useEffect(() => {
         if (captureThumbnailTrigger && captureThumbnailTrigger > 0 && captureThumbnailTrigger !== lastCaptureTrigger.current) {
             lastCaptureTrigger.current = captureThumbnailTrigger;
-            // 2s delay to allow preview to update with new theme
-            setTimeout(() => {
-                captureAndUpload();
-            }, 2000);
+            pendingCaptureRef.current = true;
         }
-    }, [captureThumbnailTrigger, captureAndUpload]);
+    }, [captureThumbnailTrigger]);
+
+    // Execute queued capture only after the preview iframe is loaded and idle
+    useEffect(() => {
+        if (!pendingCaptureRef.current || !iframeReady || isBuilding || !effectivePreviewUrl) {
+            return;
+        }
+        pendingCaptureRef.current = false;
+        const timer = setTimeout(() => {
+            void captureAndUpload();
+        }, 1500);
+        return () => clearTimeout(timer);
+    }, [iframeReady, isBuilding, effectivePreviewUrl, captureAndUpload, refreshTrigger, captureThumbnailTrigger]);
 
     // Handle edit from context menu
     const handleEdit = useCallback((element: InspectorElement) => {

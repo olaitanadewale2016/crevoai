@@ -1,16 +1,18 @@
-﻿'use client';
+'use client';
 
 import { Link } from '@/lib/inertia-compat';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { ProjectPreviewThumbnail } from '@/components/Projects/ProjectPreviewThumbnail';
 import { Clock } from 'lucide-react';
 import { useAppDate } from '@/lib/date';
 
 interface Project {
-    id: number;
+    id: string | number;
     name: string;
     description?: string | null;
     thumbnail?: string | null;
+    preview_url?: string | null;
     status: 'draft' | 'published' | 'archived';
     updated_at: string;
 }
@@ -28,22 +30,23 @@ export function ProjectCard({ project }: ProjectCardProps) {
         archived: 'bg-secondary text-secondary-foreground',
     };
 
+    const thumbnailUrl = project.thumbnail
+        ? project.thumbnail.startsWith('http') || project.thumbnail.startsWith('/storage/')
+            ? project.thumbnail
+            : `/storage/${project.thumbnail}`
+        : null;
+
     return (
         <Link href={`/project/${project.id}`}>
             <Card className="group cursor-pointer hover:shadow-lg transition-all duration-200 overflow-hidden bg-card/80 backdrop-blur-sm">
-                <div className="aspect-video bg-muted overflow-hidden">
-                    {project.thumbnail ? (
-                        <img
-                            src={project.thumbnail}
-                            alt={project.name}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                        />
-                    ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                            <div className="h-12 w-12 rounded-lg bg-primary/20" />
-                        </div>
-                    )}
-                </div>
+                <ProjectPreviewThumbnail
+                    projectId={project.id}
+                    projectName={project.name}
+                    thumbnailUrl={thumbnailUrl}
+                    previewUrl={project.preview_url}
+                    autoCapture={false}
+                    aspectClassName="aspect-video"
+                />
                 <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-2">
                         <h3 className="font-medium truncate group-hover:text-primary transition-colors">

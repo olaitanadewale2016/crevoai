@@ -3,7 +3,7 @@ import { connectDB } from '@/lib/db';
 import { getSessionContext } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { Project } from '@/models/Project';
-import { r2PutObject, r2DeleteObject } from '@/lib/r2';
+import { r2PutObject, r2DeleteObject, getPublicAssetUrl } from '@/lib/r2';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,5 +53,9 @@ export async function POST(
   project.updated_at = new Date();
   await project.save();
 
-  return NextResponse.json({ success: true, path });
+  return NextResponse.json({
+    success: true,
+    path,
+    url: getPublicAssetUrl(path) || `/storage/${path}`,
+  });
 }

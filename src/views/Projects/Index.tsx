@@ -46,6 +46,7 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { AppSidebar } from '@/components/Sidebar/AppSidebar';
+import { ProjectPreviewThumbnail } from '@/components/Projects/ProjectPreviewThumbnail';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { LanguageSelector } from '@/components/LanguageSelector';
 import { NotificationBell } from '@/components/Notifications/NotificationBell';
@@ -58,7 +59,6 @@ import type { BroadcastConfig } from '@/hooks/useBuilderPusher';
 import {
     Search,
     LogOut,
-    Folder,
     LayoutGrid,
     List,
     Maximize2,
@@ -79,6 +79,8 @@ interface ProjectCardProps {
     project: Project;
     isTrash?: boolean;
     thumbnailUrl?: string | null;
+    autoCapture?: boolean;
+    onThumbnailCaptured?: (projectId: string, savedUrl: string) => void;
     isSelected?: boolean;
     selectionMode?: boolean;
     onToggleSelect?: (id: string, shiftKey?: boolean) => void;
@@ -93,6 +95,8 @@ function ProjectCard({
     project,
     isTrash = false,
     thumbnailUrl,
+    autoCapture = true,
+    onThumbnailCaptured,
     isSelected = false,
     selectionMode = false,
     onToggleSelect,
@@ -136,17 +140,16 @@ function ProjectCard({
                             : 'border-border'
                     }`}
                 >
-                    {thumbnailUrl ? (
-                        <img
-                            src={thumbnailUrl}
-                            alt={project.name}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        />
-                    ) : (
-                        <div className="w-full h-full flex items-center justify-center bg-muted/50">
-                            <Folder className="h-12 w-12 text-muted-foreground/30" />
-                        </div>
-                    )}
+                    <ProjectPreviewThumbnail
+                        projectId={project.id}
+                        projectName={project.name}
+                        thumbnailUrl={thumbnailUrl}
+                        previewUrl={project.preview_url}
+                        isTrash={isTrash}
+                        autoCapture={autoCapture}
+                        onThumbnailCaptured={onThumbnailCaptured}
+                        className="w-full h-full"
+                    />
                 </div>
             </Link>
 
@@ -336,6 +339,21 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
                 ...prev,
                 [status.project_id]: nextStatus,
             }));
+            const nextPreviewUrl = (status as any).preview_url || (nextStatus === 'completed' ? `/preview/${status.project_id}` : null);
+            if (nextPreviewUrl) {
+                setProjectItems(prev =>
+                    prev.map(p =>
+                        p.id === status.project_id
+                            ? {
+                                  ...p,
+                                  build_status: nextStatus,
+                                  preview_url: nextPreviewUrl,
+                                  updated_at: new Date().toISOString(),
+                              }
+                            : p
+                    )
+                );
+            }
         },
     });
 
@@ -415,6 +433,12 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
             setSelectedIds(new Set(projectItems.map((p) => p.id)));
         }
     }, [allVisibleSelected, projectItems]);
+
+    const handleThumbnailCaptured = useCallback((projectId: string, savedUrl: string) => {
+        setProjectItems((prev) =>
+            prev.map((p) => (p.id === projectId ? { ...p, thumbnail: savedUrl } : p))
+        );
+    }, []);
 
     // Helper function to get thumbnail URL with cache busting
     const getThumbnailUrl = useCallback((project: Project): string | null => {
@@ -1104,6 +1128,8 @@ export default function ProjectsIndex({ auth, projects, counts, activeTab, filte
                                                 }}
                                                 isTrash={activeTab === 'trash'}
                                                 thumbnailUrl={getThumbnailUrl(project)}
+                                                autoCapture={!project.user?.id || String(project.user.id) === String(user.id)}
+                                                onThumbnailCaptured={handleThumbnailCaptured}
                                                 isSelected={selectedIds.has(project.id)}
                                                 selectionMode={selectedIds.size > 0}
                                                 onToggleSelect={handleToggleSelect}

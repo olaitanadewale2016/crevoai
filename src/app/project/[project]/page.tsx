@@ -327,6 +327,7 @@ export default async function ProjectChatPage({
         has_history: conversationHistory.length > 0,
         conversation_history: conversationHistory,
         preview_url: previewExists ? `/preview/${String(project._id)}` : null,
+        has_thumbnail: Boolean(project.thumbnail),
         has_active_session: hasActiveSession,
         build_session_id: project.build_session_id ?? null,
         build_status: project.build_status ?? undefined,

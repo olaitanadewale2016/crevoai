@@ -59,16 +59,30 @@ export async function POST(
   const newId = generateUuidV7();
   const newName = `Copy of ${project.name}`.slice(0, 100);
 
-  // If source project has an active build in R2, duplicate the build files
+  // If source project has an active build in R2, duplicate the built site snapshot
   if (project.active_build_id) {
     try {
-      const srcPrefix = `builds/${project._id}/${project.active_build_id}/`;
-      const dstPrefix = `builds/${newId}/${project.active_build_id}/`;
-      const keys = await r2ListKeys(srcPrefix);
+      const srcPrefix = `sites/${project._id}/${project.active_build_id}/`;
+      const dstPrefix = `sites/${newId}/${project.active_build_id}/`;
+      const keys = await r2ListKeys('private', srcPrefix);
       for (const key of keys) {
         const dstKey = key.replace(srcPrefix, dstPrefix);
-        await r2CopyObject(key, dstKey);
+        await r2CopyObject(key, dstKey, 'private');
       }
+    } catch {}
+  }
+
+  let copiedThumbnail: string | null = null;
+  if (project.thumbnail) {
+    try {
+      const dstThumbKey = `thumbnails/${newId}.png`;
+      await r2CopyObject({
+        sourceVisibility: 'public',
+        sourceKey: project.thumbnail,
+        destVisibility: 'public',
+        destKey: dstThumbKey,
+      });
+      copiedThumbnail = dstThumbKey;
     } catch {}
   }
 
@@ -77,6 +91,7 @@ export async function POST(
     user_id: ctx.user._id,
     name: newName,
     description: project.description,
+    thumbnail: copiedThumbnail,
     initial_prompt: null,
     conversation_history: project.conversation_history || [],
     template_id: project.template_id,

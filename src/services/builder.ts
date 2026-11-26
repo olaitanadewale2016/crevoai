@@ -14,6 +14,7 @@ import {
   r2ListPrefixes,
   guessContentType,
   getPublicAssetUrl,
+  isR2Configured,
 } from '@/lib/r2';
 import { getPusherConfigForBuilder } from '@/lib/broadcast';
 import { getProjectFirebaseConfig } from '@/lib/firebase-admin';
@@ -891,6 +892,61 @@ export async function triggerBuildAndDeployToR2(
   } finally {
     await cacheForget(lockKey);
   }
+}
+
+export async function resolveProjectsPreviewUrls(
+  projects: Array<Pick<IProject, '_id' | 'active_build_id' | 'build_status'>>
+): Promise<Map<string, string | null>> {
+  const result = new Map<string, string | null>();
+  const candidates: Array<Pick<IProject, '_id' | 'active_build_id' | 'build_status'>> = [];
+
+  for (const p of projects) {
+    const id = String(p._id);
+    if (p.active_build_id) {
+      result.set(id, `/preview/${id}`);
+    } else if (p.build_status === 'completed') {
+      candidates.push(p);
+    } else {
+      result.set(id, null);
+    }
+  }
+
+  if (candidates.length > 0 && isR2Configured()) {
+    await Promise.all(
+      candidates.map(async (p) => {
+        const id = String(p._id);
+        try {
+          const prefixes = await Promise.race([
+            r2ListPrefixes('private', `sites/${id}/`),
+            new Promise<string[]>((resolve) => setTimeout(() => resolve([]), 1500)),
+          ]);
+          for (let i = prefixes.length - 1; i >= 0; i--) {
+            const cleanPrefix = prefixes[i].replace(/\/+$/, '');
+            const candidateBuildId = cleanPrefix.split('/').pop();
+            if (!candidateBuildId) continue;
+            const hasIndex = await r2Exists('private', `${cleanPrefix}/index.html`);
+            if (hasIndex) {
+              Project.updateOne(
+                { _id: p._id, active_build_id: null },
+                { $set: { active_build_id: candidateBuildId } }
+              ).catch(() => { });
+              result.set(id, `/preview/${id}`);
+              return;
+            }
+          }
+        } catch {
+          // ignore listing error on listing page
+        }
+        result.set(id, null);
+      })
+    );
+  } else {
+    for (const p of candidates) {
+      result.set(String(p._id), null);
+    }
+  }
+
+  return result;
 }
 
 export async function projectPreviewExists(project: IProject): Promise<boolean> {

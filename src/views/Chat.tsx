@@ -58,6 +58,7 @@ interface Project {
         files?: Array<{ id: number; filename: string; mime_type: string }>;
     }>;
     preview_url: string | null;
+    has_thumbnail?: boolean;
     has_active_session: boolean;
     build_session_id: string | null;
     // Reconnection-related fields
@@ -403,6 +404,7 @@ export default function Chat({
             setPreviewRefreshTrigger(Date.now());
             setFileRefreshTrigger(tf => tf + 1);
             if (event.files_changed) {
+                setCaptureThumbnailTrigger(Date.now());
                 toast.success(t('Build complete! Files have been updated.'));
             } else {
                 toast.success(t('Build complete!'));
@@ -411,6 +413,7 @@ export default function Chat({
         if (isCreditExhaustedComplete && event.files_changed) {
             setPreviewRefreshTrigger(Date.now());
             setFileRefreshTrigger(tf => tf + 1);
+            setCaptureThumbnailTrigger(Date.now());
         }
         // Fetch AI suggestions immediately after turn completes (including storage choices)
         fetchSuggestions();
@@ -472,6 +475,7 @@ export default function Chat({
 
     const handleBuildComplete = useCallback((_previewUrl: string) => {
         setPreviewRefreshTrigger(Date.now());
+        setCaptureThumbnailTrigger(Date.now());
         setFileRefreshTrigger(tf => tf + 1);
         playSound('build');
         fetchSuggestions();
@@ -1188,11 +1192,10 @@ export default function Chat({
                                     setViewMode('preview');
                                     if (mobileView !== 'chat') setMobileView('preview');
                                 }}
-                                className={`flex items-center gap-1.5 md:gap-2 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium transition-all ${
-                                    viewMode === 'preview'
-                                        ? 'bg-primary text-primary-foreground'
-                                        : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
-                                }`}
+                                className={`flex items-center gap-1.5 md:gap-2 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium transition-all ${viewMode === 'preview'
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
+                                    }`}
                             >
                                 <Eye className="h-3.5 w-3.5 md:h-4 md:w-4" />
                                 <span>{t('Preview')}</span>
@@ -1203,11 +1206,10 @@ export default function Chat({
                                     setViewMode('code');
                                     if (mobileView !== 'chat') setMobileView('code');
                                 }}
-                                className={`flex items-center gap-1.5 md:gap-2 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium transition-all ${
-                                    viewMode === 'code'
-                                        ? 'bg-primary text-primary-foreground'
-                                        : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
-                                }`}
+                                className={`flex items-center gap-1.5 md:gap-2 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium transition-all ${viewMode === 'code'
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
+                                    }`}
                             >
                                 <Code className="h-3.5 w-3.5 md:h-4 md:w-4" />
                                 <span>{t('Code')}</span>
@@ -1215,11 +1217,10 @@ export default function Chat({
                             <div className="hidden md:block w-px h-6 bg-border" />
                             <button
                                 onClick={() => setViewMode('settings')}
-                                className={`hidden md:flex items-center gap-1.5 md:gap-2 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium transition-all ${
-                                    viewMode === 'settings'
-                                        ? 'bg-primary text-primary-foreground'
-                                        : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
-                                }`}
+                                className={`hidden md:flex items-center gap-1.5 md:gap-2 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium transition-all ${viewMode === 'settings'
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
+                                    }`}
                             >
                                 <Settings className="h-3.5 w-3.5 md:h-4 md:w-4" />
                                 <span>{t('Settings')}</span>
@@ -1314,9 +1315,8 @@ export default function Chat({
                             <div className="flex h-full relative overflow-hidden">
                                 {/* Desktop File Tree (always visible on md+) & Mobile File Tree Drawer */}
                                 <div
-                                    className={`${
-                                        mobileFilesOpen ? 'block absolute inset-y-0 start-0 z-30 w-64 shadow-xl bg-background' : 'hidden'
-                                    } md:block md:relative md:w-56 md:shadow-none shrink-0 border-e h-full`}
+                                    className={`${mobileFilesOpen ? 'block absolute inset-y-0 start-0 z-30 w-64 shadow-xl bg-background' : 'hidden'
+                                        } md:block md:relative md:w-56 md:shadow-none shrink-0 border-e h-full`}
                                 >
                                     <FileTree
                                         projectId={project.id}
@@ -1355,6 +1355,7 @@ export default function Chat({
                                 previewUrl={progress.previewUrl}
                                 refreshTrigger={previewRefreshTrigger}
                                 isBuilding={isBuildingPreview || (isLoading && !progress.previewUrl)}
+                                hasThumbnail={project.has_thumbnail}
                                 captureThumbnailTrigger={captureThumbnailTrigger}
                                 onUndo={handleUndo}
                                 onRedo={handleRedo}
@@ -1417,11 +1418,10 @@ export default function Chat({
                         <button
                             type="button"
                             onClick={() => setMobileView('chat')}
-                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
-                                mobileView === 'chat'
-                                    ? 'bg-primary text-primary-foreground shadow-sm'
-                                    : 'text-muted-foreground hover:text-foreground'
-                            }`}
+                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${mobileView === 'chat'
+                                ? 'bg-primary text-primary-foreground shadow-sm'
+                                : 'text-muted-foreground hover:text-foreground'
+                                }`}
                         >
                             <MessageSquare className="h-3.5 w-3.5 shrink-0" />
                             <span>{t('Chat')}</span>
@@ -1435,11 +1435,10 @@ export default function Chat({
                                 setMobileView('preview');
                                 setViewMode('preview');
                             }}
-                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
-                                mobileView !== 'chat' && viewMode === 'preview'
-                                    ? 'bg-primary text-primary-foreground shadow-sm'
-                                    : 'text-muted-foreground hover:text-foreground'
-                            }`}
+                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${mobileView !== 'chat' && viewMode === 'preview'
+                                ? 'bg-primary text-primary-foreground shadow-sm'
+                                : 'text-muted-foreground hover:text-foreground'
+                                }`}
                         >
                             <Eye className="h-3.5 w-3.5 shrink-0" />
                             <span>{t('Preview')}</span>
@@ -1450,11 +1449,10 @@ export default function Chat({
                                 setMobileView('code');
                                 setViewMode('code');
                             }}
-                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
-                                mobileView !== 'chat' && viewMode === 'code'
-                                    ? 'bg-primary text-primary-foreground shadow-sm'
-                                    : 'text-muted-foreground hover:text-foreground'
-                            }`}
+                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${mobileView !== 'chat' && viewMode === 'code'
+                                ? 'bg-primary text-primary-foreground shadow-sm'
+                                : 'text-muted-foreground hover:text-foreground'
+                                }`}
                         >
                             <Code className="h-3.5 w-3.5 shrink-0" />
                             <span>{t('Code')}</span>

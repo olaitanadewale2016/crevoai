@@ -3,8 +3,10 @@ import ProjectsIndex from '@/Pages/Projects/Index';
 import { connectDB } from '@/lib/db';
 import { getSessionContext, hasVerifiedEmail, serializeUser } from '@/lib/auth';
 import { getSetting } from '@/lib/settings';
+import { getPublicAssetUrl } from '@/lib/r2';
 import { buildPaginatedResponse } from '@/lib/http';
 import { getSharedAppProps } from '@/services/shared-context';
+import { resolveProjectsPreviewUrls } from '@/services/builder';
 import { Project, ProjectShare, IProject } from '@/models';
 import type { ProjectSort } from '@/types';
 
@@ -17,13 +19,24 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function serializeProject(p: IProject, owner: ReturnType<typeof serializeUser>) {
+function serializeProject(
+  p: IProject,
+  owner: ReturnType<typeof serializeUser>,
+  resolvedPreviewUrl?: string | null
+) {
+  const thumbKeyOrUrl = p.thumbnail ? getPublicAssetUrl(p.thumbnail) || p.thumbnail : null;
+  const previewUrl =
+    resolvedPreviewUrl !== undefined
+      ? resolvedPreviewUrl
+      : p.active_build_id
+        ? `/preview/${String(p._id)}`
+        : null;
   return {
     id: String(p._id),
     name: p.name,
     description: p.description ?? null,
-    thumbnail: p.thumbnail ?? null,
-    preview_url: p.active_build_id ? `/preview/${String(p._id)}` : null,
+    thumbnail: thumbKeyOrUrl,
+    preview_url: previewUrl,
     is_public: Boolean(p.is_public || (p.published_at && p.published_visibility === 'public')),
     is_starred: Boolean(p.is_starred),
     status: (p.published_at ? 'published' : 'draft') as 'draft' | 'published' | 'archived',
@@ -105,9 +118,10 @@ export default async function ProjectsTrashPage({
     .limit(perPage)
     .lean();
 
+  const previewMap = await resolveProjectsPreviewUrls(docs);
   const owner = serializeUser(user);
   const paginated = buildPaginatedResponse({
-    data: docs.map((p) => serializeProject(p, owner)),
+    data: docs.map((p) => serializeProject(p, owner, previewMap.get(String(p._id)) ?? null)),
     total,
     page: safePage,
     perPage,

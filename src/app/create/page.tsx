@@ -15,6 +15,7 @@ import { loadNamespaceForLocale, resolveLocale } from '@/lib/i18n';
 import { canPerformBuild } from '@/services/credits';
 import { STATIC_SUGGESTIONS, STATIC_TYPING_PROMPTS } from '@/services/internal-ai';
 import { getSharedAppProps } from '@/services/shared-context';
+import { getPublicAssetUrl } from '@/lib/r2';
 import { Project, ProjectShare, Template, User, IProject } from '@/models';
 
 export const dynamic = 'force-dynamic';
@@ -31,7 +32,7 @@ function serializeProjectItem(p: IProject) {
     id: String(p._id),
     name: p.name,
     description: p.description ?? null,
-    thumbnail: p.thumbnail ?? null,
+    thumbnail: p.thumbnail ? getPublicAssetUrl(p.thumbnail) || p.thumbnail : null,
     preview_url: p.active_build_id ? `/preview/${String(p._id)}` : null,
     is_public: Boolean(p.is_public),
     is_starred: Boolean(p.is_starred),
