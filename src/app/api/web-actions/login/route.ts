@@ -6,11 +6,12 @@ import {
   attachSessionCookie,
   checkRateLimit,
   clearRateLimit,
+  findUserByLoginEmail,
   getClientIp,
   verifyRecaptchaToken,
 } from '@/lib/auth';
+import { isSecureCookieRequest } from '@/lib/request-origin';
 import { getSetting } from '@/lib/settings';
-import { User } from '@/models/User';
 import { parseRequestBody } from '@/lib/http';
 
 export const dynamic = 'force-dynamic';
@@ -61,8 +62,19 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const user = await User.findOne({ email }).select('+password');
+  const user = await findUserByLoginEmail(email, true);
   if (!user || !(await verifyPassword(password, user.password))) {
+    if (user && user.has_password === false) {
+      return NextResponse.json(
+        {
+          errors: {
+            email:
+              'This account was created with Google sign-in and has no password yet. Click "Sign in with Google" below or use "Forgot password?" to set one.',
+          },
+        },
+        { status: 422 }
+      );
+    }
     return NextResponse.json(
       { errors: { email: 'These credentials do not match our records.' } },
       { status: 422 }
@@ -94,7 +106,7 @@ export async function POST(req: NextRequest) {
 
   const redirectUrl = user.role === 'admin' ? '/admin/overview' : '/create';
   const res = NextResponse.redirect(new URL(redirectUrl, req.url), 303);
-  attachSessionCookie(res, session.token, ttlSeconds, session.cookieDomain);
+  attachSessionCookie(res, session.token, ttlSeconds, session.cookieDomain, isSecureCookieRequest(req));
 
   return res;
 }

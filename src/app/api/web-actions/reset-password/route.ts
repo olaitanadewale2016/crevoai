@@ -3,7 +3,7 @@ import { connectDB } from '@/lib/db';
 import { getSetting } from '@/lib/settings';
 import { User, PasswordResetToken } from '@/models';
 import { parseRequestBody } from '@/lib/http';
-import { hashPassword } from '@/lib/auth';
+import { hashPassword, findUserByLoginEmail } from '@/lib/auth';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
@@ -43,8 +43,22 @@ export async function POST(req: NextRequest) {
   }
 
   const hashedPassword = await hashPassword(password);
-  await User.updateOne({ email }, { $set: { password: hashedPassword } });
-  await PasswordResetToken.deleteOne({ _id: email });
+  const existingUser = await findUserByLoginEmail(email);
+  const targetEmail = existingUser?.email || email;
+  await User.updateOne(
+    existingUser ? { _id: existingUser._id } : { email: targetEmail },
+    {
+      $set: {
+        password: hashedPassword,
+        has_password: true,
+        ...(existingUser && !existingUser.email_verified_at ? { email_verified_at: new Date() } : {}),
+        ...(existingUser && (existingUser.auth_provider as string) === 'kinde'
+          ? { auth_provider: 'google' }
+          : {}),
+      },
+    }
+  );
+  await PasswordResetToken.deleteOne({ _id: { $in: Array.from(new Set([email, targetEmail])) } });
 
   return NextResponse.redirect(new URL('/login?status=password_reset_success', req.url), 303);
 }

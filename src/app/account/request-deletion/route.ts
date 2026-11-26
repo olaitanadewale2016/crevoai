@@ -5,6 +5,7 @@ import { getSetting } from '@/lib/settings';
 import { AccountDeletionRequest } from '@/models/User';
 import { recordAuditLog } from '@/services/gdpr-and-cascades';
 import { sendUserEmailNotification } from '@/lib/email';
+import { resolveRequestOrigin } from '@/lib/request-origin';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
@@ -67,7 +68,7 @@ export async function POST(req: NextRequest) {
     details: { deletion_id: String(deletionReq._id), scheduled_at: scheduledAt.toISOString() },
   });
 
-  const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+  const appUrl = resolveRequestOrigin(req);
   const cancelUrl = `${appUrl}/account/cancel-deletion/${cancellationToken}`;
 
   try {

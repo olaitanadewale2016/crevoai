@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSetting } from '@/lib/settings';
-import {
-  getKindeConfig,
-  isKindeConfigured,
-  isSecureCookieRequest,
-  resolveRequestOrigin,
-} from '@/lib/kinde';
+import { isSecureCookieRequest, resolveRequestOrigin } from '@/lib/request-origin';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
@@ -40,36 +35,19 @@ export async function GET(
 
   let enabled = await getSetting<boolean>(`${p}_login_enabled`, false);
   let clientId = await getSetting<string>(`${p}_client_id`, '');
+  let clientSecret = await getSetting<string>(`${p}_client_secret`, '');
 
   if (p === 'google') {
-    if (!clientId && process.env.GOOGLE_CLIENT_ID) {
-      clientId = process.env.GOOGLE_CLIENT_ID.trim();
-    }
-    const clientSecret =
-      (await getSetting<string>('google_client_secret', '')) ||
-      (process.env.GOOGLE_CLIENT_SECRET || '').trim();
-    const hasDirectGoogle = Boolean(clientId && clientSecret);
-    const kindeCfg = getKindeConfig(req);
-    const viaKinde = req.nextUrl.searchParams.get('via') === 'kinde';
-
-    // Route Google sign-in / sign-up via Kinde when Kinde is configured and either
-    // direct Google OAuth isn't configured, Kinde Google connection is explicitly set, or requested via=kinde.
-    if (
-      isKindeConfigured() &&
-      (viaKinde || !hasDirectGoogle || Boolean(kindeCfg.googleConnectionId))
-    ) {
-      const kindeLoginUrl = new URL('/api/auth/kinde/login', req.url);
-      kindeLoginUrl.searchParams.set('provider', 'google');
-      kindeLoginUrl.searchParams.set('mode', mode);
-      return NextResponse.redirect(kindeLoginUrl);
-    }
-
-    if (!enabled && hasDirectGoogle) {
+    const envClientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
+    const envClientSecret = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
+    clientId = clientId || envClientId;
+    clientSecret = clientSecret || envClientSecret;
+    if (!enabled && envClientId && envClientSecret) {
       enabled = true;
     }
   }
 
-  if (!enabled || !clientId) {
+  if (!enabled || !clientId || !clientSecret) {
     return NextResponse.redirect(new URL('/login?error=provider_not_configured', req.url));
   }
 

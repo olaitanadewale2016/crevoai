@@ -56,14 +56,13 @@ export interface AuthSettings {
     google_login_enabled: boolean;
     google_client_id: string;
     google_has_secret: boolean;
+    google_env_configured?: boolean;
     facebook_login_enabled: boolean;
     facebook_client_id: string;
     facebook_has_secret: boolean;
     github_login_enabled: boolean;
     github_client_id: string;
     github_has_secret: boolean;
-    kinde_configured?: boolean;
-    kinde_google_configured?: boolean;
     session_timeout: number;
     password_min_length: number;
 }

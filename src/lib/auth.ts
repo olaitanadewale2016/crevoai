@@ -111,7 +111,8 @@ export function attachSessionCookie(
   res: NextResponse,
   sessionId: string,
   expiresAtOrTtl?: Date | number,
-  cookieDomainOrHost?: string | null
+  cookieDomainOrHost?: string | null,
+  isSecureRequest?: boolean
 ): void {
   let expires: Date | undefined;
   if (expiresAtOrTtl instanceof Date) {
@@ -129,10 +130,14 @@ export function attachSessionCookie(
     cookieDomain = cookieDomainOrHost;
   }
 
+  const secure =
+    Boolean(isSecureRequest) ||
+    (process.env.NODE_ENV === 'production' && (process.env.APP_URL || '').startsWith('https://'));
+
   res.cookies.set(SESSION_COOKIE_NAME, sessionId, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production' && (process.env.APP_URL || '').startsWith('https://'),
+    secure,
     path: '/',
     expires,
     domain: cookieDomain,
@@ -140,13 +145,47 @@ export function attachSessionCookie(
 }
 
 export function clearSessionCookie(res: NextResponse, cookieDomain?: string): void {
-  res.cookies.set(SESSION_COOKIE_NAME, '', {
+  const clearOpts = {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: 'lax' as const,
     path: '/',
     maxAge: 0,
-    domain: cookieDomain,
-  });
+  };
+  res.cookies.set(SESSION_COOKIE_NAME, '', clearOpts);
+  res.cookies.set(LEGACY_SESSION_COOKIE_NAME, '', clearOpts);
+  if (cookieDomain) {
+    res.cookies.set(SESSION_COOKIE_NAME, '', { ...clearOpts, domain: cookieDomain });
+    res.cookies.set(LEGACY_SESSION_COOKIE_NAME, '', { ...clearOpts, domain: cookieDomain });
+  }
+}
+
+export async function findUserByLoginEmail(rawEmail: string, selectPassword = false) {
+  const cleanEmail = (rawEmail || '').trim().toLowerCase();
+  if (!cleanEmail) return null;
+
+  const queryExact = User.findOne({ email: cleanEmail });
+  if (selectPassword) queryExact.select('+password');
+  const exact = await queryExact;
+  if (exact) return exact;
+
+  const atIdx = cleanEmail.indexOf('@');
+  if (atIdx <= 0) return null;
+  const local = cleanEmail.slice(0, atIdx);
+  const domain = cleanEmail.slice(atIdx + 1);
+  if (domain === 'gmail.com' || domain === 'googlemail.com') {
+    const normalizedLocal = local.split('+')[0].replace(/\./g, '');
+    if (!normalizedLocal || normalizedLocal.length > 64) return null;
+    const escapedChars = normalizedLocal
+      .split('')
+      .map((ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('\\.?');
+    const regex = new RegExp(`^${escapedChars}(\\+[^@]*)?@(gmail|googlemail)\\.com$`, 'i');
+    const queryCanonical = User.findOne({ email: { $regex: regex } });
+    if (selectPassword) queryCanonical.select('+password');
+    return queryCanonical;
+  }
+
+  return null;
 }
 
 export interface SessionContext {
@@ -471,6 +510,8 @@ export function serializeUser(user: IUser) {
     status: user.status,
     locale: user.locale,
     email_verified_at: user.email_verified_at ? new Date(user.email_verified_at).toISOString() : null,
+    has_password: user.has_password !== false,
+    auth_provider: user.auth_provider || 'local',
     plan_id: user.plan_id ? String(user.plan_id) : null,
     build_credits: user.build_credits ?? 0,
     referral_credit_balance: Number(user.referral_credit_balance ?? 0),

@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { route } from '@/lib/route';
 import { Button } from '@/components/ui/button';
@@ -30,10 +30,10 @@ function resolveAuthErrorMessage(
             return t('Your sign-in session expired. Please try again.');
         case 'provider_not_configured':
             return t('This sign-in provider is not configured yet.');
-        case 'kinde_not_configured':
-            return t('Kinde authentication is not configured yet. Please add Kinde environment variables.');
         case 'email_not_provided':
-            return t('No verified email address was returned by the provider.');
+            return t('No email address was returned by the provider.');
+        case 'email_not_verified':
+            return t('Your social account email is not verified. Please verify your email first.');
         case 'registration_disabled':
             return t('Registration is currently disabled.');
         case 'account_inactive':

@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { getSetting } from '@/lib/settings';
-import { User, PasswordResetToken } from '@/models';
+import { PasswordResetToken } from '@/models';
 import { parseRequestBody } from '@/lib/http';
-import { verifyRecaptchaToken, getClientIp } from '@/lib/auth';
+import { verifyRecaptchaToken, getClientIp, findUserByLoginEmail } from '@/lib/auth';
 import { sendPasswordResetEmail } from '@/lib/email';
-import { resolveRequestOrigin } from '@/lib/kinde';
+import { resolveRequestOrigin } from '@/lib/request-origin';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
@@ -39,20 +39,20 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const user = await User.findOne({ email }).lean();
+  const user = await findUserByLoginEmail(email);
   if (user) {
-    // Generate random 64-char token and store hashed token
+    // Store reset token under the canonical/entered lookup email AND canonical email so both match
     const rawToken = crypto.randomBytes(32).toString('hex');
     const hashedToken = crypto.createHash('sha256').update(rawToken).digest('hex');
 
     await PasswordResetToken.updateOne(
-      { _id: email },
+      { _id: user.email },
       { $set: { token: hashedToken, created_at: new Date() } },
       { upsert: true }
     );
 
     const appUrl = resolveRequestOrigin(req);
-    const resetUrl = `${appUrl}/reset-password/${rawToken}?email=${encodeURIComponent(email)}`;
+    const resetUrl = `${appUrl}/reset-password/${rawToken}?email=${encodeURIComponent(user.email)}`;
 
     try {
       await sendPasswordResetEmail(user, resetUrl);

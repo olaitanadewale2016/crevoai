@@ -4,6 +4,7 @@ import {
   hashPassword,
   createSession,
   attachSessionCookie,
+  findUserByLoginEmail,
   getClientIp,
   verifyRecaptchaToken,
 } from '@/lib/auth';
@@ -17,7 +18,7 @@ import {
   sendUserEmailNotification,
   sendAdminEventEmail,
 } from '@/lib/email';
-import { resolveRequestOrigin } from '@/lib/kinde';
+import { resolveRequestOrigin, isSecureCookieRequest } from '@/lib/request-origin';
 import { resolveReferralCode, recordReferralSignup } from '@/services/referrals';
 
 export const dynamic = 'force-dynamic';
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const existing = await User.findOne({ email }).lean();
+  const existing = await findUserByLoginEmail(email);
   if (existing) {
     return NextResponse.json(
       { errors: { email: 'This email is already registered.' } },
@@ -185,7 +186,7 @@ export async function POST(req: NextRequest) {
       : '/verify-email?error=send_failed'
     : '/create';
   const res = NextResponse.redirect(new URL(redirectUrl, req.url), 303);
-  attachSessionCookie(res, session.token, ttlSeconds, session.cookieDomain);
+  attachSessionCookie(res, session.token, ttlSeconds, session.cookieDomain, isSecureCookieRequest(req));
 
   return res;
 }

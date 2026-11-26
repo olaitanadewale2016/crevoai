@@ -13,8 +13,7 @@ export interface IUser {
   email_verified_at: Date | null;
   password: string;
   has_password?: boolean;
-  auth_provider?: 'local' | 'kinde' | 'google' | 'github' | 'facebook';
-  kinde_id?: string | null;
+  auth_provider?: 'local' | 'google' | 'github' | 'facebook';
   remember_token: string | null;
   plan_id: mongoose.Types.ObjectId | null;
   build_credits: number;
@@ -40,10 +39,9 @@ const UserSchema = new Schema<IUser>(
     has_password: { type: Boolean, default: true },
     auth_provider: {
       type: String,
-      enum: ['local', 'kinde', 'google', 'github', 'facebook'],
+      enum: ['local', 'google', 'github', 'facebook'],
       default: 'local',
     },
-    kinde_id: { type: String, default: null },
     remember_token: { type: String, default: null },
     plan_id: { type: Schema.Types.ObjectId, ref: 'Plan', default: null, index: true },
     build_credits: { type: Number, default: 0 },
@@ -60,10 +58,6 @@ const UserSchema = new Schema<IUser>(
 UserSchema.index(
   { numeric_id: 1 },
   { unique: true, partialFilterExpression: { numeric_id: { $type: 'number' } } }
-);
-UserSchema.index(
-  { kinde_id: 1 },
-  { unique: true, partialFilterExpression: { kinde_id: { $type: 'string' } } }
 );
 
 export const User: Model<IUser> = mongoose.models.User || mongoose.model<IUser>('User', UserSchema);

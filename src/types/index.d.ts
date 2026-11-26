@@ -7,6 +7,8 @@ export interface User {
     avatar: string | null;
     role: UserRole;
     email_verified_at?: string;
+    has_password?: boolean;
+    auth_provider?: string;
 }
 
 export interface Project {
@@ -97,7 +99,6 @@ export interface AppSettings {
     google_login_enabled: boolean;
     facebook_login_enabled: boolean;
     github_login_enabled: boolean;
-    kinde_login_enabled?: boolean;
     recaptcha_enabled: boolean;
     recaptcha_site_key: string;
     realtime_provider: RealtimeProvider;

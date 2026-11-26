@@ -4,7 +4,6 @@ import { connectDB } from '@/lib/db';
 import { getSessionContext } from '@/lib/auth';
 import { getSharedAppProps } from '@/services/shared-context';
 import { getSettingGroup } from '@/lib/settings';
-import { isKindeConfigured } from '@/lib/kinde';
 import { Plan, AiProvider, Builder, Language, SystemSetting } from '@/models';
 
 export const dynamic = 'force-dynamic';
@@ -112,14 +111,15 @@ export default async function AdminSettingsPage() {
       google_login_enabled: Boolean(auth.google_login_enabled),
       google_client_id: auth.google_client_id || '',
       google_has_secret: Boolean(auth.google_client_secret),
+      google_env_configured: Boolean(
+        process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+      ),
       facebook_login_enabled: Boolean(auth.facebook_login_enabled),
       facebook_client_id: auth.facebook_client_id || '',
       facebook_has_secret: Boolean(auth.facebook_client_secret),
       github_login_enabled: Boolean(auth.github_login_enabled),
       github_client_id: auth.github_client_id || '',
       github_has_secret: Boolean(auth.github_client_secret),
-      kinde_configured: isKindeConfigured(),
-      kinde_google_configured: Boolean(process.env.KINDE_GOOGLE_CONNECTION_ID),
       session_timeout: Number(auth.session_timeout || 120),
       password_min_length: Number(auth.password_min_length || 8),
     },

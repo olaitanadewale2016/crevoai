@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSetting } from '@/lib/settings';
 import { timingSafeEqualStr } from '@/lib/crypto';
-import { resolveRequestOrigin } from '@/lib/kinde';
+import { resolveRequestOrigin } from '@/lib/request-origin';
 import { completeOAuthLoginResponse, provisionOrSyncOAuthUser } from '@/lib/oauth';
 
 export const dynamic = 'force-dynamic';
@@ -72,12 +72,17 @@ export async function GET(
         }),
       });
       const tokenData = await tokenRes.json();
-      if (!tokenData.access_token) throw new Error('Failed to get Google access token');
+      if (!tokenRes.ok || !tokenData.access_token) {
+        throw new Error(tokenData?.error_description || tokenData?.error || 'Failed to get Google access token');
+      }
 
       const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
         headers: { Authorization: `Bearer ${tokenData.access_token}` },
       });
       const userData = await userRes.json();
+      if (!userRes.ok) {
+        throw new Error(userData?.error?.message || 'Failed to fetch Google user profile');
+      }
       profile = {
         email: userData.email,
         name: userData.name || (userData.email ? String(userData.email).split('@')[0] : 'Google User'),

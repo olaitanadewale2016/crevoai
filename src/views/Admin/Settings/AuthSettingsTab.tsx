@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Save, Shield, Check, Copy, Loader2, Eye, EyeOff, KeyRound } from 'lucide-react';
+import { Save, Shield, Check, Copy, Loader2, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTranslation } from '@/contexts/LanguageContext';
 import type { AuthSettings } from './types';
@@ -188,69 +188,19 @@ export default function AuthSettingsTab({ settings }: Props) {
                     <Separator />
 
                     {/* OAuth Providers */}
-                    {/* Kinde */}
+                    {/* Google */}
                     <div className="space-y-4">
                         <div className="flex flex-wrap items-center justify-between gap-2 p-4 border rounded-lg">
                             <div className="space-y-0.5">
                                 <div className="flex items-center gap-2">
-                                    <KeyRound className="h-4 w-4 text-muted-foreground" />
-                                    <Label>{t('Kinde Authentication (.env)')}</Label>
+                                    <Label>{t('Google Login')}</Label>
+                                    {settings.google_env_configured && (
+                                        <Badge variant="success" className="text-xs">
+                                            <Check className="h-3 w-3 me-1" />
+                                            {t('Configured via .env')}
+                                        </Badge>
+                                    )}
                                 </div>
-                                <p className="text-sm text-muted-foreground">
-                                    {t('OIDC login, sign-up, and Google delegation configured via environment variables')}
-                                </p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                {settings.kinde_configured ? (
-                                    <Badge variant="success" className="text-xs">
-                                        <Check className="h-3 w-3 me-1" />
-                                        {t('Configured')}
-                                    </Badge>
-                                ) : (
-                                    <Badge variant="secondary" className="text-xs">
-                                        {t('Not configured')}
-                                    </Badge>
-                                )}
-                                {settings.kinde_google_configured && (
-                                    <Badge variant="outline" className="text-xs">
-                                        {t('Google Connection Active')}
-                                    </Badge>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="grid gap-4 ps-6 border-s-2 border-muted">
-                            <div className="space-y-2">
-                                <Label>{t('Allowed Callback URL')}</Label>
-                                <div className="flex gap-2">
-                                    <Input value={`${baseUrl}/api/auth/kinde/callback`} readOnly className="bg-muted" />
-                                    <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(`${baseUrl}/api/auth/kinde/callback`)}>
-                                        <Copy className="h-4 w-4" />
-                                    </Button>
-                                </div>
-                            </div>
-                            <div className="space-y-2">
-                                <Label>{t('Allowed Logout Redirect URL')}</Label>
-                                <div className="flex gap-2">
-                                    <Input value={`${baseUrl}`} readOnly className="bg-muted" />
-                                    <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(`${baseUrl}`)}>
-                                        <Copy className="h-4 w-4" />
-                                    </Button>
-                                </div>
-                                <p className="text-xs text-muted-foreground">
-                                    {t('Set KINDE_ISSUER_URL, KINDE_CLIENT_ID, KINDE_CLIENT_SECRET, and optional KINDE_GOOGLE_CONNECTION_ID in .env')}
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <Separator />
-
-                    {/* Google */}
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between p-4 border rounded-lg">
-                            <div className="space-y-0.5">
-                                <Label>{t('Google Login')}</Label>
                                 <p className="text-sm text-muted-foreground">{t('Allow users to sign in with their Google account')}</p>
                             </div>
                             <Switch

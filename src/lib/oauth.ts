@@ -4,9 +4,11 @@ import { getSetting } from './settings';
 import {
   attachSessionCookie,
   createSession,
+  findUserByLoginEmail,
   getClientIp,
   hashPassword,
 } from './auth';
+import { isSecureCookieRequest, resolveRequestOrigin } from './request-origin';
 import { generateHexToken } from './crypto';
 import { sendAdminEventEmail, sendUserEmailNotification } from './email';
 import { recordReferralSignup } from '@/services/referrals';
@@ -14,11 +16,10 @@ import { User, UserAiSettings, IUser } from '@/models/User';
 import { Plan } from '@/models/Billing';
 
 export interface OAuthProfileInput {
-  provider: 'kinde' | 'google' | 'github' | 'facebook';
+  provider: 'google' | 'github' | 'facebook';
   email: string;
   name?: string | null;
   avatar?: string | null;
-  kindeId?: string | null;
   emailVerified?: boolean;
 }
 
@@ -26,7 +27,11 @@ export type OAuthProvisionResult =
   | { ok: true; user: IUser; isNewUser: boolean }
   | {
       ok: false;
-      errorCode: 'email_not_provided' | 'account_inactive' | 'registration_disabled';
+      errorCode:
+        | 'email_not_provided'
+        | 'email_not_verified'
+        | 'account_inactive'
+        | 'registration_disabled';
     };
 
 export async function provisionOrSyncOAuthUser(
@@ -37,16 +42,13 @@ export async function provisionOrSyncOAuthUser(
   if (!email) {
     return { ok: false, errorCode: 'email_not_provided' };
   }
+  if (profile.emailVerified === false) {
+    return { ok: false, errorCode: 'email_not_verified' };
+  }
 
   await connectDB();
 
-  let user: any = null;
-  if (profile.kindeId) {
-    user = await User.findOne({ kinde_id: profile.kindeId });
-  }
-  if (!user) {
-    user = await User.findOne({ email });
-  }
+  const user = await findUserByLoginEmail(email);
 
   if (user) {
     if (user.status === 'inactive') {
@@ -54,8 +56,9 @@ export async function provisionOrSyncOAuthUser(
     }
 
     let dirty = false;
-    if (profile.kindeId && !user.kinde_id) {
-      user.kinde_id = profile.kindeId;
+    // Normalize any legacy 'kinde' provider value so Mongoose enum validation always succeeds
+    if ((user.auth_provider as string) === 'kinde') {
+      user.auth_provider = profile.provider;
       dirty = true;
     }
     if (!user.avatar && profile.avatar) {
@@ -66,7 +69,7 @@ export async function provisionOrSyncOAuthUser(
       user.name = profile.name.trim();
       dirty = true;
     }
-    if (profile.emailVerified !== false && !user.email_verified_at) {
+    if (!user.email_verified_at) {
       user.email_verified_at = new Date();
       dirty = true;
     }
@@ -98,7 +101,6 @@ export async function provisionOrSyncOAuthUser(
     password: randomPassword,
     has_password: false,
     auth_provider: profile.provider,
-    kinde_id: profile.kindeId || null,
     avatar: profile.avatar || null,
     role: 'user',
     status: 'active',
@@ -156,7 +158,6 @@ export async function completeOAuthLoginResponse(
   user: IUser,
   options?: {
     authProvider?: string;
-    kindeId?: string | null;
     clearCookies?: string[];
   }
 ): Promise<NextResponse> {
@@ -174,18 +175,23 @@ export async function completeOAuthLoginResponse(
     payload: options?.authProvider
       ? {
           auth_provider: options.authProvider,
-          ...(options.kindeId ? { kinde_id: options.kindeId } : {}),
         }
       : {},
   });
 
   const redirectPath = user.role === 'admin' ? '/admin/overview' : '/create';
-  const res = NextResponse.redirect(new URL(redirectPath, req.url), 303);
+  const res = NextResponse.redirect(new URL(redirectPath, resolveRequestOrigin(req)), 303);
 
   for (const cookieName of options?.clearCookies || []) {
     res.cookies.delete(cookieName);
   }
 
-  attachSessionCookie(res, session.token, ttlSeconds, session.cookieDomain);
+  attachSessionCookie(
+    res,
+    session.token,
+    ttlSeconds,
+    session.cookieDomain,
+    isSecureCookieRequest(req)
+  );
   return res;
 }

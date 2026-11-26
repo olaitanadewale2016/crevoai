@@ -74,11 +74,14 @@ export function proxy(request: NextRequest) {
   const appUrlHost = normalizeHost(
     (process.env.APP_URL || '').replace(/^https?:\/\//, '').split('/')[0] || ''
   );
+  const bareAppHost = appUrlHost.replace(/^www\./, '');
 
   const isMainHost =
     !host ||
     isLocalOrIp(host) ||
-    (appUrlHost && (host === appUrlHost || host === `www.${appUrlHost}`)) ||
+    (bareAppHost && (host === bareAppHost || host === `www.${bareAppHost}`)) ||
+    host === 'crevoai.website' ||
+    host === 'www.crevoai.website' ||
     host === 'crevoai-web.vercel.app' ||
     host === 'crevoai.vercel.app' ||
     (process.env.VERCEL_URL && host === normalizeHost(process.env.VERCEL_URL)) ||

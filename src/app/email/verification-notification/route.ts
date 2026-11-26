@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionContext, hasVerifiedEmail } from '@/lib/auth';
 import { buildVerificationUrl, sendVerificationEmail } from '@/lib/email';
-import { resolveRequestOrigin } from '@/lib/kinde';
+import { resolveRequestOrigin } from '@/lib/request-origin';
 
 export const dynamic = 'force-dynamic';
 
