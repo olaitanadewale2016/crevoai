@@ -9,6 +9,7 @@ import {
   isDemoAdminUser,
 } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
+import { getEffectiveRequestHost, isSecureCookieRequest } from '@/lib/request-origin';
 import { User } from '@/models/User';
 import { cascadeDeleteUser } from '@/services/gdpr-and-cascades';
 
@@ -96,9 +97,9 @@ export async function DELETE(req: NextRequest) {
   await cascadeDeleteUser(String(user._id));
   await destroySession(ctx.session.token);
 
-  const cookieDomain = await getSessionCookieDomain(req.headers.get('host'));
+  const cookieDomain = await getSessionCookieDomain(getEffectiveRequestHost(req));
   const res = NextResponse.redirect(new URL('/', req.url), 303);
-  clearSessionCookie(res, cookieDomain);
+  clearSessionCookie(res, cookieDomain, isSecureCookieRequest(req));
 
   return res;
 }

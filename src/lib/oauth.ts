@@ -8,7 +8,7 @@ import {
   getClientIp,
   hashPassword,
 } from './auth';
-import { isSecureCookieRequest, resolveRequestOrigin } from './request-origin';
+import { getEffectiveRequestHost, isSecureCookieRequest, resolveRequestOrigin } from './request-origin';
 import { generateHexToken } from './crypto';
 import { sendAdminEventEmail, sendUserEmailNotification } from './email';
 import { recordReferralSignup } from '@/services/referrals';
@@ -163,7 +163,7 @@ export async function completeOAuthLoginResponse(
 ): Promise<NextResponse> {
   const sessionTimeoutMin = await getSetting<number>('session_timeout', 120);
   const ttlSeconds = Math.max(sessionTimeoutMin * 60, 86400);
-  const host = req.headers.get('host');
+  const host = getEffectiveRequestHost(req);
 
   const session = await createSession({
     userId: user._id,

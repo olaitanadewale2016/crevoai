@@ -18,7 +18,7 @@ import {
   sendUserEmailNotification,
   sendAdminEventEmail,
 } from '@/lib/email';
-import { resolveRequestOrigin, isSecureCookieRequest } from '@/lib/request-origin';
+import { getEffectiveRequestHost, resolveRequestOrigin, isSecureCookieRequest } from '@/lib/request-origin';
 import { resolveReferralCode, recordReferralSignup } from '@/services/referrals';
 
 export const dynamic = 'force-dynamic';
@@ -176,7 +176,7 @@ export async function POST(req: NextRequest) {
     userAgent: req.headers.get('user-agent'),
     remember: false,
     ttlSeconds,
-    host: req.headers.get('host'),
+    host: getEffectiveRequestHost(req),
     payload: { auth_provider: 'local' },
   });
 

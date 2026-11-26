@@ -4,6 +4,13 @@ function stripTrailingSlash(url: string): string {
   return url.trim().replace(/\/+$/, '');
 }
 
+export function getEffectiveRequestHost(req?: NextRequest): string | null {
+  if (!req) return null;
+  const forwardedHost = req.headers.get('x-forwarded-host')?.split(',')[0]?.trim();
+  const host = forwardedHost || req.headers.get('host')?.split(',')[0]?.trim();
+  return host || null;
+}
+
 /**
  * Resolve the external origin for the incoming request so OAuth callback URIs,
  * verification links, and password resets always stay on the domain the user is visiting

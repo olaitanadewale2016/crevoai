@@ -601,17 +601,20 @@ export function Link({
 
   if (as === 'button' || lowerMethod !== 'get') {
     const handleAction = (e: React.MouseEvent<any>) => {
-      e.preventDefault();
       onClick?.(e);
-      if (!e.defaultPrevented) {
-        router.visit(href, {
-          method: lowerMethod,
-          data,
-          preserveScroll,
-          preserveState,
-          replace,
-        });
+      if (e.defaultPrevented) {
+        return;
       }
+      if (as !== 'button') {
+        e.preventDefault();
+      }
+      router.visit(href, {
+        method: lowerMethod,
+        data,
+        preserveScroll,
+        preserveState,
+        replace,
+      });
     };
     if (as === 'button') {
       return (

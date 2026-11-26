@@ -144,18 +144,46 @@ export function attachSessionCookie(
   });
 }
 
-export function clearSessionCookie(res: NextResponse, cookieDomain?: string): void {
-  const clearOpts = {
-    httpOnly: true,
-    sameSite: 'lax' as const,
-    path: '/',
-    maxAge: 0,
-  };
-  res.cookies.set(SESSION_COOKIE_NAME, '', clearOpts);
-  res.cookies.set(LEGACY_SESSION_COOKIE_NAME, '', clearOpts);
-  if (cookieDomain) {
-    res.cookies.set(SESSION_COOKIE_NAME, '', { ...clearOpts, domain: cookieDomain });
-    res.cookies.set(LEGACY_SESSION_COOKIE_NAME, '', { ...clearOpts, domain: cookieDomain });
+function formatExpiredCookieHeader(
+  name: string,
+  options: { domain?: string; secure?: boolean } = {}
+): string {
+  const parts = [
+    `${name}=`,
+    'Path=/',
+    'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+    'Max-Age=0',
+    'HttpOnly',
+    'SameSite=Lax',
+  ];
+  if (options.domain) {
+    parts.push(`Domain=${options.domain}`);
+  }
+  if (options.secure) {
+    parts.push('Secure');
+  }
+  return parts.join('; ');
+}
+
+export function clearSessionCookie(
+  res: NextResponse,
+  cookieDomain?: string,
+  isSecureRequest?: boolean
+): void {
+  const secure =
+    Boolean(isSecureRequest) ||
+    (process.env.NODE_ENV === 'production' && (process.env.APP_URL || '').startsWith('https://'));
+
+  // Append Set-Cookie headers directly so both host-only and domain-scoped cookies are deleted
+  // (ResponseCookies.set keyed by name would overwrite the host-only deletion when cookieDomain is set).
+  for (const name of [SESSION_COOKIE_NAME, LEGACY_SESSION_COOKIE_NAME]) {
+    res.headers.append('Set-Cookie', formatExpiredCookieHeader(name, { secure }));
+    if (cookieDomain) {
+      res.headers.append(
+        'Set-Cookie',
+        formatExpiredCookieHeader(name, { domain: cookieDomain, secure })
+      );
+    }
   }
 }
 

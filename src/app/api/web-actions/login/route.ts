@@ -10,7 +10,7 @@ import {
   getClientIp,
   verifyRecaptchaToken,
 } from '@/lib/auth';
-import { isSecureCookieRequest } from '@/lib/request-origin';
+import { getEffectiveRequestHost, isSecureCookieRequest } from '@/lib/request-origin';
 import { getSetting } from '@/lib/settings';
 import { parseRequestBody } from '@/lib/http';
 
@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
     userAgent: req.headers.get('user-agent'),
     remember,
     ttlSeconds,
-    host: req.headers.get('host'),
+    host: getEffectiveRequestHost(req),
     payload: { auth_provider: 'local' },
   });
 
