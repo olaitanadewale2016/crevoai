@@ -282,13 +282,17 @@ export async function POST(req: NextRequest) {
         );
 
         const agentFailed = Boolean(
-          data.status === 'failed' || data.build_status === 'failed'
+          data.status === 'failed' ||
+            data.status === 'cancelled' ||
+            data.status === 'credit_limit' ||
+            data.build_status === 'failed'
         );
         const isClarifyingOrChatOnly = Boolean(
           !agentFailed &&
             !data.files_changed &&
             !data.build_required &&
-            data.build_status !== 'completed'
+            data.build_status !== 'completed' &&
+            Boolean(finalMsg)
         );
         const shouldBuildPreview = Boolean(
           !agentFailed &&
