@@ -222,6 +222,11 @@ export async function getAiConfigForUser(
   const effectiveMaxTokens = resolveEffortMaxTokens(baseMaxTokens, resolvedEffort);
   const summTokens = Number(provider.config?.summarizer_max_tokens || 1500);
   const unlimited = user.role === 'admin' || plan?.monthly_build_credits === -1;
+  const effortMultiplier =
+    resolvedEffort === 'low' ? 0.75 : resolvedEffort === 'high' ? 1.5 : 1.0;
+  const remainingCreditsBudget = unlimited
+    ? 0
+    : Math.max(1, Math.floor((user.build_credits ?? 0) / effortMultiplier));
   const supportsPromptCaching = pType === 'anthropic' || pType === 'abhibots';
 
   return {
@@ -232,7 +237,7 @@ export async function getAiConfigForUser(
       max_tokens: effectiveMaxTokens,
       reasoning_effort: resolvedEffort,
       provider_type: pType,
-      remaining_build_credits: unlimited ? 0 : Math.max(1, user.build_credits ?? 0),
+      remaining_build_credits: remainingCreditsBudget,
       ...(supportsPromptCaching ? { enable_prompt_caching: true } : {}),
     },
     summarizer: {

@@ -1,6 +1,7 @@
 import { connectDB } from '@/lib/db';
 import { User, UserAiSettings, IUser } from '@/models/User';
 import { AiProvider, BuildCreditUsage, Builder, calculateAiCost } from '@/models/BuilderAi';
+import { Project } from '@/models/Project';
 import { Plan, IPlan } from '@/models/Billing';
 import { getSetting } from '@/lib/settings';
 import { getUserCurrentPlan, isDemoAdminUser } from '@/lib/auth';
@@ -135,10 +136,10 @@ export async function trackBuildCreditUsage(params: {
   totalTokens: number;
   action?: string;
   effort?: 'low' | 'medium' | 'high';
-}): Promise<{ recorded: boolean; deducted: number }> {
+}): Promise<{ recorded: boolean; deducted: number; remainingCredits: number | null }> {
   await connectDB();
   const user = await User.findById(params.userId).lean();
-  if (!user) return { recorded: false, deducted: 0 };
+  if (!user) return { recorded: false, deducted: 0, remainingCredits: null };
 
   const plan = await getUserCurrentPlan(user);
   const usedOwnKey = await isUserUsingOwnAiKey(user, plan);
@@ -149,7 +150,7 @@ export async function trackBuildCreditUsage(params: {
   const rawTotalTokens = Math.max(0, Math.trunc(params.totalTokens || promptTokens + completionTokens));
 
   if (rawTotalTokens <= 0) {
-    return { recorded: false, deducted: 0 };
+    return { recorded: false, deducted: 0, remainingCredits: null };
   }
 
   // Mirror TrackBuildCreditUsage 60/40 fallback split when breakdown missing
@@ -187,7 +188,7 @@ export async function trackBuildCreditUsage(params: {
     });
   } catch (err: any) {
     if (err?.code === 11000) {
-      return { recorded: false, deducted: 0 };
+      return { recorded: false, deducted: 0, remainingCredits: null };
     }
     throw err;
   }
@@ -200,10 +201,11 @@ export async function trackBuildCreditUsage(params: {
   }
 
   let deducted = 0;
+  let remainingCredits: number | null = null;
   const unlimited = plan?.monthly_build_credits === -1;
 
   if (!usedOwnKey && !unlimited && totalTokens > 0) {
-    // Atomic deduction clamped at 0
+    // Atomic deduction clamped at 0 (consumed credits are never refunded)
     const updated = await User.findOneAndUpdate(
       { _id: user._id },
       [{ $set: { build_credits: { $max: [0, { $subtract: ['$build_credits', totalTokens] }] } } }],
@@ -212,6 +214,7 @@ export async function trackBuildCreditUsage(params: {
 
     deducted = totalTokens;
     if (updated) {
+      remainingCredits = updated.build_credits;
       await broadcastUserCredits(updated);
       const monthly = plan?.monthly_build_credits ?? 0;
       if (monthly > 0 && updated.build_credits <= monthly * 0.2) {
@@ -222,7 +225,87 @@ export async function trackBuildCreditUsage(params: {
     await broadcastUserCredits(user);
   }
 
-  return { recorded: true, deducted };
+  return { recorded: true, deducted, remainingCredits };
+}
+
+/**
+ * Atomically bill only the strictly increasing token delta for a build session.
+ * Prevents duplicate or out-of-order billing across live `token_usage` and `complete` webhooks.
+ */
+export async function billProjectSessionTokensDelta(params: {
+  projectId: string;
+  userId: string;
+  sessionId: string;
+  totalTokens: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  model?: string;
+  action?: string;
+  effort?: 'low' | 'medium' | 'high';
+  builderEventIdPrefix?: string;
+}): Promise<{ billed: boolean; delta: number; remainingCredits: number | null }> {
+  const targetTotal = Math.max(0, Math.trunc(params.totalTokens || 0));
+  if (targetTotal <= 0 || !params.projectId || !params.userId) {
+    return { billed: false, delta: 0, remainingCredits: null };
+  }
+
+  await connectDB();
+
+  const prevProject = await Project.findOneAndUpdate(
+    {
+      _id: params.projectId,
+      $or: [
+        { last_billed_session_tokens: { $lt: targetTotal } },
+        { last_billed_session_tokens: null },
+        { last_billed_session_tokens: { $exists: false } },
+      ],
+    },
+    {
+      $set: { last_billed_session_tokens: targetTotal },
+      $max: { estimated_tokens: targetTotal },
+    },
+    { new: false, projection: { last_billed_session_tokens: 1 } }
+  ).lean();
+
+  if (!prevProject) {
+    return { billed: false, delta: 0, remainingCredits: null };
+  }
+
+  const prevBilled = Math.max(0, Number(prevProject.last_billed_session_tokens || 0));
+  const delta = targetTotal - prevBilled;
+  if (delta <= 0) {
+    return { billed: false, delta: 0, remainingCredits: null };
+  }
+
+  const rawPrompt = Math.max(0, Math.trunc(params.promptTokens || 0));
+  const rawCompletion = Math.max(0, Math.trunc(params.completionTokens || 0));
+  let deltaPrompt = 0;
+  let deltaCompletion = 0;
+  if (delta === targetTotal) {
+    deltaPrompt = rawPrompt;
+    deltaCompletion = rawCompletion;
+  } else if (rawPrompt + rawCompletion > 0) {
+    deltaPrompt = Math.round((delta * rawPrompt) / (rawPrompt + rawCompletion));
+    deltaCompletion = Math.max(0, delta - deltaPrompt);
+  }
+
+  const res = await trackBuildCreditUsage({
+    userId: params.userId,
+    projectId: params.projectId,
+    builderEventId: `${params.builderEventIdPrefix || 'usage'}:${params.sessionId}:${targetTotal}`,
+    model: params.model || 'openrouter/free',
+    promptTokens: deltaPrompt,
+    completionTokens: deltaCompletion,
+    totalTokens: delta,
+    action: params.action || 'build',
+    effort: params.effort || 'medium',
+  });
+
+  return {
+    billed: res.recorded,
+    delta: res.deducted,
+    remainingCredits: res.remainingCredits,
+  };
 }
 
 export async function getMonthlyUsageStats(userId: string, usedOwnKeyFilter?: boolean | null) {

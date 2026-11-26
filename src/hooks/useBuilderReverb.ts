@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import Pusher from 'pusher-js';
@@ -68,6 +68,20 @@ export interface SummarizationCompleteEvent {
     message: string;
 }
 
+export interface TokenUsageEvent {
+    prompt: number;
+    completion: number;
+    total: number;
+    context: number;
+}
+
+export interface CreditEvent {
+    used_tokens: number;
+    remaining_credits: number;
+    percent_used: number;
+    message: string;
+}
+
 export type BuilderEvent =
     | { type: 'status'; data: StatusEvent }
     | { type: 'thinking'; data: ThinkingEvent }
@@ -77,7 +91,10 @@ export type BuilderEvent =
     | { type: 'message'; data: MessageEvent }
     | { type: 'error'; data: ErrorEvent }
     | { type: 'complete'; data: CompleteEvent }
-    | { type: 'summarization_complete'; data: SummarizationCompleteEvent };
+    | { type: 'summarization_complete'; data: SummarizationCompleteEvent }
+    | { type: 'token_usage'; data: TokenUsageEvent }
+    | { type: 'credit_warning'; data: CreditEvent }
+    | { type: 'credit_exceeded'; data: CreditEvent };
 
 export interface ReverbConfig {
     key: string;
@@ -98,6 +115,9 @@ export interface UseBuilderReverbOptions {
     onError?: (data: ErrorEvent) => void;
     onComplete?: (data: CompleteEvent) => void;
     onSummarizationComplete?: (data: SummarizationCompleteEvent) => void;
+    onTokenUsage?: (data: TokenUsageEvent) => void;
+    onCreditWarning?: (data: CreditEvent) => void;
+    onCreditExceeded?: (data: CreditEvent) => void;
     onAnyEvent?: (event: BuilderEvent) => void;
     onDisconnected?: () => void;
     onReconnected?: () => void;
@@ -251,6 +271,18 @@ export function useBuilderReverb(options: UseBuilderReverbOptions): UseBuilderRe
             channel.bind('summarization_complete', (data: SummarizationCompleteEvent) => {
                 optionsRef.current.onSummarizationComplete?.(data);
                 optionsRef.current.onAnyEvent?.({ type: 'summarization_complete', data });
+            });
+            channel.bind('token_usage', (data: TokenUsageEvent) => {
+                optionsRef.current.onTokenUsage?.(data);
+                optionsRef.current.onAnyEvent?.({ type: 'token_usage', data });
+            });
+            channel.bind('credit_warning', (data: CreditEvent) => {
+                optionsRef.current.onCreditWarning?.(data);
+                optionsRef.current.onAnyEvent?.({ type: 'credit_warning', data });
+            });
+            channel.bind('credit_exceeded', (data: CreditEvent) => {
+                optionsRef.current.onCreditExceeded?.(data);
+                optionsRef.current.onAnyEvent?.({ type: 'credit_exceeded', data });
             });
 
             currentChannelRef.current = channel;

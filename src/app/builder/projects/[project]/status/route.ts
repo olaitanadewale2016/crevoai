@@ -4,6 +4,7 @@ import { requireVerified, canViewProject } from '@/lib/auth';
 import { Project } from '@/models/Project';
 import { Builder } from '@/models/BuilderAi';
 import { builderFetch, projectPreviewExists } from '@/services/builder';
+import { getUserCreditsSnapshot } from '@/services/shared-context';
 
 export const runtime = 'nodejs';
 
@@ -29,12 +30,16 @@ export async function GET(
   // Quick mode: fast DB-only status check for frontend polling & live streaming fallback
   const quickParam = req.nextUrl.searchParams.get('quick');
   if (quickParam === '1' || quickParam === 'true') {
-    const previewExists = await projectPreviewExists(project);
+    const [previewExists, credits] = await Promise.all([
+      projectPreviewExists(project),
+      getUserCreditsSnapshot(ctx.user).catch(() => null),
+    ]);
     const data: Record<string, unknown> = {
       status: project.build_status,
       preview_url: previewExists ? `/preview/${project._id}` : null,
       has_preview: previewExists,
       tokens_used: project.estimated_tokens || 0,
+      ...(credits ? { credits } : {}),
       build_started_at: project.build_started_at
         ? new Date(project.build_started_at).toISOString()
         : null,

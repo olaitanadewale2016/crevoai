@@ -12,7 +12,7 @@ import { MessageBubble } from '@/components/Chat/MessageBubble';
 import { FileTree } from '@/components/Code/FileTree';
 import { CodeEditor } from '@/components/Code/CodeEditor';
 import { MessageListSkeleton } from '@/components/Skeleton';
-import { useBuilderChat, BroadcastConfig, CompleteEvent } from '@/hooks/useBuilderChat';
+import { useBuilderChat, BroadcastConfig, CompleteEvent, CreditEvent } from '@/hooks/useBuilderChat';
 import { sanitizeBuilderError } from '@/lib/builderErrors';
 import { useChatSounds, SoundSettings } from '@/hooks/useChatSounds';
 import { useNotifications } from '@/hooks/useNotifications';
@@ -206,7 +206,7 @@ export default function Chat({
     } = useNotifications(unreadNotificationCount);
 
     // Subscribe to user channel for real-time notification updates
-    useUserChannel({
+    const { isConnected: isUserChannelConnected } = useUserChannel({
         userId: _user.id,
         broadcastConfig: pusherConfig,
         enabled: !!pusherConfig?.key,
@@ -265,6 +265,7 @@ export default function Chat({
     const [isChatCollapsed, setIsChatCollapsed] = useState(false);
     const [isInputFocused, setIsInputFocused] = useState(false);
     const [outOfCreditsModalOpen, setOutOfCreditsModalOpen] = useState(false);
+    const [creditExhaustedMidRun, setCreditExhaustedMidRun] = useState(false);
 
     // File attachment state for @mentions and uploads
     const [localProjectFiles, setLocalProjectFiles] = useState<AttachedFile[]>(initialProjectFiles ?? []);
@@ -372,11 +373,27 @@ export default function Chat({
         }
     }, [project.id]);
 
+    const handleCreditExhausted = useCallback((midRun = true) => {
+        setCreditExhaustedMidRun(midRun);
+        if (!credits.isUnlimited && !credits.usingOwnKey) {
+            updateCredits({ ...credits, remaining: 0 });
+        }
+        setOutOfCreditsModalOpen(true);
+        void refreshCredits();
+    }, [credits, updateCredits, refreshCredits]);
+
     const handleComplete = useCallback((event: CompleteEvent) => {
         const isClarifyingOrChatOnly =
             event.files_changed === false && event.build_status === 'skipped';
+        const isCreditExhaustedComplete = /credit\s+limit|credits\s+ran\s+out|out\s+of\s+(?:build\s+)?credits/i.test(
+            event.message || ''
+        );
 
-        if (!isClarifyingOrChatOnly) {
+        if (isCreditExhaustedComplete) {
+            handleCreditExhausted(true);
+            playSound('error');
+            toast.error(t('Build credits ran out during generation'));
+        } else if (!isClarifyingOrChatOnly) {
             playSound('complete');
             confetti({
                 particleCount: 80,
@@ -390,6 +407,10 @@ export default function Chat({
             } else {
                 toast.success(t('Build complete!'));
             }
+        }
+        if (isCreditExhaustedComplete && event.files_changed) {
+            setPreviewRefreshTrigger(Date.now());
+            setFileRefreshTrigger(tf => tf + 1);
         }
         // Fetch AI suggestions immediately after turn completes (including storage choices)
         fetchSuggestions();
@@ -412,16 +433,34 @@ export default function Chat({
             .catch(() => {
                 refreshCredits();
             });
-    }, [playSound, t, fetchSuggestions, project.id, updateCredits, refreshCredits]);
+    }, [playSound, t, fetchSuggestions, project.id, updateCredits, refreshCredits, handleCreditExhausted]);
 
     const handleError = useCallback((error: string) => {
         playSound('error');
         toast.error(error);
         if (error && error.toLowerCase().includes('credit')) {
-            setOutOfCreditsModalOpen(true);
-            refreshCredits();
+            handleCreditExhausted(true);
         }
-    }, [playSound, refreshCredits]);
+    }, [playSound, handleCreditExhausted]);
+
+    const handleCreditWarning = useCallback((event: CreditEvent) => {
+        toast.warning(event.message || t('Build credits are running low (80% used).'));
+    }, [t]);
+
+    const handleCreditExceeded = useCallback((_event: CreditEvent) => {
+        playSound('error');
+        handleCreditExhausted(true);
+    }, [playSound, handleCreditExhausted]);
+
+    const handleTokenUsage = useCallback(() => {
+        if (!isUserChannelConnected) {
+            void refreshCredits();
+        }
+    }, [isUserChannelConnected, refreshCredits]);
+
+    const handleCreditsSync = useCallback((syncedCredits: BuildCreditsInfo) => {
+        updateCredits(syncedCredits);
+    }, [updateCredits]);
 
     const handleMessage = useCallback(() => {
         playSound('message');
@@ -466,6 +505,10 @@ export default function Chat({
         onBuildError: (error) => {
             toast.error(error);
         },
+        onTokenUsage: handleTokenUsage,
+        onCreditWarning: handleCreditWarning,
+        onCreditExceeded: handleCreditExceeded,
+        onCreditsSync: handleCreditsSync,
         errorSanitizer,
     });
 
@@ -740,9 +783,11 @@ export default function Chat({
         const msg = (overrideText ?? prompt).trim();
         if ((!msg && !selectedElement && !fileData?.fileIds.length) || isLoading) return;
         if (isOutOfCredits) {
+            setCreditExhaustedMidRun(false);
             setOutOfCreditsModalOpen(true);
             return;
         }
+        setCreditExhaustedMidRun(false);
 
         const elementContext = selectedElement ? {
             tagName: selectedElement.tagName,
@@ -784,9 +829,11 @@ export default function Chat({
     const handleSendStyleEdit = useCallback(async (msg: string) => {
         if (isLoading) return;
         if (isOutOfCredits) {
+            setCreditExhaustedMidRun(false);
             setOutOfCreditsModalOpen(true);
             return;
         }
+        setCreditExhaustedMidRun(false);
         try {
             const healthResponse = await axios.get(`/builder/projects/${project.id}/health`);
             if (!healthResponse.data.online) {
@@ -1071,10 +1118,14 @@ export default function Chat({
                                     <div className="space-y-1">
                                         <p className="font-semibold text-destructive flex items-center gap-1.5">
                                             <Coins className="h-3.5 w-3.5 shrink-0" />
-                                            {t('You have run out of build credits')}
+                                            {creditExhaustedMidRun
+                                                ? t('Generation stopped: build credits exhausted')
+                                                : t('You have run out of build credits')}
                                         </p>
                                         <p className="text-muted-foreground">
-                                            {t('Upgrade your plan to get more monthly build credits, or connect your own AI API key to continue building immediately.')}
+                                            {creditExhaustedMidRun
+                                                ? t('Your credits ran out midway during generation and consumed credits cannot be refunded. Open Billing & Plans to upgrade/buy more credits, or connect your own AI API key in Profile.')
+                                                : t('Upgrade your plan to get more monthly build credits, or connect your own AI API key to continue building immediately.')}
                                         </p>
                                     </div>
                                 </div>
@@ -1418,13 +1469,17 @@ export default function Chat({
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Coins className="h-5 w-5 text-amber-500" />
-                            {t('Out of Build Credits')}
+                            {creditExhaustedMidRun
+                                ? t('Build Credits Exhausted')
+                                : t('Out of Build Credits')}
                         </DialogTitle>
                         <DialogDescription>
-                            {t('You have used all of your available build credits for your current plan. Upgrade your subscription plan or connect your own AI API key to continue building.')}
+                            {creditExhaustedMidRun
+                                ? t('Your build credits ran out midway during generation, so the session stopped cleanly. Credits already consumed cannot be refunded.')
+                                : t('You have used all of your available build credits for your current plan. Upgrade your subscription plan or connect your own AI API key to continue building.')}
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="rounded-lg border bg-muted/40 p-3 text-xs space-y-1.5">
+                    <div className="rounded-lg border bg-muted/40 p-3 text-xs space-y-2">
                         <div className="flex items-center justify-between">
                             <span className="text-muted-foreground">{t('Remaining Credits')}</span>
                             <span className="font-semibold text-destructive">0</span>
@@ -1434,6 +1489,13 @@ export default function Chat({
                             <span className="font-medium">
                                 {credits.monthlyLimit > 0 ? credits.monthlyLimit.toLocaleString() : t('Free Tier')}
                             </span>
+                        </div>
+                        <div className="pt-2 border-t border-border/60 space-y-1 text-muted-foreground">
+                            <p className="font-medium text-foreground">{t('How to get more credits:')}</p>
+                            <ol className="list-decimal list-inside space-y-0.5">
+                                <li>{t('Click Upgrade Plan / Buy Credits below to choose a higher credit plan and complete checkout.')}</li>
+                                <li>{t('Or click Use Own API Key in your Profile Settings to build immediately without platform credits.')}</li>
+                            </ol>
                         </div>
                     </div>
                     <DialogFooter className="flex-col sm:flex-row gap-2">

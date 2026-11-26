@@ -6,7 +6,7 @@ import { broadcastEvent, broadcastToUser } from '@/lib/broadcast';
 import { Project } from '@/models/Project';
 import { Builder } from '@/models/BuilderAi';
 import { notifyBuildComplete, notifyBuildFailed } from '@/services/notifications';
-import { trackBuildCreditUsage } from '@/services/credits';
+import { billProjectSessionTokensDelta } from '@/services/credits';
 import { triggerBuildAndDeployToR2, clearProjectPreviewCache } from '@/services/builder';
 
 export const dynamic = 'force-dynamic';
@@ -93,11 +93,12 @@ export async function POST(req: NextRequest) {
   switch (eventType) {
     case 'status': {
       const statusVal = String(data.status || '');
-      if (statusVal === 'failed' || statusVal === 'cancelled') {
+      if (statusVal === 'failed' || statusVal === 'cancelled' || statusVal === 'credit_limit') {
+        const storedStatus = statusVal === 'credit_limit' ? 'failed' : statusVal;
         const updateOps: Record<string, unknown> = {
-          $set: { build_status: statusVal },
+          $set: { build_status: storedStatus },
         };
-        if (data.message) {
+        if (data.message && statusVal !== 'credit_limit') {
           updateOps.$push = {
             conversation_history: {
               role: 'assistant',
@@ -281,14 +282,19 @@ export async function POST(req: NextRequest) {
             (!lastEntry || lastEntry.role !== 'assistant' || lastEntry.content !== finalMsg)
         );
 
+        const isCreditLimitComplete = /credit\s+limit|credits\s+ran\s+out|out\s+of\s+(?:build\s+)?credits/i.test(
+          `${data.build_message || ''} ${finalMsg}`
+        );
         const agentFailed = Boolean(
           data.status === 'failed' ||
             data.status === 'cancelled' ||
             data.status === 'credit_limit' ||
-            data.build_status === 'failed'
+            data.build_status === 'failed' ||
+            (isCreditLimitComplete && !data.files_changed)
         );
         const isClarifyingOrChatOnly = Boolean(
           !agentFailed &&
+            !isCreditLimitComplete &&
             !data.files_changed &&
             !data.build_required &&
             data.build_status !== 'completed' &&
@@ -301,28 +307,21 @@ export async function POST(req: NextRequest) {
         );
 
         const rawTokensUsed = Number(data.tokens_used || data.total_tokens || 0);
-        const prevBilled = Number(project.last_billed_session_tokens || 0);
-        const deltaTokens =
-          rawTokensUsed > prevBilled
-            ? rawTokensUsed - prevBilled
-            : prevBilled === 0
-              ? rawTokensUsed
-              : 0;
 
-        // Run R2 build/deploy and credit deduction concurrently
+        // Run R2 build/deploy and atomic incremental credit deduction concurrently
         const creditTask =
-          project.user_id && deltaTokens > 0
-            ? trackBuildCreditUsage({
-                userId: String(project.user_id),
+          project.user_id && rawTokensUsed > 0
+            ? billProjectSessionTokensDelta({
                 projectId: String(project._id),
-                builderEventId:
-                  eventId || `complete:${sessionId}:${rawTokensUsed}:${data.iterations || 0}`,
-                model: data.model || 'openrouter/free',
+                userId: String(project.user_id),
+                sessionId,
+                totalTokens: rawTokensUsed,
                 promptTokens: Number(data.prompt_tokens || 0),
                 completionTokens: Number(data.completion_tokens || 0),
-                totalTokens: deltaTokens,
+                model: data.model || 'openrouter/free',
                 action: 'build',
                 effort: project.reasoning_effort || 'medium',
+                builderEventIdPrefix: eventId ? `complete:${eventId}` : 'complete',
               }).catch((creditErr) => {
                 console.error('Error tracking build credit usage:', creditErr);
               })
@@ -390,11 +389,8 @@ export async function POST(req: NextRequest) {
         if (resolvedBuilderId && !project.builder_id) {
           setFields.builder_id = resolvedBuilderId;
         }
-        if (rawTokensUsed > 0) {
+        if (rawTokensUsed > 0 && !project.user_id) {
           setFields.estimated_tokens = rawTokensUsed;
-          if (rawTokensUsed > prevBilled) {
-            setFields.last_billed_session_tokens = rawTokensUsed;
-          }
         }
 
         const updateOps: Record<string, unknown> = { $set: setFields };
@@ -510,25 +506,69 @@ export async function POST(req: NextRequest) {
     }
 
     case 'token_usage': {
+      const rawTotal = Number(data.total || 0);
       const tasks: Promise<unknown>[] = [];
-      if (data.total) {
-        tasks.push(
-          Project.updateOne(
-            { build_session_id: sessionId },
-            { $set: { estimated_tokens: Number(data.total) } }
-          )
-        );
+      let billingPromise: Promise<{ billed: boolean; delta: number; remainingCredits: number | null }> | null =
+        null;
+
+      if (rawTotal > 0) {
+        const project = await Project.findOne(
+          { build_session_id: sessionId },
+          { _id: 1, user_id: 1, build_status: 1, reasoning_effort: 1 }
+        ).lean();
+
+        if (project?.user_id) {
+          billingPromise = billProjectSessionTokensDelta({
+            projectId: String(project._id),
+            userId: String(project.user_id),
+            sessionId,
+            totalTokens: rawTotal,
+            promptTokens: Number(data.prompt || 0),
+            completionTokens: Number(data.completion || 0),
+            model: typeof data.model === 'string' && data.model ? data.model : 'openrouter/free',
+            action: 'build',
+            effort: project.reasoning_effort || 'medium',
+            builderEventIdPrefix: 'usage',
+          });
+        } else if (project) {
+          tasks.push(
+            Project.updateOne(
+              { _id: project._id },
+              { $max: { estimated_tokens: rawTotal } }
+            )
+          );
+        }
       }
+
       if (!pusherActive) {
         tasks.push(
           broadcastEvent(`session.${sessionId}`, 'token_usage', {
             prompt: data.prompt || 0,
             completion: data.completion || 0,
-            total: data.total || 0,
+            total: rawTotal,
             context: data.context || 0,
           })
         );
       }
+
+      if (billingPromise) {
+        const billingRes = await billingPromise.catch((err) => {
+          console.error('Error tracking real-time token usage credits:', err);
+          return { billed: false, delta: 0, remainingCredits: null };
+        });
+        if (billingRes.remainingCredits !== null && billingRes.remainingCredits <= 0) {
+          tasks.push(
+            broadcastEvent(`session.${sessionId}`, 'credit_exceeded', {
+              used_tokens: rawTotal,
+              remaining_credits: 0,
+              percent_used: 100,
+              message:
+                'Build credits exhausted during generation. Upgrade your plan or buy more credits in Billing & Plans (/billing/plans).',
+            })
+          );
+        }
+      }
+
       if (tasks.length > 0) {
         await Promise.allSettled(tasks);
       }
@@ -536,18 +576,23 @@ export async function POST(req: NextRequest) {
     }
 
     case 'credit_warning': {
-      await broadcastEvent(`session.${sessionId}`, 'credit_warning', data);
+      if (!pusherActive) {
+        await broadcastEvent(`session.${sessionId}`, 'credit_warning', data);
+      }
       break;
     }
 
     case 'credit_exceeded': {
-      await Promise.allSettled([
+      const creditTasks: Promise<unknown>[] = [
         Project.updateOne(
           { build_session_id: sessionId },
           { $set: { build_status: 'failed' } }
         ),
-        broadcastEvent(`session.${sessionId}`, 'credit_exceeded', data),
-      ]);
+      ];
+      if (!pusherActive) {
+        creditTasks.push(broadcastEvent(`session.${sessionId}`, 'credit_exceeded', data));
+      }
+      await Promise.allSettled(creditTasks);
       break;
     }
 

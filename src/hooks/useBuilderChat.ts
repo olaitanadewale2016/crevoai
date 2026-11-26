@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useBuilderPusher, CompleteEvent, ActionEvent, StatusEvent, ErrorEvent, MessageEvent as PusherMessageEvent, ThinkingEvent, BroadcastConfig, SummarizationCompleteEvent } from './useBuilderPusher';
+import { useBuilderPusher, CompleteEvent, ActionEvent, StatusEvent, ErrorEvent, MessageEvent as PusherMessageEvent, ThinkingEvent, BroadcastConfig, SummarizationCompleteEvent, TokenUsageEvent, CreditEvent } from './useBuilderPusher';
 import { useBuilderReverb, ReverbConfig } from './useBuilderReverb';
 import { useChatHistory, ChatMessage } from './useChatHistory';
 import { useSessionReconnection, SessionStatus } from './useSessionReconnection';
 import type { AttachedFile } from '@/types/chat';
+import type { BuildCreditsInfo } from './useBuildCredits';
 import axios from 'axios';
 
 export interface BuildProgress {
@@ -36,6 +37,10 @@ export interface UseBuilderChatOptions {
     onBuildStart?: () => void;
     onBuildComplete?: (previewUrl: string) => void;
     onBuildError?: (error: string) => void;
+    onTokenUsage?: (event: TokenUsageEvent) => void;
+    onCreditWarning?: (event: CreditEvent) => void;
+    onCreditExceeded?: (event: CreditEvent) => void;
+    onCreditsSync?: (credits: BuildCreditsInfo) => void;
     /** Optional function to sanitize error messages before displaying to user */
     errorSanitizer?: (rawError: string) => string;
 }
@@ -89,7 +94,7 @@ const initialProgress: BuildProgress = {
 };
 
 export function useBuilderChat(projectId: string, options: UseBuilderChatOptions): UseBuilderChatReturn {
-    const { pusherConfig, initialHistory, initialPreviewUrl, onComplete, onError, onMessage, onAction, autoBuild = true, onBuildStart, onBuildComplete, onBuildError, errorSanitizer } = options;
+    const { pusherConfig, initialHistory, initialPreviewUrl, onComplete, onError, onMessage, onAction, autoBuild = true, onBuildStart, onBuildComplete, onBuildError, onTokenUsage, onCreditWarning, onCreditExceeded, onCreditsSync, errorSanitizer } = options;
     const history = useChatHistory({ projectId, initialHistory });
     const [sessionId, setSessionId] = useState<string | null>(null);
     const [isStarting, setIsStarting] = useState(false);
@@ -120,8 +125,10 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     const seenActionTextsRef = useRef(new Set<string>());
     // Dedup for error events (separate namespace from messages to avoid collisions)
     const addedErrorsRef = useRef(new Set<string>());
-    // Dedup: prevent duplicate complete events from firing onComplete twice
+    // Dedup: prevent duplicate complete or credit alerts within the same session
     const completedSessionRef = useRef(false);
+    const creditWarningNotifiedRef = useRef(false);
+    const creditExceededNotifiedRef = useRef(false);
     // Dedup: prevent duplicate status events from causing unnecessary re-renders
     const lastStatusRef = useRef<string | null>(null);
     // Dedup: prevent duplicate thinking events with identical content
@@ -174,19 +181,20 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         }
 
         // Check if this is a terminal status that should clear thinking state
-        const isTerminalStatus = ['cancelled', 'completed', 'failed', 'idle'].includes(data.status);
+        const isTerminalStatus = ['cancelled', 'completed', 'failed', 'idle', 'credit_limit'].includes(data.status);
+        const mappedStatus = (data.status === 'credit_limit' ? 'failed' : data.status) as BuildProgress['status'];
         const resolvedPreviewUrl = (data as any).preview_url || null;
 
         if (resolvedPreviewUrl) {
             clearFallbackBuildTimer();
             buildTriggeredRef.current = true;
-        } else if (data.status === 'failed' || data.status === 'cancelled' || data.status === 'idle') {
+        } else if (data.status === 'failed' || data.status === 'cancelled' || data.status === 'idle' || data.status === 'credit_limit') {
             clearFallbackBuildTimer();
         }
 
         setProgress(prev => ({
             ...prev,
-            status: data.status as BuildProgress['status'],
+            status: mappedStatus,
             ...(resolvedPreviewUrl ? { previewUrl: resolvedPreviewUrl } : {}),
             // Clear thinking state for terminal statuses
             ...(isTerminalStatus && {
@@ -195,10 +203,20 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             }),
         }));
 
+        if (data.status === 'credit_limit' && !creditExceededNotifiedRef.current) {
+            creditExceededNotifiedRef.current = true;
+            onCreditExceeded?.({
+                used_tokens: 0,
+                remaining_credits: 0,
+                percent_used: 100,
+                message: data.message || 'Build credit limit reached.',
+            });
+        }
+
         if (data.status === 'completed' && resolvedPreviewUrl) {
             onBuildComplete?.(resolvedPreviewUrl);
         }
-    }, [history, onBuildComplete, clearFallbackBuildTimer]);
+    }, [history, onBuildComplete, onCreditExceeded, clearFallbackBuildTimer]);
 
     const handleThinking = useCallback((data: ThinkingEvent) => {
         // Dedup: skip exact duplicate thinking content
@@ -383,6 +401,34 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         history.addMessage(activityMessage);
     }, [history]);
 
+    const handleTokenUsage = useCallback((data: TokenUsageEvent) => {
+        if (typeof data.total === 'number' && data.total > 0) {
+            setProgress(prev => ({
+                ...prev,
+                tokensUsed: Math.max(prev.tokensUsed, data.total),
+            }));
+        }
+        onTokenUsage?.(data);
+    }, [onTokenUsage]);
+
+    const handleCreditWarning = useCallback((data: CreditEvent) => {
+        if (creditWarningNotifiedRef.current) return;
+        creditWarningNotifiedRef.current = true;
+        onCreditWarning?.(data);
+    }, [onCreditWarning]);
+
+    const handleCreditExceeded = useCallback((data: CreditEvent) => {
+        if (typeof data.used_tokens === 'number' && data.used_tokens > 0) {
+            setProgress(prev => ({
+                ...prev,
+                tokensUsed: Math.max(prev.tokensUsed, data.used_tokens),
+            }));
+        }
+        if (creditExceededNotifiedRef.current) return;
+        creditExceededNotifiedRef.current = true;
+        onCreditExceeded?.(data);
+    }, [onCreditExceeded]);
+
     // Track when any WebSocket event was last received (for activity timeout detection)
     const handleAnyEvent = useCallback(() => {
         lastEventTimeRef.current = Date.now();
@@ -395,6 +441,15 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         try {
             const response = await axios.get(`/builder/projects/${projectId}/status?quick=1`);
             const status = response.data.status;
+            if (typeof response.data.tokens_used === 'number' && response.data.tokens_used > 0) {
+                setProgress(prev => ({
+                    ...prev,
+                    tokensUsed: Math.max(prev.tokensUsed, response.data.tokens_used),
+                }));
+            }
+            if (response.data.credits) {
+                onCreditsSync?.(response.data.credits);
+            }
             if (status === 'completed' || status === 'failed') {
                 const previewUrl = response.data.preview_url || undefined;
                 if (previewUrl) {
@@ -421,7 +476,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         } catch {
             // Silent - regular polling will catch it
         }
-    }, [progress.status, sessionId, projectId, autoBuild, onBuildStart, onBuildComplete, clearFallbackBuildTimer]);
+    }, [progress.status, sessionId, projectId, autoBuild, onBuildStart, onBuildComplete, onCreditsSync, clearFallbackBuildTimer]);
 
     const isReverb = pusherConfig.provider === 'reverb';
 
@@ -442,6 +497,9 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         onError: handleError,
         onComplete: handleComplete,
         onSummarizationComplete: handleSummarizationComplete,
+        onTokenUsage: handleTokenUsage,
+        onCreditWarning: handleCreditWarning,
+        onCreditExceeded: handleCreditExceeded,
         onAnyEvent: handleAnyEvent,
         onReconnected: handleWsReconnected,
     });
@@ -456,6 +514,9 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         onError: handleError,
         onComplete: handleComplete,
         onSummarizationComplete: handleSummarizationComplete,
+        onTokenUsage: handleTokenUsage,
+        onCreditWarning: handleCreditWarning,
+        onCreditExceeded: handleCreditExceeded,
         onAnyEvent: handleAnyEvent,
         onReconnected: handleWsReconnected,
     });
@@ -488,6 +549,15 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         try {
             const response = await axios.get(`/builder/projects/${projectId}/status?quick=1`);
             const status = response.data.status;
+            if (typeof response.data.tokens_used === 'number' && response.data.tokens_used > 0) {
+                setProgress(prev => ({
+                    ...prev,
+                    tokensUsed: Math.max(prev.tokensUsed, response.data.tokens_used),
+                }));
+            }
+            if (response.data.credits) {
+                onCreditsSync?.(response.data.credits);
+            }
             const recentMessages: Array<{
                 role: string;
                 content: string;
@@ -573,6 +643,31 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                     thinkingContent: null,
                     thinkingStartTime: null,
                 }));
+                const hasCreditStopMsg = currentTurnEntries.some(
+                    msg =>
+                        msg.role === 'assistant' &&
+                        /credit\s+limit|credits\s+ran\s+out|out\s+of\s+(?:build\s+)?credits/i.test(
+                            String(msg.content || '')
+                        )
+                );
+                const polledCredits = response.data.credits as BuildCreditsInfo | undefined;
+                if (
+                    !creditExceededNotifiedRef.current &&
+                    (hasCreditStopMsg ||
+                        (status === 'failed' &&
+                            polledCredits &&
+                            !polledCredits.isUnlimited &&
+                            !polledCredits.usingOwnKey &&
+                            polledCredits.remaining <= 0))
+                ) {
+                    creditExceededNotifiedRef.current = true;
+                    onCreditExceeded?.({
+                        used_tokens: Number(response.data.tokens_used || 0),
+                        remaining_credits: 0,
+                        percent_used: 100,
+                        message: 'Build credit limit reached.',
+                    });
+                }
                 if (status === 'completed') {
                     if (previewUrl) {
                         onBuildComplete?.(previewUrl);
@@ -585,7 +680,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         } catch {
             // Silent - will retry on next interval
         }
-    }, [projectId, autoBuild, onBuildComplete, clearFallbackBuildTimer]);
+    }, [projectId, autoBuild, onBuildComplete, onCreditExceeded, onCreditsSync, clearFallbackBuildTimer]);
 
     // Safety & streaming fallback: poll status while running whenever Pusher hasn't delivered an event recently.
     // Keeps UI streaming live actions/messages even if Pusher is disconnected, blocked, or misconfigured.
@@ -611,6 +706,8 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         seenActionTextsRef.current.clear();
         addedErrorsRef.current.clear();
         completedSessionRef.current = false;
+        creditWarningNotifiedRef.current = false;
+        creditExceededNotifiedRef.current = false;
         lastStatusRef.current = null;
         lastThinkingContentRef.current = null;
         lastEventTimeRef.current = 0;
@@ -796,4 +893,4 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 }
 
 // Re-export types for convenience
-export type { CompleteEvent, ActionEvent, BroadcastConfig, PusherConfig } from './useBuilderPusher';
+export type { CompleteEvent, ActionEvent, TokenUsageEvent, CreditEvent, BroadcastConfig, PusherConfig } from './useBuilderPusher';
