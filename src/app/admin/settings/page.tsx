@@ -4,6 +4,7 @@ import { connectDB } from '@/lib/db';
 import { getSessionContext } from '@/lib/auth';
 import { getSharedAppProps } from '@/services/shared-context';
 import { getSettingGroup } from '@/lib/settings';
+import { getEffectiveBaseDomain } from '@/lib/domains';
 import { Plan, AiProvider, Builder, Language, SystemSetting } from '@/models';
 
 export const dynamic = 'force-dynamic';
@@ -42,6 +43,7 @@ export default async function AdminSettingsPage() {
     builders,
     languages,
     sharedProps,
+    effectiveBaseDomain,
   ] = await Promise.all([
     getSettingGroup('general'),
     getSettingGroup('plans'),
@@ -57,6 +59,7 @@ export default async function AdminSettingsPage() {
     Builder.find({ status: 'active' }).sort({ name: 1 }).lean(),
     Language.find({ is_active: true }).sort({ sort_order: 1 }).lean(),
     getSharedAppProps(),
+    getEffectiveBaseDomain(),
   ]);
 
   const allSettings = {
@@ -96,7 +99,9 @@ export default async function AdminSettingsPage() {
     domains: {
       domain_enable_subdomains: domains.domain_enable_subdomains !== false,
       domain_enable_custom_domains: domains.domain_enable_custom_domains !== false,
-      domain_base_domain: domains.domain_base_domain || '',
+      domain_base_domain:
+        domains.domain_base_domain ||
+        (effectiveBaseDomain && effectiveBaseDomain !== 'example.com' ? effectiveBaseDomain : ''),
       domain_server_ip: domains.domain_server_ip || '',
       domain_blocked_subdomains: Array.isArray(domains.domain_blocked_subdomains)
         ? domains.domain_blocked_subdomains

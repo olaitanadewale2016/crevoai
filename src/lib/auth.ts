@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB, isValidObjectId } from './db';
 import { generateHexToken, timingSafeEqualStr } from './crypto';
 import { getSetting } from './settings';
+import { areSubdomainsEnabled, getEffectiveBaseDomain } from './domains';
 import { SessionModel, RateLimit } from '@/models/Counter';
 import { User, IUser } from '@/models/User';
 import { Project, ProjectShare, IProject } from '@/models/Project';
@@ -59,9 +60,9 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 
 export async function getSessionCookieDomain(host?: string | null): Promise<string | undefined> {
   try {
-    const subdomainsEnabled = await getSetting<boolean>('domain_enable_subdomains', false);
-    const baseDomain = (await getSetting<string>('domain_base_domain', '')).trim().toLowerCase();
-    if (!subdomainsEnabled || !baseDomain || !host) return undefined;
+    const subdomainsEnabled = await areSubdomainsEnabled();
+    const baseDomain = await getEffectiveBaseDomain(host);
+    if (!subdomainsEnabled || !baseDomain || baseDomain === 'example.com' || !host) return undefined;
     const cleanHost = host.split(':')[0].toLowerCase();
     if (cleanHost === baseDomain || cleanHost.endsWith(`.${baseDomain}`)) {
       return `.${baseDomain}`;

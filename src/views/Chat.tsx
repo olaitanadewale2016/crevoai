@@ -923,7 +923,7 @@ export default function Chat({
             <Head title={project.name} />
             <Toaster />
 
-            <div className="h-[100dvh] flex bg-background text-foreground overflow-hidden">
+            <div className="h-[var(--vvh,100dvh)] flex bg-background text-foreground overflow-hidden">
                 {/* Desktop-only collapsed chat sidebar expand strip */}
                 {isChatCollapsed && (
                     <div className="hidden md:flex h-full border-e bg-card/60 backdrop-blur flex-col items-center py-2.5 px-1.5 shrink-0 z-20">
@@ -1414,7 +1414,10 @@ export default function Chat({
 
                 {/* Mobile Bottom View Toggle (Chat vs Preview vs Code) — hides when virtual keypad / input is focused */}
                 {!isInputFocused && (
-                    <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-40 md:hidden flex items-center bg-card/95 backdrop-blur-md border border-border/80 shadow-lg rounded-full p-1 gap-0.5 max-w-[calc(100vw-1rem)] overflow-x-auto no-scrollbar">
+                    <div
+                        data-hide-on-keyboard="true"
+                        className="fixed bottom-3 left-1/2 -translate-x-1/2 z-40 md:hidden flex items-center bg-card/95 backdrop-blur-md border border-border/80 shadow-lg rounded-full p-1 gap-0.5 max-w-[calc(100vw-1rem)] overflow-x-auto no-scrollbar"
+                    >
                         <button
                             type="button"
                             onClick={() => setMobileView('chat')}

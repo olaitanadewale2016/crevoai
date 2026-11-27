@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { Link } from '@/lib/inertia-compat';
 import { PropsWithChildren } from 'react';
@@ -16,7 +16,7 @@ interface InstallerLayoutProps extends PropsWithChildren {
 
 export default function InstallerLayout({ children, currentStep, title }: InstallerLayoutProps) {
     return (
-        <div className="relative min-h-screen bg-background flex flex-col items-center justify-center p-4">
+        <div data-keyboard-pad="true" className="relative min-h-[var(--vvh,100dvh)] bg-background flex flex-col items-center justify-center p-4">
             <GradientBackground />
 
             {/* Theme Toggle */}

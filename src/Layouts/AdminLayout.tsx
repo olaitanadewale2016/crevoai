@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { PropsWithChildren, useState, useEffect } from 'react';
 import { Head, Link, usePage } from '@/lib/inertia-compat';
@@ -93,7 +93,7 @@ export default function AdminLayout({ user, title, children }: AdminLayoutProps)
                 <SidebarProvider>
                     <AppSidebar user={user} />
                     <SidebarInset>
-                        <div className="min-h-screen bg-muted/50">
+                        <div className="min-h-[var(--vvh,100dvh)] bg-muted/50">
                             {/* Header */}
                             <header className="sticky top-0 z-50 flex h-[60px] items-center justify-between border-b bg-background px-4">
                                 <div className="flex items-center gap-2">
@@ -147,7 +147,7 @@ export default function AdminLayout({ user, title, children }: AdminLayoutProps)
                             {user.role === 'admin' && <DemoResetNotice variant="admin" />}
 
                             {/* Main Content */}
-                            <main className="p-4 md:p-6 lg:p-8">
+                            <main data-keyboard-pad="true" className="p-4 md:p-6 lg:p-8">
                                 <div className="max-w-7xl mx-auto">
                                     {children}
                                 </div>

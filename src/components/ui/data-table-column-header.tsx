@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import { Column } from "@tanstack/react-table"
 import { ArrowDown, ArrowUp, ChevronsUpDown, EyeOff } from "lucide-react"
@@ -43,7 +43,7 @@ export function DataTableColumnHeader<TData, TValue>({
                         <ChevronsUpDown className="ms-2 h-4 w-4" />
                     )}
                 </TableActionMenuTrigger>
-                <TableActionMenuContent>
+                <TableActionMenuContent align="start">
                     <TableActionMenuItem onClick={() => column.toggleSorting(false)}>
                         <ArrowUp className="me-2 h-3.5 w-3.5 text-muted-foreground/70" />
                         {t('Ascending')}

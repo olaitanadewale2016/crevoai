@@ -311,7 +311,7 @@ function ProviderForm({
                 )}
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                     <Label htmlFor="default_model">{t('Active Model')}</Label>
                     <div className="space-y-1.5">
@@ -986,7 +986,7 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
                                 {t('Add Provider')}
                             </Button>
                         </DialogTrigger>
-                        <DialogContent className="sm:max-w-lg max-h-[88vh] flex flex-col p-0 overflow-hidden">
+                        <DialogContent className="sm:max-w-lg max-h-[calc(var(--vvh,100dvh)-1.5rem)] sm:max-h-[min(88dvh,calc(var(--vvh,100dvh)-2rem))] flex flex-col p-0 overflow-hidden">
                             <div className="p-6 pb-3 border-b shrink-0">
                                 <DialogHeader>
                                     <DialogTitle>{t('Add AI Provider')}</DialogTitle>
@@ -1056,7 +1056,7 @@ export default function AiProviders({ user, providers, providerTypes, defaultMod
                     resetForm();
                 }
             }}>
-                <DialogContent className="sm:max-w-lg max-h-[88vh] flex flex-col p-0 overflow-hidden">
+                <DialogContent className="sm:max-w-lg max-h-[calc(var(--vvh,100dvh)-1.5rem)] sm:max-h-[min(88dvh,calc(var(--vvh,100dvh)-2rem))] flex flex-col p-0 overflow-hidden">
                     <div className="p-6 pb-3 border-b shrink-0">
                         <DialogHeader>
                             <DialogTitle>{t('Edit AI Provider')}</DialogTitle>

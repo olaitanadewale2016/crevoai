@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { Head, Link } from '@/lib/inertia-compat';
 import { Button } from '@/components/ui/button';
@@ -100,7 +100,7 @@ export default function Settings({
         <>
             <Head title={`Settings - ${project.name}`} />
 
-            <div className="h-[100dvh] bg-background flex flex-col overflow-hidden">
+            <div className="h-[var(--vvh,100dvh)] bg-background flex flex-col overflow-hidden">
                 {/* Header */}
                 <div className="h-14 px-3 sm:px-4 border-b flex items-center justify-between gap-3 bg-background shrink-0">
                     <div className="min-w-0 flex-1">

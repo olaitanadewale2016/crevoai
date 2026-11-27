@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import * as React from "react"
 import { createPortal } from "react-dom"
@@ -36,16 +36,13 @@ interface TableActionMenuSeparatorProps {
   className?: string
 }
 
-interface Position {
-  top: number
-  left: number
-}
+const VIEWPORT_PADDING = 8
+const MENU_GAP = 4
 
 const TableActionMenuContext = React.createContext<{
   open: boolean
   setOpen: (open: boolean) => void
-  position: Position | null
-  setPosition: (position: Position | null) => void
+  triggerRef: React.MutableRefObject<HTMLButtonElement | null>
 } | null>(null)
 
 function useTableActionMenu() {
@@ -61,7 +58,7 @@ const CLOSE_ALL_MENUS_EVENT = 'tableActionMenuCloseAll'
 
 function TableActionMenu({ children }: TableActionMenuProps) {
   const [open, setOpen] = React.useState(false)
-  const [position, setPosition] = React.useState<Position | null>(null)
+  const triggerRef = React.useRef<HTMLButtonElement | null>(null)
   const menuId = React.useId()
 
   // Listen for close-all event from other menus
@@ -78,13 +75,13 @@ function TableActionMenu({ children }: TableActionMenuProps) {
     }
   }, [menuId])
 
-  // Close on click outside, escape, and scroll
+  // Close on click outside, escape, and outer page scroll
   React.useEffect(() => {
     if (!open) return
 
     const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as HTMLElement
-      // Close if clicking outside the menu content (trigger clicks are handled by the trigger itself)
+      const target = e.target as HTMLElement | null
+      if (!target) return
       if (!target.closest('[data-table-action-menu-content]') && !target.closest('[data-table-action-menu-trigger]')) {
         setOpen(false)
       }
@@ -96,7 +93,11 @@ function TableActionMenu({ children }: TableActionMenuProps) {
       }
     }
 
-    const handleScroll = () => {
+    const handleScroll = (e: Event) => {
+      const target = e.target as HTMLElement | null
+      if (target && typeof target.closest === 'function' && target.closest('[data-table-action-menu-content]')) {
+        return
+      }
       setOpen(false)
     }
 
@@ -114,7 +115,6 @@ function TableActionMenu({ children }: TableActionMenuProps) {
   // Wrap setOpen to dispatch close-all event when opening
   const handleSetOpen = React.useCallback((newOpen: boolean) => {
     if (newOpen) {
-      // Dispatch event to close all other menus
       document.dispatchEvent(new CustomEvent(CLOSE_ALL_MENUS_EVENT, {
         detail: { exceptId: menuId }
       }))
@@ -123,7 +123,7 @@ function TableActionMenu({ children }: TableActionMenuProps) {
   }, [menuId])
 
   return (
-    <TableActionMenuContext.Provider value={{ open, setOpen: handleSetOpen, position, setPosition }}>
+    <TableActionMenuContext.Provider value={{ open, setOpen: handleSetOpen, triggerRef }}>
       <div className="relative" data-table-action-menu>
         {children}
       </div>
@@ -132,28 +132,19 @@ function TableActionMenu({ children }: TableActionMenuProps) {
 }
 
 function TableActionMenuTrigger({ className, children }: TableActionMenuTriggerProps) {
-  const { t, isRtl } = useTranslation()
-  const { open, setOpen, setPosition } = useTableActionMenu()
-  const menuWidth = 128 // min-width of menu
+  const { t } = useTranslation()
+  const { open, setOpen, triggerRef } = useTableActionMenu()
 
   const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault()
     e.stopPropagation()
-    const button = e.currentTarget
-    const rect = button.getBoundingClientRect()
-
-    if (!open) {
-      // Calculate position when opening - adjust for RTL
-      setPosition({
-        top: rect.bottom + 4, // 4px gap
-        left: isRtl ? rect.left : rect.right - menuWidth, // align based on direction
-      })
-    }
+    triggerRef.current = e.currentTarget
     setOpen(!open)
   }
 
   return (
     <Button
+      ref={triggerRef}
       type="button"
       variant="ghost"
       className={cn("h-8 w-8 p-0", className)}
@@ -172,21 +163,141 @@ function TableActionMenuTrigger({ className, children }: TableActionMenuTriggerP
   )
 }
 
-function TableActionMenuContent({ children, className }: TableActionMenuContentProps) {
-  const { open, position } = useTableActionMenu()
+function computeMenuCoordinates(params: {
+  triggerRect: DOMRect
+  menuWidth: number
+  menuHeight: number
+  viewportWidth: number
+  viewportHeight: number
+  viewportOffsetTop: number
+  viewportOffsetLeft: number
+  align: "start" | "end"
+  isRtl: boolean
+}) {
+  const {
+    triggerRect,
+    menuWidth,
+    menuHeight,
+    viewportWidth,
+    viewportHeight,
+    viewportOffsetTop,
+    viewportOffsetLeft,
+    align,
+    isRtl,
+  } = params
 
-  if (!open || !position) return null
+  const minTop = viewportOffsetTop + VIEWPORT_PADDING
+  const maxBottom = viewportOffsetTop + viewportHeight - VIEWPORT_PADDING
+  const spaceBelow = Math.max(0, maxBottom - (triggerRect.bottom + MENU_GAP))
+  const spaceAbove = Math.max(0, (triggerRect.top - MENU_GAP) - minTop)
+
+  const shouldFlipUp = menuHeight > spaceBelow && spaceAbove > spaceBelow
+  const availableVertical = shouldFlipUp ? spaceAbove : spaceBelow
+  const maxHeight = Math.max(104, Math.floor(availableVertical))
+  const renderedHeight = Math.min(menuHeight, maxHeight)
+
+  let top = shouldFlipUp
+    ? triggerRect.top - MENU_GAP - renderedHeight
+    : triggerRect.bottom + MENU_GAP
+
+  top = Math.min(maxBottom - renderedHeight, Math.max(minTop, top))
+
+  // In RTL, "start" is right-aligned and "end" is left-aligned
+  const alignRightEdge = isRtl ? align === "start" : align === "end"
+  const rawLeft = alignRightEdge ? triggerRect.right - menuWidth : triggerRect.left
+  const minLeft = viewportOffsetLeft + VIEWPORT_PADDING
+  const maxLeft = Math.max(minLeft, viewportOffsetLeft + viewportWidth - menuWidth - VIEWPORT_PADDING)
+  const left = Math.min(maxLeft, Math.max(minLeft, rawLeft))
+
+  return {
+    top: Math.round(top),
+    left: Math.round(left),
+    maxHeight,
+    placement: shouldFlipUp ? ("top" as const) : ("bottom" as const),
+  }
+}
+
+function TableActionMenuContent({ children, className, align = "end" }: TableActionMenuContentProps) {
+  const { isRtl } = useTranslation()
+  const { open, triggerRef } = useTableActionMenu()
+  const contentRef = React.useRef<HTMLDivElement | null>(null)
+  const [coords, setCoords] = React.useState<{
+    top: number
+    left: number
+    maxHeight: number
+    placement: "top" | "bottom"
+  } | null>(null)
+
+  const updatePosition = React.useCallback(() => {
+    const triggerEl = triggerRef.current
+    const menuEl = contentRef.current
+    if (!triggerEl || !menuEl) return
+
+    const triggerRect = triggerEl.getBoundingClientRect()
+    const menuRect = menuEl.getBoundingClientRect()
+    const vv = window.visualViewport
+    const viewportWidth = vv?.width ?? window.innerWidth
+    const viewportHeight = vv?.height ?? window.innerHeight
+    const viewportOffsetTop = vv?.offsetTop ?? 0
+    const viewportOffsetLeft = vv?.offsetLeft ?? 0
+
+    // Use scrollHeight in case previous maxHeight constrained menuRect.height
+    const naturalHeight = Math.max(menuEl.scrollHeight, menuRect.height)
+    const naturalWidth = Math.max(menuEl.scrollWidth, menuRect.width)
+
+    setCoords(
+      computeMenuCoordinates({
+        triggerRect,
+        menuWidth: naturalWidth,
+        menuHeight: naturalHeight,
+        viewportWidth,
+        viewportHeight,
+        viewportOffsetTop,
+        viewportOffsetLeft,
+        align,
+        isRtl,
+      })
+    )
+  }, [triggerRef, align, isRtl])
+
+  React.useLayoutEffect(() => {
+    if (!open) {
+      setCoords(null)
+      return
+    }
+    updatePosition()
+
+    const vv = window.visualViewport
+    window.addEventListener('resize', updatePosition)
+    vv?.addEventListener('resize', updatePosition)
+    vv?.addEventListener('scroll', updatePosition)
+
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      vv?.removeEventListener('resize', updatePosition)
+      vv?.removeEventListener('scroll', updatePosition)
+    }
+  }, [open, updatePosition])
+
+  if (!open) return null
 
   return createPortal(
     <div
+      ref={contentRef}
       role="menu"
       data-table-action-menu-content
+      data-side={coords?.placement ?? "bottom"}
       className={cn(
-        "fixed z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md",
-        "animate-in fade-in-0 zoom-in-95",
+        "fixed z-50 min-w-[8rem] max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain rounded-md border bg-popover p-1 text-popover-foreground shadow-md",
+        coords ? "animate-in fade-in-0 zoom-in-95" : "pointer-events-none",
         className
       )}
-      style={{ top: position.top, left: position.left }}
+      style={{
+        top: coords ? coords.top : -9999,
+        left: coords ? coords.left : -9999,
+        maxHeight: coords ? coords.maxHeight : undefined,
+        visibility: coords ? 'visible' : 'hidden',
+      }}
     >
       {children}
     </div>,
@@ -212,7 +323,7 @@ function TableActionMenuItem({
     <button
       role="menuitem"
       className={cn(
-        "relative flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors",
+        "relative flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm whitespace-nowrap outline-none transition-colors",
         "hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground",
         variant === "destructive" && "text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive",
         className
@@ -246,4 +357,5 @@ export {
   TableActionMenuItem,
   TableActionMenuLabel,
   TableActionMenuSeparator,
+  computeMenuCoordinates,
 }

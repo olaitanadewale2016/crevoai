@@ -1095,7 +1095,7 @@ export default function Index({
             <Head title={t('Landing Page Builder')} />
             <Toaster />
 
-            <div className="h-screen flex flex-col md:flex-row bg-background text-foreground">
+            <div className="h-[var(--vvh,100dvh)] flex flex-col md:flex-row bg-background text-foreground">
                 {/* Mobile Panel Switcher */}
                 <div className="md:hidden flex items-center justify-between gap-2 px-3 py-2 border-b bg-background shrink-0">
                     <div className="flex items-center border rounded-lg overflow-hidden">

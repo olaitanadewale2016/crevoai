@@ -11,12 +11,35 @@
 @source "../**/*.{ts,tsx}";
 
 /* Global base styles - outside @layer in v4 */
+:root {
+  --vvh: 100dvh;
+  --vv-offset-top: 0px;
+  --keyboard-inset: 0px;
+}
+
 * {
   border-color: var(--border);
 }
 body {
   background-color: var(--background);
   color: var(--foreground);
+}
+
+/* Keep focused inputs clear of sticky headers and mobile onscreen keyboards */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+textarea,
+select,
+[contenteditable="true"] {
+  scroll-margin-top: 5rem;
+  scroll-margin-bottom: calc(var(--keyboard-inset, 0px) + 5rem);
+}
+
+html[data-keyboard-open="true"] [data-keyboard-pad="true"] {
+  padding-bottom: calc(1rem + var(--keyboard-inset, 0px)) !important;
+}
+
+html[data-keyboard-open="true"] [data-hide-on-keyboard="true"] {
+  display: none !important;
 }
 
 /* Custom keyframes */

@@ -784,7 +784,7 @@ export default function StockImagesView({ user, initialImages, stats: initialSta
 
         {/* AI Test Lab Modal */}
         <Dialog open={isLabOpen} onOpenChange={setIsLabOpen}>
-          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogContent className="max-w-2xl max-h-[calc(var(--vvh,100dvh)-1.5rem)] sm:max-h-[min(85dvh,calc(var(--vvh,100dvh)-2rem))] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Sparkles className="h-5 w-5 text-primary" />

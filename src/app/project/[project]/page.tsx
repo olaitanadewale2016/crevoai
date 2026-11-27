@@ -10,7 +10,12 @@ import {
 } from '@/lib/auth';
 import { getSetting, getBroadcastConfig } from '@/lib/settings';
 import { decryptJson, generateAlnumCode } from '@/lib/crypto';
-import { getAllBlockedSubdomains, isSubdomainAvailable } from '@/lib/domains';
+import {
+  areSubdomainsEnabled,
+  getAllBlockedSubdomains,
+  getEffectiveBaseDomain,
+  isSubdomainAvailable,
+} from '@/lib/domains';
 import {
   getSystemFirebaseConfig,
   getSystemAdminServiceAccount,
@@ -87,8 +92,8 @@ export default async function ProjectChatPage({
     getBroadcastConfig(),
     projectPreviewExists(project),
     getUserCurrentPlan(user),
-    getSetting<string>('domain_base_domain', process.env.APP_BASE_DOMAIN || 'example.com'),
-    getSetting<boolean>('domain_enable_subdomains', false),
+    getEffectiveBaseDomain(),
+    areSubdomainsEnabled(),
     getSetting<boolean>('domain_enable_custom_domains', false),
     UserAiSettings.findOne({ user_id: user._id }).lean(),
     Project.countDocuments({ user_id: user._id, deleted_at: null, subdomain: { $ne: null } }),

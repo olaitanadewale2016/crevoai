@@ -2,9 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { getSessionContext, getUserCurrentPlan, canUpdateProject } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
-import { getSetting } from '@/lib/settings';
+import { getEffectiveRequestHost } from '@/lib/request-origin';
 import { Project } from '@/models/Project';
-import { normalizeSubdomain, validateSubdomain, isSubdomainAvailable } from '@/lib/domains';
+import {
+  areSubdomainsEnabled,
+  getEffectiveBaseDomain,
+  normalizeSubdomain,
+  validateSubdomain,
+  isSubdomainAvailable,
+} from '@/lib/domains';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +24,7 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthenticated.' }, { status: 401 });
   }
 
-  const enabled = await getSetting<boolean>('domain_enable_subdomains', false);
+  const enabled = await areSubdomainsEnabled();
   if (!enabled) {
     return NextResponse.json({ error: 'Subdomain publishing is not enabled on this platform.' }, { status: 403 });
   }
@@ -54,7 +60,12 @@ export async function POST(
     }
   }
 
-  const body = await parseRequestBody<{ subdomain?: string; visibility?: 'public' | 'private' }>(req);
+  const body = await parseRequestBody<{
+    subdomain?: string;
+    visibility?: 'public' | 'private';
+    title?: string;
+    description?: string;
+  }>(req);
   const rawSubdomain = body.subdomain || '';
   const visibility = body.visibility === 'private' ? 'private' : 'public';
 
@@ -74,13 +85,20 @@ export async function POST(
   }
 
   project.subdomain = subdomain;
-  project.published_title = project.published_title || project.name;
+  if (typeof body.title === 'string' && body.title.trim()) {
+    project.published_title = body.title.trim();
+  } else {
+    project.published_title = project.published_title || project.name;
+  }
+  if (typeof body.description === 'string') {
+    project.published_description = body.description.trim() || null;
+  }
   project.published_visibility = visibility;
   project.is_public = visibility === 'public';
   project.published_at = project.published_at || new Date();
   await project.save();
 
-  const baseDomain = await getSetting<string>('domain_base_domain', 'example.com');
+  const baseDomain = await getEffectiveBaseDomain(getEffectiveRequestHost(req));
   const publishedUrl = `https://${subdomain}.${baseDomain}`;
 
   return NextResponse.json({

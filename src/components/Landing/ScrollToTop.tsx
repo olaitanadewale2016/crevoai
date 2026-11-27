@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect } from 'react';
 import { ArrowUp } from 'lucide-react';
@@ -26,6 +26,7 @@ export function ScrollToTop() {
 
     return (
         <Button
+            data-hide-on-keyboard="true"
             variant="outline"
             size="icon"
             onClick={scrollToTop}

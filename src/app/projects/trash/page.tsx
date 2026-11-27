@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import ProjectsIndex from '@/Pages/Projects/Index';
 import { connectDB } from '@/lib/db';
 import { getSessionContext, hasVerifiedEmail, serializeUser } from '@/lib/auth';
-import { getSetting } from '@/lib/settings';
+import { getEffectiveBaseDomain } from '@/lib/domains';
 import { getPublicAssetUrl } from '@/lib/r2';
 import { buildPaginatedResponse } from '@/lib/http';
 import { getSharedAppProps } from '@/services/shared-context';
@@ -107,7 +107,7 @@ export default async function ProjectsTrashPage({
       Project.countDocuments({ ...allOwnershipFilter, deleted_at: null }),
       Project.countDocuments({ user_id: user._id, deleted_at: null, is_starred: true }),
       Project.countDocuments({ user_id: user._id, deleted_at: { $ne: null } }),
-      getSetting<string>('domain_base_domain', process.env.APP_BASE_DOMAIN || 'example.com'),
+      getEffectiveBaseDomain(),
     ]);
 
   const safePage = Math.min(page, Math.max(1, Math.ceil(total / perPage)));

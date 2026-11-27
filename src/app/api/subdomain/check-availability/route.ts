@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseRequestBody } from '@/lib/http';
-import { getSetting } from '@/lib/settings';
-import { normalizeSubdomain, validateSubdomain, isSubdomainAvailable } from '@/lib/domains';
+import {
+  areSubdomainsEnabled,
+  normalizeSubdomain,
+  validateSubdomain,
+  isSubdomainAvailable,
+} from '@/lib/domains';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
-  const enabled = await getSetting<boolean>('domain_enable_subdomains', false);
+  const enabled = await areSubdomainsEnabled();
   if (!enabled) {
     return NextResponse.json(
       { available: false, errors: ['Subdomain publishing is not enabled on this platform.'] },

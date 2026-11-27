@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect, useCallback } from 'react';
 import { router } from '@/lib/inertia-compat';
@@ -74,6 +74,14 @@ export default function PublishModal({
 
     const [availabilityStatus, setAvailabilityStatus] = useState<AvailabilityStatus>('idle');
     const [availabilityErrors, setAvailabilityErrors] = useState<string[]>([]);
+
+    useEffect(() => {
+        if (open) {
+            setSubdomain(project.subdomain || suggestedSubdomain);
+            setVisibility((project.published_visibility as 'public' | 'private') || 'public');
+            setError(null);
+        }
+    }, [open, project.subdomain, project.published_visibility, suggestedSubdomain]);
 
     const isAlreadyPublished = project.subdomain !== null;
     const canPublish = canUseSubdomains && (isAlreadyPublished || canCreateMoreSubdomains);

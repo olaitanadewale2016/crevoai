@@ -51,6 +51,7 @@ function DialogContent({
   children,
   showClose = true,
   overlayClassName,
+  style,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & { showClose?: boolean; overlayClassName?: string }) {
   return (
@@ -59,9 +60,13 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] sm:max-h-[88vh] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 outline-none sm:max-w-lg overflow-y-auto",
+          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] max-h-[calc(var(--vvh,100dvh)-1.5rem)] sm:max-h-[min(88dvh,calc(var(--vvh,100dvh)-2rem))] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 outline-none sm:max-w-lg overflow-y-auto overscroll-contain",
           className
         )}
+        style={{
+          top: "calc(var(--vv-offset-top, 0px) + (var(--vvh, 100dvh) / 2))",
+          ...style,
+        }}
         {...props}
       >
         {children}

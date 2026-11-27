@@ -3,6 +3,83 @@ import { getSetting } from './settings';
 import { connectDB } from './db';
 import { Project } from '@/models/Project';
 
+export function normalizeBaseDomain(input?: string | null): string {
+  let d = (input || '').trim().toLowerCase();
+  d = d.replace(/^https?:\/\//, '');
+  d = d.split('/')[0] || '';
+  d = d.split(':')[0] || '';
+  d = d.replace(/\.+$/, '');
+  d = d.replace(/^www\./, '');
+  return d;
+}
+
+export function isSubdomainCapableHost(host?: string | null): boolean {
+  const norm = normalizeBaseDomain(host);
+  if (!norm || !norm.includes('.')) return false;
+  if (
+    norm === 'localhost' ||
+    norm === 'example.com' ||
+    norm === 'your-domain.vercel.app' ||
+    norm.endsWith('.localhost') ||
+    norm.endsWith('.local') ||
+    norm.endsWith('.vercel.app') ||
+    /^\d{1,3}(\.\d{1,3}){3}$/.test(norm) ||
+    norm.includes(':')
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function extractSubdomainFromHost(
+  host?: string | null,
+  baseDomain?: string | null
+): string | null {
+  const cleanHost = (host || '').split(':')[0].trim().toLowerCase().replace(/\.+$/, '');
+  const cleanBase = normalizeBaseDomain(baseDomain);
+  if (!cleanHost || !cleanBase || !cleanHost.endsWith(`.${cleanBase}`)) {
+    return null;
+  }
+  const sub = cleanHost.slice(0, -(cleanBase.length + 1));
+  if (!sub || sub === 'www' || sub.includes('.')) {
+    return null;
+  }
+  return sub;
+}
+
+export async function areSubdomainsEnabled(): Promise<boolean> {
+  const val = await getSetting<boolean>('domain_enable_subdomains', true);
+  return val !== false;
+}
+
+export async function getEffectiveBaseDomain(requestHost?: string | null): Promise<string> {
+  const configured = normalizeBaseDomain(
+    await getSetting<string>('domain_base_domain', '')
+  );
+  if (configured && configured !== 'example.com') {
+    return configured;
+  }
+
+  const envBase = normalizeBaseDomain(
+    process.env.APP_BASE_DOMAIN || process.env.NEXT_PUBLIC_APP_BASE_DOMAIN || ''
+  );
+  if (isSubdomainCapableHost(envBase)) {
+    return envBase;
+  }
+
+  const appUrlBase = normalizeBaseDomain(process.env.APP_URL || '');
+  if (isSubdomainCapableHost(appUrlBase)) {
+    return appUrlBase;
+  }
+
+  const reqBase = normalizeBaseDomain(requestHost);
+  if (isSubdomainCapableHost(reqBase)) {
+    return reqBase;
+  }
+
+  return configured || 'example.com';
+}
+
 export const RESERVED_SUBDOMAINS = [
   'www', 'api', 'app', 'admin', 'dashboard', 'mail', 'smtp', 'ftp',
   'blog', 'shop', 'store', 'help', 'support', 'docs', 'status', 'cdn',

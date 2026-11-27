@@ -36,9 +36,10 @@ const RESERVED_SUBDOMAINS = new Set([
   'preview', 'beta', 'echo',
 ]);
 
-function normalizeHost(hostHeader: string | null): string {
+function normalizeHost(hostHeader: string | null | undefined): string {
   if (!hostHeader) return '';
-  return hostHeader.split(':')[0].trim().toLowerCase();
+  const first = hostHeader.split(',')[0] || '';
+  return first.split(':')[0].trim().toLowerCase().replace(/\.+$/, '');
 }
 
 function isLocalOrIp(host: string): boolean {
@@ -55,14 +56,11 @@ function isLocalOrIp(host: string): boolean {
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Skip Next.js internals and direct asset / API / preview endpoints
+  // Always pass through Next.js internals, API routes, uploaded project files, and shared storage assets
   if (
     pathname.startsWith('/_next/') ||
-    pathname === '/favicon.ico' ||
-    pathname === '/robots.txt' ||
     pathname.startsWith('/storage/') ||
     pathname.startsWith('/files/') ||
-    pathname.startsWith('/preview/') ||
     pathname.startsWith('/api/')
   ) {
     return NextResponse.next();
@@ -70,37 +68,75 @@ export function proxy(request: NextRequest) {
 
   // 1. Subdomain & Custom Domain interception
   const customDomainHeader = normalizeHost(request.headers.get('x-custom-domain'));
-  const host = customDomainHeader || normalizeHost(request.headers.get('host'));
+  const forwardedHost = normalizeHost(request.headers.get('x-forwarded-host'));
+  const rawHost = normalizeHost(request.headers.get('host'));
+  const host = customDomainHeader || forwardedHost || rawHost;
+
   const appUrlHost = normalizeHost(
     (process.env.APP_URL || '').replace(/^https?:\/\//, '').split('/')[0] || ''
   );
   const bareAppHost = appUrlHost.replace(/^www\./, '');
+  const envBaseDomain = normalizeHost(
+    (process.env.APP_BASE_DOMAIN || process.env.NEXT_PUBLIC_APP_BASE_DOMAIN || '')
+      .replace(/^https?:\/\//, '')
+      .split('/')[0] || ''
+  ).replace(/^www\./, '');
+
+  const candidateBases = Array.from(
+    new Set(
+      [bareAppHost, envBaseDomain, 'crevoai.website'].filter(
+        (b) =>
+          b &&
+          b.includes('.') &&
+          !isLocalOrIp(b) &&
+          !b.endsWith('.vercel.app') &&
+          b !== 'your-domain.vercel.app'
+      )
+    )
+  );
 
   const isMainHost =
     !host ||
     isLocalOrIp(host) ||
+    (appUrlHost && host === appUrlHost) ||
     (bareAppHost && (host === bareAppHost || host === `www.${bareAppHost}`)) ||
-    host === 'crevoai.website' ||
-    host === 'www.crevoai.website' ||
+    candidateBases.some((b) => host === b || host === `www.${b}`) ||
     host === 'crevoai-web.vercel.app' ||
     host === 'crevoai.vercel.app' ||
     (process.env.VERCEL_URL && host === normalizeHost(process.env.VERCEL_URL)) ||
-    (process.env.VERCEL_PROJECT_PRODUCTION_URL && host === normalizeHost(process.env.VERCEL_PROJECT_PRODUCTION_URL));
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL &&
+      host === normalizeHost(process.env.VERCEL_PROJECT_PRODUCTION_URL));
+
+  if (
+    isMainHost &&
+    (pathname === '/favicon.ico' ||
+      pathname === '/robots.txt' ||
+      pathname.startsWith('/preview/'))
+  ) {
+    return NextResponse.next();
+  }
 
   if (!isMainHost) {
+    const matchingBase = candidateBases.find((base) => host.endsWith(`.${base}`));
+
     // Subdomain of main app domain
-    if (host.endsWith(`.${appUrlHost}`)) {
-      const sub = host.slice(0, -(appUrlHost.length + 1));
+    if (matchingBase) {
+      const sub = host.slice(0, -(matchingBase.length + 1));
       if (sub && !sub.includes('.')) {
         if (RESERVED_SUBDOMAINS.has(sub)) {
           if (pathname === '/') {
-            const proto = request.nextUrl.protocol || 'https:';
-            return NextResponse.redirect(`${proto}//${appUrlHost}/`);
+            const proto =
+              request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim() ||
+              request.nextUrl.protocol.replace(':', '') ||
+              'https';
+            const targetHost = appUrlHost || matchingBase;
+            return NextResponse.redirect(`${proto}://${targetHost}/`);
           }
         } else {
           const rewriteUrl = request.nextUrl.clone();
           rewriteUrl.pathname = `/api/published-site${pathname === '/' ? '' : pathname}`;
           const headers = new Headers(request.headers);
+          headers.set('x-crevo-host', host);
           headers.set('x-crevo-host-type', 'subdomain');
           headers.set('x-crevo-subdomain', sub);
           headers.set('x-webby-host-type', 'subdomain');
@@ -109,10 +145,11 @@ export function proxy(request: NextRequest) {
         }
       }
     } else {
-      // External custom domain
+      // External custom domain (or platform subdomain when admin base domain differs from APP_URL)
       const rewriteUrl = request.nextUrl.clone();
       rewriteUrl.pathname = `/api/published-site${pathname === '/' ? '' : pathname}`;
       const headers = new Headers(request.headers);
+      headers.set('x-crevo-host', host);
       headers.set('x-crevo-host-type', 'custom_domain');
       headers.set('x-crevo-custom-domain', host);
       headers.set('x-webby-host-type', 'custom_domain');

@@ -1003,12 +1003,14 @@ function escapeHtmlAttr(str: string): string {
 export async function buildDynamicHtml(
   rawHtml: string,
   project: IProject,
-  mode: 'preview' | 'app' | 'published'
+  mode: 'preview' | 'app' | 'published',
+  requestOrigin?: string
 ): Promise<string> {
   const rawAppUrl = process.env.APP_URL || '';
   const appUrl = (
+    (mode === 'published' && requestOrigin ? requestOrigin : '') ||
     (rawAppUrl && !rawAppUrl.includes('crevoai.vercel.app') ? rawAppUrl : '') ||
-    'https://crevoai-web.vercel.app'
+    'https://www.crevoai.website'
   ).replace(/\/+$/, '');
   const baseHref =
     mode === 'preview' ? `/preview/${project._id}/` : mode === 'app' ? `/app/${project._id}/` : '/';
@@ -1097,8 +1099,9 @@ export async function serveBuiltSiteFromR2(params: {
   project: IProject;
   pathSegments: string[];
   mode: 'preview' | 'app' | 'published';
+  requestOrigin?: string;
 }): Promise<Response> {
-  const { project, mode } = params;
+  const { project, mode, requestOrigin } = params;
 
   let relPath = (params.pathSegments || []).join('/').replace(/^\/+/, '');
   // Guard traversal
@@ -1212,43 +1215,48 @@ export async function serveBuiltSiteFromR2(params: {
     }
   }
 
+  const canSpaFallback = !hasExtension || relPath.endsWith('/index.html');
+
   // Directory index fallback or SPA fallback to root index.html in RAM/R2
-  if (!buf && prefix && !hasExtension) {
-    const dirIndexKey = `${prefix}/${relPath}/index.html`;
-    cached = getCachedPreviewAsset(dirIndexKey);
-    if (cached) {
-      buf = cached.buffer;
-      targetKey = dirIndexKey;
-      contentType = cached.contentType;
-    } else {
-      let dirIndex: Buffer | null = null;
-      try {
-        dirIndex = await r2GetBuffer('private', dirIndexKey);
-      } catch {
-        dirIndex = null;
-      }
-      if (dirIndex) {
-        buf = dirIndex;
+  if (!buf && prefix && canSpaFallback) {
+    if (!hasExtension) {
+      const dirIndexKey = `${prefix}/${relPath}/index.html`;
+      cached = getCachedPreviewAsset(dirIndexKey);
+      if (cached) {
+        buf = cached.buffer;
         targetKey = dirIndexKey;
-        contentType = 'text/html; charset=utf-8';
-        cachePreviewAsset(dirIndexKey, dirIndex, contentType);
+        contentType = cached.contentType;
       } else {
-        const rootIndexKey = `${prefix}/index.html`;
-        cached = getCachedPreviewAsset(rootIndexKey);
-        if (cached) {
-          buf = cached.buffer;
-          targetKey = rootIndexKey;
-          contentType = cached.contentType;
-        } else {
-          try {
-            buf = await r2GetBuffer('private', rootIndexKey);
-          } catch {
-            buf = null;
-          }
-          targetKey = rootIndexKey;
-          contentType = 'text/html; charset=utf-8';
-          if (buf) cachePreviewAsset(rootIndexKey, buf, contentType);
+        let dirIndex: Buffer | null = null;
+        try {
+          dirIndex = await r2GetBuffer('private', dirIndexKey);
+        } catch {
+          dirIndex = null;
         }
+        if (dirIndex) {
+          buf = dirIndex;
+          targetKey = dirIndexKey;
+          contentType = 'text/html; charset=utf-8';
+          cachePreviewAsset(dirIndexKey, dirIndex, contentType);
+        }
+      }
+    }
+    if (!buf && relPath !== 'index.html') {
+      const rootIndexKey = `${prefix}/index.html`;
+      cached = getCachedPreviewAsset(rootIndexKey);
+      if (cached) {
+        buf = cached.buffer;
+        targetKey = rootIndexKey;
+        contentType = cached.contentType;
+      } else {
+        try {
+          buf = await r2GetBuffer('private', rootIndexKey);
+        } catch {
+          buf = null;
+        }
+        targetKey = rootIndexKey;
+        contentType = 'text/html; charset=utf-8';
+        if (buf) cachePreviewAsset(rootIndexKey, buf, contentType);
       }
     }
   }
@@ -1314,7 +1322,7 @@ export async function serveBuiltSiteFromR2(params: {
                 });
               }
 
-              const finalHtml = await buildDynamicHtml(rawHtml, project, mode);
+              const finalHtml = await buildDynamicHtml(rawHtml, project, mode, requestOrigin);
               return new Response(finalHtml, {
                 status: 200,
                 headers: {
@@ -1420,7 +1428,7 @@ export async function serveBuiltSiteFromR2(params: {
         : 'no-cache, no-store, must-revalidate';
 
   if (isHtml) {
-    const finalHtml = await buildDynamicHtml(buf.toString('utf8'), project, mode);
+    const finalHtml = await buildDynamicHtml(buf.toString('utf8'), project, mode, requestOrigin);
     return new Response(finalHtml, {
       status: 200,
       headers: {

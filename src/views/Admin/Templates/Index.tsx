@@ -421,7 +421,7 @@ export default function Index(directProps?: Partial<TemplatesPageProps>) {
 
             {/* Create Modal */}
             <Dialog open={createModalOpen} onOpenChange={setCreateModalOpen}>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                <DialogContent className="max-w-2xl max-h-[calc(var(--vvh,100dvh)-1.5rem)] sm:max-h-[min(90dvh,calc(var(--vvh,100dvh)-2rem))] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>{t('Add Template')}</DialogTitle>
                         <DialogDescription>
@@ -563,7 +563,7 @@ export default function Index(directProps?: Partial<TemplatesPageProps>) {
 
             {/* Edit Modal */}
             <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                <DialogContent className="max-w-2xl max-h-[calc(var(--vvh,100dvh)-1.5rem)] sm:max-h-[min(90dvh,calc(var(--vvh,100dvh)-2rem))] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>{t('Edit Template')}</DialogTitle>
                         <DialogDescription>

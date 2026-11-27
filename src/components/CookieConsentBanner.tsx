@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { route } from '@/lib/route';
 import { useState, useEffect, useMemo } from 'react';
@@ -127,7 +127,7 @@ export default function CookieConsentBanner() {
     }
 
     return (
-        <div className="fixed bottom-0 left-0 right-0 z-50">
+        <div data-hide-on-keyboard="true" className="fixed bottom-0 left-0 right-0 z-50">
             {showPreferences ? (
                 <Card className="mx-4 sm:mx-auto max-w-2xl mb-4">
                     <CardHeader>

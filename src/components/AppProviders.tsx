@@ -7,6 +7,7 @@ import { AppPageProvider, SharedAppProps } from '@/lib/inertia-compat';
 import { ReCaptchaProvider } from '@/components/Auth/ReCaptchaProvider';
 import ImpersonationBanner from '@/components/ImpersonationBanner';
 import CookieConsentBanner from '@/components/CookieConsentBanner';
+import { ViewportKeyboardObserver } from '@/components/ViewportKeyboardObserver';
 
 export function AppProviders({
   initialProps,
@@ -28,6 +29,7 @@ export function AppProviders({
         <AppPageProvider initialProps={initialProps}>
           <LanguageProvider>
             <ReCaptchaProvider>
+              <ViewportKeyboardObserver />
               <ImpersonationBanner />
               {children}
               <CookieConsentBanner />

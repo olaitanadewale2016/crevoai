@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import {
     Dialog,
@@ -89,7 +89,7 @@ export function FilePreviewModal({ file, open, onClose }: FilePreviewModalProps)
 
     return (
         <Dialog open={open} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <DialogContent className="max-w-4xl w-full max-h-[calc(var(--vvh,100dvh)-1.5rem)] sm:max-h-[min(90dvh,calc(var(--vvh,100dvh)-2rem))] overflow-hidden flex flex-col">
                 <DialogHeader>
                     <DialogTitle className="text-lg truncate">
                         {file.original_filename}

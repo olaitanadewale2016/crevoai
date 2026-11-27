@@ -234,7 +234,7 @@ export default function Create({
                 <SidebarProvider>
                     <AppSidebar user={user} />
                     <SidebarInset className="bg-transparent">
-                        <div className="relative min-h-screen bg-background">
+                        <div data-keyboard-pad="true" className="relative min-h-[var(--vvh,100dvh)] bg-background">
                             <GradientBackground />
 
                             {/* Header with sidebar trigger and user profile */}
@@ -287,7 +287,7 @@ export default function Create({
                             </header>
 
                             {/* Hero Section - Full viewport height */}
-                            <div className="relative flex flex-col items-center justify-center min-h-[calc(100vh-4rem)] px-4 md:px-8">
+                            <div className="relative flex flex-col items-center justify-center min-h-[calc(var(--vvh,100dvh)-4rem)] px-4 py-6 md:px-8">
                                 {/* Greeting with scramble animation */}
                                 <div className="prose prose-lg dark:prose-invert text-center mb-8">
                                     <h1

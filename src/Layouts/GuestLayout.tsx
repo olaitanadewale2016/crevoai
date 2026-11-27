@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { Link } from '@/lib/inertia-compat';
 import { PropsWithChildren } from 'react';
@@ -11,7 +11,7 @@ import { Toaster } from '@/components/ui/sonner';
 
 export default function Guest({ children }: PropsWithChildren) {
     return (
-        <div className="relative min-h-screen bg-background flex flex-col items-center justify-center p-4">
+        <div data-keyboard-pad="true" className="relative min-h-[var(--vvh,100dvh)] bg-background flex flex-col items-center justify-center p-4">
             <GradientBackground />
 
             {/* Language and Theme Toggle */}
