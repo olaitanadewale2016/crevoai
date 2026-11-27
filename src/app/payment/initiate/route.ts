@@ -11,7 +11,9 @@ import {
   GATEWAY_REGISTRY,
   calculateNextRenewalDate,
   getPluginConfigDecrypted,
+  isPayPalSandbox,
   resolveAppUrl,
+  trimmedString,
 } from '@/services/payment-gateways';
 import { refillUserBuildCredits } from '@/services/credits';
 import { redeemReferralCreditsForBilling } from '@/services/referrals';
@@ -292,6 +294,20 @@ export async function POST(req: NextRequest) {
     if (def.supportedCurrencies.length > 0 && !def.supportedCurrencies.includes(effectiveCurrency)) {
       return validationError({
         gateway: `${def.name} does not support ${effectiveCurrency}.`,
+      });
+    }
+
+    if (gateway === 'paypal' && toBool(body.paypal_sdk, false)) {
+      return NextResponse.json({
+        paypalCheckout: {
+          client_id: trimmedString(cfg.client_id),
+          sandbox: isPayPalSandbox(cfg),
+          currency,
+          amount: planPrice,
+          plan_id: String(plan._id),
+          plan_name: plan.name,
+          billing_period: plan.billing_period,
+        },
       });
     }
 

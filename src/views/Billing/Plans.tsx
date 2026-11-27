@@ -19,7 +19,8 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { Check, X, Star, ArrowLeft, Loader2, CreditCard, Gift, Copy, Building2, Clock } from 'lucide-react';
 import { PaymentGatewayIcon } from '@/components/PaymentGatewayIcon';
-import type { Plan, PaymentGateway } from '@/types/billing';
+import { PayPalSmartCheckout } from '@/components/PayPalSmartCheckout';
+import type { Plan, PaymentGateway, PayPalCheckoutSession } from '@/types/billing';
 import type { PageProps } from '@/types';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { toast } from 'sonner';
@@ -54,6 +55,7 @@ export default function Plans({
     const [isGatewayModalOpen, setIsGatewayModalOpen] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
     const [processingGateway, setProcessingGateway] = useState<string | null>(null);
+    const [paypalSession, setPaypalSession] = useState<PayPalCheckoutSession | null>(null);
     const [useReferralCredits, setUseReferralCredits] = useState(false);
     const [bankTransferData, setBankTransferData] = useState<BankTransferData | null>(null);
     const [isBankTransferModalOpen, setIsBankTransferModalOpen] = useState(false);
@@ -70,6 +72,7 @@ export default function Plans({
             setIsGatewayModalOpen(false);
             setIsProcessing(false);
             setProcessingGateway(null);
+            setPaypalSession(null);
         }
     }, [flash?.bankTransfer]);
 
@@ -127,6 +130,7 @@ export default function Plans({
         setSelectedPlan(plan);
         setUseReferralCredits(false); // Reset checkbox
         setProcessingGateway(null);
+        setPaypalSession(null);
         setIsGatewayModalOpen(true);
     };
 
@@ -182,10 +186,15 @@ export default function Plans({
             {
                 plan_id: selectedPlan.id,
                 gateway: gateway.slug,
+                ...(gateway.slug === 'paypal' ? { paypal_sdk: true } : {}),
             },
             {
-                onSuccess: () => {
+                onSuccess: (page) => {
                     setProcessingGateway(null);
+                    const checkoutData = page?.props?.paypalCheckout as PayPalCheckoutSession | undefined;
+                    if (checkoutData?.client_id) {
+                        setPaypalSession(checkoutData);
+                    }
                 },
                 onError: (errors) => {
                     setProcessingGateway(null);
@@ -411,6 +420,7 @@ export default function Plans({
                     setIsGatewayModalOpen(open);
                     if (!open) {
                         setProcessingGateway(null);
+                        setPaypalSession(null);
                     }
                 }}
             >
@@ -418,14 +428,24 @@ export default function Plans({
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <CreditCard className="h-5 w-5" />
-                            {t('Select Payment Method')}
+                            {paypalSession ? t('Pay with PayPal or Card') : t('Select Payment Method')}
                         </DialogTitle>
                         <DialogDescription>
-                            {t("Choose how you'd like to pay for :plan", { plan: selectedPlan?.name ?? '' })}
+                            {paypalSession
+                                ? t('Pay securely using your PayPal account or any Debit / Credit Card.')
+                                : t("Choose how you'd like to pay for :plan", { plan: selectedPlan?.name ?? '' })}
                         </DialogDescription>
                     </DialogHeader>
 
-                    {selectedPlan && (
+                    {selectedPlan && paypalSession ? (
+                        <PayPalSmartCheckout
+                            session={paypalSession}
+                            formattedAmount={formatCurrency(paypalSession.amount, paypalSession.currency)}
+                            billingPeriodLabel={billingPeriodLabels[paypalSession.billing_period] || ''}
+                            onBack={() => setPaypalSession(null)}
+                            disabled={isPaymentBusy}
+                        />
+                    ) : selectedPlan ? (
                         <div className="space-y-4 w-full overflow-hidden">
                             {/* Selected Plan Summary */}
                             <div className="p-4 bg-muted rounded-lg overflow-hidden">
@@ -558,7 +578,7 @@ export default function Plans({
                                 </div>
                             )}
                         </div>
-                    )}
+                    ) : null}
                 </DialogContent>
             </Dialog>
 

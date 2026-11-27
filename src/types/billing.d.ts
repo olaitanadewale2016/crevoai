@@ -176,6 +176,16 @@ export interface PaymentGateway {
     exchange_rate?: number;
 }
 
+export interface PayPalCheckoutSession {
+    client_id: string;
+    sandbox: boolean;
+    currency: string;
+    amount: number;
+    plan_id: string;
+    plan_name: string;
+    billing_period: 'monthly' | 'yearly' | 'lifetime';
+}
+
 // Stats Types
 export interface SubscriptionStats {
     total: number;

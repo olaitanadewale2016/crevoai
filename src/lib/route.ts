@@ -124,6 +124,8 @@ const ROUTE_TEMPLATES: Record<string, string> = {
   'payment.callback': '/payment-gateways/callback',
   'payment.initiate': '/payment/initiate',
   'payment.gateways': '/payment/gateways',
+  'payment.paypal.create': '/payment/paypal/create',
+  'payment.paypal.complete': '/payment/paypal/complete',
   'referral.track': '/r/:codeOrSlug',
   'referral.generate-code': '/referral/generate-code',
   'referral.update-slug': '/referral/update-slug',
