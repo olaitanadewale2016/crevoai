@@ -313,6 +313,13 @@ async function renewSubscriptionForUser(params: {
   metadata?: Record<string, unknown>;
 }) {
   await connectDB();
+  if (params.externalTransactionId) {
+    const alreadyRecorded = await Transaction.exists({
+      external_transaction_id: params.externalTransactionId,
+      status: 'completed',
+    });
+    if (alreadyRecorded) return;
+  }
   const plan = await Plan.findById(params.sub.plan_id).lean();
   const renewalAt =
     params.nextRenewalAt ||
@@ -1506,6 +1513,13 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
         placeholder: '1600',
         help: 'Multiplier applied when Charge Currency Override differs from Site Currency (e.g. 1600 means 1 USD = 1600 NGN).',
       },
+      {
+        name: 'card_only_subscriptions',
+        label: 'Paystack Native Plans (Card-Only Checkout)',
+        type: 'toggle',
+        default: false,
+        help: 'Keep OFF to show all enabled Paystack payment options (Card, Bank Transfer, OPay / Bank, USSD, QR). Reusable card payments still auto-renew via cron. Turn ON only if you want Paystack-managed Card-only plans.',
+      },
     ],
     isConfigured: (cfg) => Boolean(trimmedString(cfg?.secret_key) && trimmedString(cfg?.public_key)),
     validateConfig: async (cfg) => {
@@ -1558,9 +1572,13 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
       }
 
       const chargeSmallest = toSmallestUnit(charge.amount, charge.currency);
+      const useNativePlan =
+        isFlagEnabled(cfg?.card_only_subscriptions, false) && plan.billing_period !== 'lifetime';
       let paystackPlanCode: string | null = null;
 
-      if (plan.billing_period !== 'lifetime') {
+      // Attaching a native Paystack plan forces Card-only checkout and hides Transfer/OPay/USSD.
+      // Only attach it when Card-only native plans are explicitly enabled by the admin.
+      if (useNativePlan) {
         const keyTag = sha256Hex(secretKey).slice(0, 12);
         const planKey = `paystack:plan:${keyTag}:${plan._id}:${charge.currency}:${chargeSmallest}:${plan.billing_period}`;
         paystackPlanCode = await cacheRemember(planKey, 30 * 86400, async () => {
@@ -1593,6 +1611,7 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
         metadata: {
           user_id: String(user._id),
           plan_id: String(plan._id),
+          billing_period: plan.billing_period,
           site_currency: currency.toUpperCase(),
           site_amount: Number(plan.price ?? 0),
           charge_currency: charge.currency,
@@ -1667,8 +1686,13 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
         metadata: {
           paystack_reference: txData.reference,
           paystack_customer_code: txData.customer?.customer_code ?? null,
+          paystack_customer_email: txData.customer?.email ?? null,
           paystack_authorization_code: txData.authorization?.authorization_code ?? null,
+          paystack_reusable: Boolean(txData.authorization?.reusable),
+          paystack_channel: txData.channel || txData.authorization?.channel || null,
           paystack_plan_code: txData.plan_object?.plan_code ?? meta.plan_code ?? null,
+          site_currency: meta.site_currency ?? null,
+          site_amount: subAmount,
           charge_currency: paidCurr,
           charge_amount: paidAmt,
         },
@@ -1682,18 +1706,24 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
           currency: paidCurr,
           paymentMethod: 'Paystack',
           externalTransactionId: String(txData.id || txData.reference),
-          metadata: { paystack_reference: txData.reference, site_amount: subAmount, site_currency: meta.site_currency },
+          metadata: {
+            paystack_reference: txData.reference,
+            paystack_channel: txData.channel || txData.authorization?.channel || null,
+            site_amount: subAmount,
+            site_currency: meta.site_currency,
+          },
         });
       }
 
       return { status: 'completed', subscriptionId: sub ? String(sub._id) : undefined, planName: plan?.name };
     },
     handleWebhook: async (req, rawBody, cfg) => {
-      if (!cfg.secret_key) {
+      const secretKey = trimmedString(cfg.secret_key);
+      if (!secretKey) {
         return { status: 400, body: { error: 'Paystack secret key not configured' } };
       }
       const sig = req.headers.get('x-paystack-signature') || '';
-      const hash = hmacSha512Hex(cfg.secret_key, rawBody);
+      const hash = hmacSha512Hex(secretKey, rawBody);
       if (!sig || !timingSafeEqualStr(hash, sig)) {
         return { status: 400, body: { error: 'Invalid Paystack webhook signature' } };
       }
@@ -1706,7 +1736,19 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
         const paidCurr = String(d.currency || meta.charge_currency || 'NGN').toUpperCase();
         const paidAmt = fromSmallestUnit(Number(d.amount || 0), paidCurr);
 
-        if (meta.user_id && meta.plan_id) {
+        if (meta.is_renewal && meta.subscription_id) {
+          const existingSub = await Subscription.findById(meta.subscription_id).lean();
+          if (existingSub) {
+            await renewSubscriptionForUser({
+              sub: existingSub,
+              amount: paidAmt,
+              currency: paidCurr,
+              paymentMethod: 'Paystack',
+              externalTransactionId: String(d.id || d.reference),
+              metadata: { paystack_reference: d.reference },
+            });
+          }
+        } else if (meta.user_id && meta.plan_id) {
           const plan = await Plan.findById(meta.plan_id).lean();
           const subAmount = Number(meta.site_amount ?? plan?.price ?? paidAmt);
           const sub = await activateSubscriptionForUser({
@@ -1718,8 +1760,13 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
             metadata: {
               paystack_reference: d.reference,
               paystack_customer_code: d.customer?.customer_code ?? null,
+              paystack_customer_email: d.customer?.email ?? null,
               paystack_authorization_code: d.authorization?.authorization_code ?? null,
+              paystack_reusable: Boolean(d.authorization?.reusable),
+              paystack_channel: d.channel || d.authorization?.channel || null,
               paystack_plan_code: d.plan?.plan_code ?? meta.plan_code ?? null,
+              site_currency: meta.site_currency ?? null,
+              site_amount: subAmount,
               charge_currency: paidCurr,
               charge_amount: paidAmt,
             },
@@ -1732,11 +1779,16 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
               currency: paidCurr,
               paymentMethod: 'Paystack',
               externalTransactionId: String(d.id || d.reference),
-              metadata: { paystack_reference: d.reference },
+              metadata: {
+                paystack_reference: d.reference,
+                paystack_channel: d.channel || d.authorization?.channel || null,
+                site_amount: subAmount,
+                site_currency: meta.site_currency,
+              },
             });
           }
         } else if (d.customer?.customer_code || d.plan?.plan_code) {
-          // Recurring subscription renewal charge from Paystack
+          // Recurring subscription renewal charge from Paystack native plan
           const existingSub = await Subscription.findOne({
             payment_method: 'Paystack',
             status: 'active',
@@ -1798,6 +1850,63 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
       }
 
       return { status: 200, body: { received: true } };
+    },
+    createRenewalPayment: async (sub, paymentMethodId, amount, currency, cfg) => {
+      const secretKey = trimmedString(cfg.secret_key);
+      if (!secretKey) return { ok: false, error: 'Paystack secret key missing.' };
+      const meta = (sub.metadata && typeof sub.metadata === 'object' ? sub.metadata : {}) as Record<string, any>;
+      const charge = resolvePaystackChargeParams(amount, currency, cfg);
+      const smallestAmount = toSmallestUnit(charge.amount, charge.currency);
+      let customerEmail =
+        typeof meta.paystack_customer_email === 'string' ? meta.paystack_customer_email.trim() : '';
+      if (!customerEmail) {
+        const user = await User.findById(sub.user_id).select('email').lean();
+        customerEmail = user?.email || '';
+      }
+      if (!customerEmail) return { ok: false, error: 'Customer email missing for Paystack renewal.' };
+
+      const reference = `CRV-REN-${generateAlnumCode(10, true)}`;
+      const res = await fetch('https://api.paystack.co/transaction/charge_authorization', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${secretKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          authorization_code: paymentMethodId,
+          email: customerEmail,
+          amount: smallestAmount,
+          currency: charge.currency,
+          reference,
+          metadata: {
+            user_id: String(sub.user_id),
+            plan_id: String(sub.plan_id),
+            subscription_id: String(sub._id),
+            is_renewal: true,
+            site_currency: currency.toUpperCase(),
+            site_amount: amount,
+            charge_currency: charge.currency,
+            charge_amount: charge.amount,
+          },
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const data = (await res.json().catch(() => null)) as {
+        status?: boolean;
+        message?: string;
+        data?: { status?: string; id?: number | string; reference?: string };
+      } | null;
+      if (!res.ok || !data?.status) {
+        return { ok: false, error: data?.message || `Paystack renewal failed (${res.status})` };
+      }
+      if (data.data?.status === 'success') {
+        await renewSubscriptionForUser({
+          sub,
+          amount: charge.amount,
+          currency: charge.currency,
+          paymentMethod: 'Paystack',
+          externalTransactionId: String(data.data.id || data.data.reference || reference),
+          metadata: { paystack_reference: data.data.reference || reference },
+        });
+      }
+      return { ok: true };
     },
     cancelSubscription: async (sub, cfg) => {
       const secretKey = trimmedString(cfg.secret_key);

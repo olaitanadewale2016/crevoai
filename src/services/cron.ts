@@ -82,6 +82,62 @@ export const CRON_JOBS: CronJobDefinition[] = [
     },
   },
   {
+    name: 'Process Paystack Renewals',
+    class: 'ProcessPaystackRenewals',
+    command: 'paystack:process-renewals',
+    schedule: 'Daily at 00:45',
+    cron: '45 0 * * *',
+    description: 'Process automatic renewals for Paystack subscriptions with reusable card authorizations.',
+    isVisible: async () => Boolean(await Plugin.exists({ slug: 'paystack', status: 'active' })),
+    handler: async () => {
+      const plugin = await Plugin.findOne({ slug: 'paystack', status: 'active' }).lean();
+      if (!plugin) return 'Paystack plugin not active.';
+      const cfg = getPluginConfigDecrypted(plugin);
+      const def = GATEWAY_REGISTRY.paystack;
+      const tomorrow = new Date(Date.now() + 86400 * 1000);
+      const due = await Subscription.find({
+        status: 'active',
+        payment_method: 'Paystack',
+        renewal_at: { $lte: tomorrow },
+        'metadata.paystack_reusable': true,
+        'metadata.paystack_authorization_code': { $type: 'string', $ne: '' },
+        $or: [
+          { 'metadata.paystack_plan_code': null },
+          { 'metadata.paystack_plan_code': { $exists: false } },
+        ],
+      }).lean();
+
+      let processed = 0;
+      const siteCurrency = (await getSetting<string>('default_currency', 'USD')).toUpperCase();
+      for (const sub of due) {
+        const plan = await Plan.findById(sub.plan_id).select('billing_period price').lean();
+        if (!plan || plan.billing_period === 'lifetime') continue;
+        const authCode = sub.metadata?.paystack_authorization_code as string | undefined;
+        if (!authCode || !def.createRenewalPayment) continue;
+        // Bump +3 days pre-call to avoid premature expiry by ManageSubscriptions
+        await Subscription.updateOne(
+          { _id: sub._id },
+          { $set: { renewal_at: new Date(Date.now() + 3 * 86400 * 1000) } }
+        );
+        const subCurr =
+          typeof sub.metadata?.site_currency === 'string' && sub.metadata.site_currency
+            ? String(sub.metadata.site_currency).toUpperCase()
+            : siteCurrency;
+        const res = await def.createRenewalPayment(sub, authCode, sub.amount, subCurr, cfg);
+        if (res.ok) {
+          processed++;
+        } else {
+          // Backoff +4h
+          await Subscription.updateOne(
+            { _id: sub._id },
+            { $set: { renewal_at: new Date(Date.now() + 4 * 3600 * 1000) } }
+          );
+        }
+      }
+      return `Processed ${processed}/${due.length} Paystack renewals.`;
+    },
+  },
+  {
     name: 'Manage Subscriptions',
     class: 'ManageSubscriptions',
     command: 'subscriptions:manage',
