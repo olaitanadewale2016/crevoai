@@ -184,6 +184,7 @@ export interface PayPalCheckoutSession {
     plan_id: string;
     plan_name: string;
     billing_period: 'monthly' | 'yearly' | 'lifetime';
+    renew?: boolean;
 }
 
 // Stats Types
@@ -254,4 +255,5 @@ export interface BillingPageProps extends PageProps {
     transactions: PaginatedResponse<Transaction>;
     plans: Plan[];
     paymentGateways: PaymentGateway[];
+    creditsResetDate?: string | null;
 }

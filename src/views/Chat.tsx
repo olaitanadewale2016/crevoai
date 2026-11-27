@@ -20,7 +20,8 @@ import { useUserChannel } from '@/hooks/useUserChannel';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { PageProps, User } from '@/types';
 import type { UserNotification } from '@/types/notifications';
-import { Home, Eye, Code, Loader2, Hammer, ExternalLink, Brain, Settings, Globe, PanelLeftClose, PanelLeftOpen, HelpCircle, MessageSquare, Sparkles, Coins, KeyRound } from 'lucide-react';
+import { Home, Eye, Code, Loader2, Hammer, ExternalLink, Brain, Settings, Globe, PanelLeftClose, PanelLeftOpen, HelpCircle, MessageSquare, Sparkles, Coins, KeyRound, RefreshCw } from 'lucide-react';
+import { isBuildCreditExhaustedMessage } from '@/lib/credits-policy';
 import {
     Dialog,
     DialogContent,
@@ -42,6 +43,12 @@ import { ThemeDesigner } from '@/components/Design/ThemeDesigner';
 import { useBuildCredits, BuildCreditsInfo } from '@/hooks/useBuildCredits';
 import type { ElementMention, PendingEdit } from '@/types/inspector';
 import type { AttachedFile } from '@/types/chat';
+import {
+    describeRevisionLabel,
+    normalizeRevisionState,
+    type RevisionMutationResponse,
+    type WorkspaceRevision,
+} from '@/lib/revisions';
 
 interface Project {
     id: string;
@@ -142,6 +149,12 @@ interface ChatPageProps extends PageProps {
     customDomainsGloballyEnabled?: boolean;
     // Build credits
     buildCredits: BuildCreditsInfo;
+    currentPlanName?: string | null;
+    currentPlanPrice?: number;
+    currentPlanBillingPeriod?: 'monthly' | 'yearly' | 'lifetime' | null;
+    canUseOwnApiKey?: boolean;
+    creditsResetDate?: string | null;
+    hasActivePaidSubscription?: boolean;
 }
 
 type ViewMode = 'preview' | 'code' | 'settings';
@@ -190,6 +203,12 @@ export default function Chat({
     subdomainsGloballyEnabled,
     customDomainsGloballyEnabled,
     buildCredits,
+    currentPlanName = null,
+    currentPlanPrice = 0,
+    currentPlanBillingPeriod = null,
+    canUseOwnApiKey = false,
+    creditsResetDate = null,
+    hasActivePaidSubscription = false,
 }: ChatPageProps) {
     const { t } = useTranslation();
 
@@ -375,10 +394,9 @@ export default function Chat({
     }, [project.id]);
 
     const handleCreditExhausted = useCallback((midRun = true) => {
+        if (credits.isUnlimited || credits.usingOwnKey) return;
         setCreditExhaustedMidRun(midRun);
-        if (!credits.isUnlimited && !credits.usingOwnKey) {
-            updateCredits({ ...credits, remaining: 0 });
-        }
+        updateCredits({ ...credits, remaining: 0 });
         setOutOfCreditsModalOpen(true);
         void refreshCredits();
     }, [credits, updateCredits, refreshCredits]);
@@ -386,8 +404,9 @@ export default function Chat({
     const handleComplete = useCallback((event: CompleteEvent) => {
         const isClarifyingOrChatOnly =
             event.files_changed === false && event.build_status === 'skipped';
-        const isCreditExhaustedComplete = /credit\s+limit|credits\s+ran\s+out|out\s+of\s+(?:build\s+)?credits/i.test(
-            event.message || ''
+        const isCreditExhaustedComplete = isBuildCreditExhaustedMessage(
+            event.message,
+            credits.isUnlimited || credits.usingOwnKey
         );
 
         if (isCreditExhaustedComplete) {
@@ -444,19 +463,26 @@ export default function Chat({
     const handleError = useCallback((error: string) => {
         playSound('error');
         toast.error(error);
-        if (error && error.toLowerCase().includes('credit')) {
-            handleCreditExhausted(true);
+        const exempt = credits.isUnlimited || credits.usingOwnKey;
+        if (
+            !exempt &&
+            (isBuildCreditExhaustedMessage(error, exempt) ||
+                (error && error.toLowerCase().includes('credit')))
+        ) {
+            handleCreditExhausted(false);
         }
-    }, [playSound, handleCreditExhausted]);
+    }, [playSound, handleCreditExhausted, credits.isUnlimited, credits.usingOwnKey]);
 
     const handleCreditWarning = useCallback((event: CreditEvent) => {
+        if (credits.isUnlimited || credits.usingOwnKey) return;
         toast.warning(event.message || t('Build credits are running low (80% used).'));
-    }, [t]);
+    }, [t, credits.isUnlimited, credits.usingOwnKey]);
 
     const handleCreditExceeded = useCallback((_event: CreditEvent) => {
+        if (credits.isUnlimited || credits.usingOwnKey) return;
         playSound('error');
         handleCreditExhausted(true);
-    }, [playSound, handleCreditExhausted]);
+    }, [playSound, handleCreditExhausted, credits.isUnlimited, credits.usingOwnKey]);
 
     const handleTokenUsage = useCallback(() => {
         if (!isUserChannelConnected) {
@@ -519,91 +545,135 @@ export default function Chat({
         errorSanitizer,
     });
 
-    // Undo/Redo state
+    // Undo/Redo & Version History state
     const [isUndoing, setIsUndoing] = useState(false);
     const [isRedoing, setIsRedoing] = useState(false);
+    const [isRestoringRevision, setIsRestoringRevision] = useState(false);
+    const [restoringRevisionId, setRestoringRevisionId] = useState<number | null>(null);
     const [canUndo, setCanUndo] = useState(false);
     const [canRedo, setCanRedo] = useState(false);
+    const [revisions, setRevisions] = useState<WorkspaceRevision[]>([]);
+    const [currentRevisionIndex, setCurrentRevisionIndex] = useState(-1);
+
+    const applyRevisionState = useCallback((payload: unknown) => {
+        const normalized = normalizeRevisionState(payload);
+        setRevisions(normalized.revisions);
+        setCurrentRevisionIndex(normalized.current);
+        setCanUndo(normalized.can_undo);
+        setCanRedo(normalized.can_redo);
+    }, []);
 
     const refreshRevisionState = useCallback(async () => {
         try {
             const response = await axios.get(`/builder/projects/${project.id}/revisions`);
-            if (typeof response.data?.can_undo === 'boolean') {
-                setCanUndo(response.data.can_undo);
-            }
-            if (typeof response.data?.can_redo === 'boolean') {
-                setCanRedo(response.data.can_redo);
-            }
+            applyRevisionState(response.data);
         } catch {
             // Leave existing state unchanged if builder is temporarily unreachable
         }
-    }, [project.id]);
+    }, [project.id, applyRevisionState]);
 
     useEffect(() => {
         if (!isLoading && !isBuildingPreview) {
             void refreshRevisionState();
+            const timer = setTimeout(() => {
+                void refreshRevisionState();
+            }, 600);
+            return () => clearTimeout(timer);
         }
     }, [refreshRevisionState, isLoading, isBuildingPreview, fileRefreshTrigger, previewRefreshTrigger]);
 
-    const handleUndo = useCallback(async () => {
-        if (isUndoing || isRedoing || isLoading || !canUndo) return;
-        setIsUndoing(true);
-        try {
-            const response = await axios.post(`/builder/projects/${project.id}/undo`);
-            if (response.data.success) {
-                if (typeof response.data.can_undo === 'boolean') {
-                    setCanUndo(response.data.can_undo);
+    const runRevisionMutation = useCallback(
+        async (options: {
+            url: string;
+            body?: Record<string, unknown>;
+            setBusy: (busy: boolean) => void;
+            onSuccessMessage: (data: RevisionMutationResponse) => string;
+            emptyErrorMessage: string;
+            failErrorMessage: string;
+        }) => {
+            options.setBusy(true);
+            try {
+                const response = await axios.post<RevisionMutationResponse>(options.url, options.body);
+                const data = response.data;
+                if (typeof data?.can_undo === 'boolean') {
+                    setCanUndo(data.can_undo);
                 }
-                if (typeof response.data.can_redo === 'boolean') {
-                    setCanRedo(response.data.can_redo);
+                if (typeof data?.can_redo === 'boolean') {
+                    setCanRedo(data.can_redo);
                 }
-                setPreviewRefreshTrigger(Date.now());
-                setFileRefreshTrigger(tf => tf + 1);
-                if (response.data.build_success === false && response.data.build_error) {
-                    toast.warning(response.data.build_error);
+                if (typeof data?.current === 'number') {
+                    setCurrentRevisionIndex(data.current);
+                }
+                if (data?.success) {
+                    setPreviewRefreshTrigger(Date.now());
+                    setFileRefreshTrigger(tf => tf + 1);
+                    setCaptureThumbnailTrigger(Date.now());
+                    if (data.build_success === false && data.build_error) {
+                        toast.warning(data.build_error);
+                    } else {
+                        toast.success(options.onSuccessMessage(data));
+                    }
+                    void refreshRevisionState();
                 } else {
-                    toast.success(t('Undone'));
+                    toast.error(data?.error || options.emptyErrorMessage);
                 }
-            } else {
-                toast.error(response.data.error || t('Nothing to undo'));
+            } catch (err: any) {
+                toast.error(err?.response?.data?.error || options.failErrorMessage);
+                void refreshRevisionState();
+            } finally {
+                options.setBusy(false);
             }
-        } catch (err: any) {
-            toast.error(err?.response?.data?.error || t('Undo failed'));
-            void refreshRevisionState();
-        } finally {
-            setIsUndoing(false);
-        }
-    }, [project.id, isUndoing, isRedoing, isLoading, canUndo, refreshRevisionState, t]);
+        },
+        [refreshRevisionState]
+    );
+
+    const handleUndo = useCallback(async () => {
+        if (isUndoing || isRedoing || isRestoringRevision || isLoading || !canUndo) return;
+        await runRevisionMutation({
+            url: `/builder/projects/${project.id}/undo`,
+            setBusy: setIsUndoing,
+            onSuccessMessage: (data) => {
+                const label = data.revision?.label ? describeRevisionLabel(data.revision.label).title : null;
+                return label ? `${t('Undone')}: ${label}` : t('Undone');
+            },
+            emptyErrorMessage: t('Nothing to undo'),
+            failErrorMessage: t('Undo failed'),
+        });
+    }, [project.id, isUndoing, isRedoing, isRestoringRevision, isLoading, canUndo, runRevisionMutation, t]);
 
     const handleRedo = useCallback(async () => {
-        if (isUndoing || isRedoing || isLoading || !canRedo) return;
-        setIsRedoing(true);
+        if (isUndoing || isRedoing || isRestoringRevision || isLoading || !canRedo) return;
+        await runRevisionMutation({
+            url: `/builder/projects/${project.id}/redo`,
+            setBusy: setIsRedoing,
+            onSuccessMessage: (data) => {
+                const label = data.revision?.label ? describeRevisionLabel(data.revision.label).title : null;
+                return label ? `${t('Redone')}: ${label}` : t('Redone');
+            },
+            emptyErrorMessage: t('Nothing to redo'),
+            failErrorMessage: t('Redo failed'),
+        });
+    }, [project.id, isUndoing, isRedoing, isRestoringRevision, isLoading, canRedo, runRevisionMutation, t]);
+
+    const handleRestoreRevision = useCallback(async (revisionId: number) => {
+        if (isUndoing || isRedoing || isRestoringRevision || isLoading) return;
+        setRestoringRevisionId(revisionId);
         try {
-            const response = await axios.post(`/builder/projects/${project.id}/redo`);
-            if (response.data.success) {
-                if (typeof response.data.can_undo === 'boolean') {
-                    setCanUndo(response.data.can_undo);
-                }
-                if (typeof response.data.can_redo === 'boolean') {
-                    setCanRedo(response.data.can_redo);
-                }
-                setPreviewRefreshTrigger(Date.now());
-                setFileRefreshTrigger(tf => tf + 1);
-                if (response.data.build_success === false && response.data.build_error) {
-                    toast.warning(response.data.build_error);
-                } else {
-                    toast.success(t('Redone'));
-                }
-            } else {
-                toast.error(response.data.error || t('Nothing to redo'));
-            }
-        } catch (err: any) {
-            toast.error(err?.response?.data?.error || t('Redo failed'));
-            void refreshRevisionState();
+            await runRevisionMutation({
+                url: `/builder/projects/${project.id}/revisions/restore`,
+                body: { revision_id: revisionId },
+                setBusy: setIsRestoringRevision,
+                onSuccessMessage: (data) => {
+                    const label = data.revision?.label ? describeRevisionLabel(data.revision.label).title : null;
+                    return label ? `${t('Restored')}: ${label}` : t('Version restored');
+                },
+                emptyErrorMessage: t('Failed to restore version'),
+                failErrorMessage: t('Failed to restore version'),
+            });
         } finally {
-            setIsRedoing(false);
+            setRestoringRevisionId(null);
         }
-    }, [project.id, isUndoing, isRedoing, isLoading, canRedo, refreshRevisionState, t]);
+    }, [project.id, isUndoing, isRedoing, isRestoringRevision, isLoading, runRevisionMutation, t]);
 
     // Keyboard shortcuts for undo/redo (skip when typing in input/textarea)
     useEffect(() => {
@@ -768,6 +838,11 @@ export default function Chat({
     };
 
     const isOutOfCredits = !credits.isUnlimited && !credits.usingOwnKey && credits.remaining <= 0;
+    const canRenewCurrentPlan = Boolean(
+        hasActivePaidSubscription &&
+            currentPlanPrice > 0 &&
+            currentPlanBillingPeriod !== 'lifetime'
+    );
 
     const handleSubmit = async (
         e: React.FormEvent,
@@ -1119,24 +1194,57 @@ export default function Chat({
                                         </p>
                                         <p className="text-muted-foreground">
                                             {creditExhaustedMidRun
-                                                ? t('Your credits ran out midway during generation and consumed credits cannot be refunded. Open Billing & Plans to upgrade/buy more credits, or connect your own AI API key in Profile.')
-                                                : t('Upgrade your plan to get more monthly build credits, or connect your own AI API key to continue building immediately.')}
+                                                ? canRenewCurrentPlan
+                                                    ? t('Your credits ran out midway during generation and consumed credits cannot be refunded. Renew your current plan now or upgrade to continue building.')
+                                                    : canUseOwnApiKey
+                                                      ? t('Your credits ran out midway during generation and consumed credits cannot be refunded. Upgrade your plan or connect your own AI API key in Profile.')
+                                                      : t('Your credits ran out midway during generation and consumed credits cannot be refunded. Upgrade your plan to continue building.')
+                                                : canRenewCurrentPlan
+                                                  ? t('Renew your current plan to refill credits immediately, upgrade your plan, or wait until your monthly reset (:date).', {
+                                                        date: creditsResetDate || t('beginning of next month'),
+                                                    })
+                                                  : canUseOwnApiKey
+                                                    ? t('Upgrade your plan to get more monthly build credits, connect your own AI API key, or wait until your monthly reset (:date).', {
+                                                          date: creditsResetDate || t('beginning of next month'),
+                                                      })
+                                                    : t('Upgrade your plan to get more monthly build credits, or wait until your monthly reset (:date).', {
+                                                          date: creditsResetDate || t('beginning of next month'),
+                                                      })}
                                         </p>
                                     </div>
                                 </div>
                                 <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                                    <Button size="sm" className="h-7 text-xs" asChild>
-                                        <Link href="/billing/plans">
-                                            <Sparkles className="h-3 w-3 me-1.5" />
-                                            {t('Upgrade Plan / Buy Credits')}
-                                        </Link>
-                                    </Button>
-                                    <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
-                                        <Link href="/profile">
-                                            <KeyRound className="h-3 w-3 me-1.5" />
-                                            {t('Use Own API Key')}
-                                        </Link>
-                                    </Button>
+                                    {canRenewCurrentPlan ? (
+                                        <>
+                                            <Button size="sm" className="h-7 text-xs" asChild>
+                                                <Link href="/billing/plans?renew=1">
+                                                    <RefreshCw className="h-3 w-3 me-1.5" />
+                                                    {t('Renew Plan')}
+                                                </Link>
+                                            </Button>
+                                            <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
+                                                <Link href="/billing/plans">
+                                                    <Sparkles className="h-3 w-3 me-1.5" />
+                                                    {t('Upgrade Plan')}
+                                                </Link>
+                                            </Button>
+                                        </>
+                                    ) : (
+                                        <Button size="sm" className="h-7 text-xs" asChild>
+                                            <Link href="/billing/plans">
+                                                <Sparkles className="h-3 w-3 me-1.5" />
+                                                {t('Upgrade Plan')}
+                                            </Link>
+                                        </Button>
+                                    )}
+                                    {canUseOwnApiKey && (
+                                        <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
+                                            <Link href="/profile">
+                                                <KeyRound className="h-3 w-3 me-1.5" />
+                                                {t('Use Own API Key')}
+                                            </Link>
+                                        </Button>
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -1177,7 +1285,7 @@ export default function Chat({
                     {/* Preview Header */}
                     <div className="h-14 px-3 md:px-4 border-b flex items-center justify-between gap-2 shrink-0 bg-background">
                         {/* View toggle */}
-                        <div className="flex items-center border rounded-lg overflow-hidden shrink-0">
+                        <div data-tour="preview-tabs" className="flex items-center border rounded-lg overflow-hidden shrink-0">
                             <button
                                 onClick={() => {
                                     setViewMode('preview');
@@ -1352,9 +1460,15 @@ export default function Chat({
                                 onRedo={handleRedo}
                                 isUndoing={isUndoing}
                                 isRedoing={isRedoing}
-                                isUndoRedoDisabled={isLoading}
+                                isUndoRedoDisabled={isLoading || isRestoringRevision}
                                 canUndo={canUndo}
                                 canRedo={canRedo}
+                                revisions={revisions}
+                                currentRevisionIndex={currentRevisionIndex}
+                                onRestoreRevision={handleRestoreRevision}
+                                onRefreshRevisions={() => void refreshRevisionState()}
+                                isRestoringRevision={isRestoringRevision}
+                                restoringRevisionId={restoringRevisionId}
                                 onElementSelect={handleElementSelect}
                                 onElementEdit={handleElementEdit}
                                 pendingEdits={pendingEdits}
@@ -1468,10 +1582,18 @@ export default function Chat({
                         <DialogDescription>
                             {creditExhaustedMidRun
                                 ? t('Your build credits ran out midway during generation, so the session stopped cleanly. Credits already consumed cannot be refunded.')
-                                : t('You have used all of your available build credits for your current plan. Upgrade your subscription plan or connect your own AI API key to continue building.')}
+                                : canUseOwnApiKey
+                                  ? t('You have used all of your available build credits for your current plan. Renew or upgrade your subscription plan, or connect your own AI API key to continue building.')
+                                  : t('You have used all of your available build credits for your current plan. Renew or upgrade your subscription plan to continue building.')}
                         </DialogDescription>
                     </DialogHeader>
                     <div className="rounded-lg border bg-muted/40 p-3 text-xs space-y-2">
+                        {currentPlanName && (
+                            <div className="flex items-center justify-between">
+                                <span className="text-muted-foreground">{t('Current Plan')}</span>
+                                <span className="font-medium">{currentPlanName}</span>
+                            </div>
+                        )}
                         <div className="flex items-center justify-between">
                             <span className="text-muted-foreground">{t('Remaining Credits')}</span>
                             <span className="font-semibold text-destructive">0</span>
@@ -1482,27 +1604,57 @@ export default function Chat({
                                 {credits.monthlyLimit > 0 ? credits.monthlyLimit.toLocaleString() : t('Free Tier')}
                             </span>
                         </div>
+                        {creditsResetDate && (
+                            <div className="flex items-center justify-between">
+                                <span className="text-muted-foreground">{t('Credits Reset Date')}</span>
+                                <span className="font-medium">{creditsResetDate}</span>
+                            </div>
+                        )}
                         <div className="pt-2 border-t border-border/60 space-y-1 text-muted-foreground">
                             <p className="font-medium text-foreground">{t('How to get more credits:')}</p>
                             <ol className="list-decimal list-inside space-y-0.5">
-                                <li>{t('Click Upgrade Plan / Buy Credits below to choose a higher credit plan and complete checkout.')}</li>
-                                <li>{t('Or click Use Own API Key in your Profile Settings to build immediately without platform credits.')}</li>
+                                {canRenewCurrentPlan && (
+                                    <li>{t('Click Renew Plan Now below to complete checkout and refill your current plan credits immediately.')}</li>
+                                )}
+                                <li>{t('Click Upgrade Plan below to choose a plan with a higher monthly credit limit.')}</li>
+                                {canUseOwnApiKey && (
+                                    <li>{t('Or click Use Own API Key in your Profile Settings to build immediately without platform credits.')}</li>
+                                )}
                             </ol>
                         </div>
                     </div>
                     <DialogFooter className="flex-col sm:flex-row gap-2">
-                        <Button variant="outline" asChild className="w-full sm:w-auto">
-                            <Link href="/profile">
-                                <KeyRound className="h-4 w-4 me-2" />
-                                {t('Use Own API Key')}
-                            </Link>
-                        </Button>
-                        <Button asChild className="w-full sm:w-auto">
-                            <Link href="/billing/plans">
-                                <Sparkles className="h-4 w-4 me-2" />
-                                {t('Upgrade Plan / Buy Credits')}
-                            </Link>
-                        </Button>
+                        {canUseOwnApiKey && (
+                            <Button variant="outline" asChild className="w-full sm:w-auto">
+                                <Link href="/profile">
+                                    <KeyRound className="h-4 w-4 me-2" />
+                                    {t('Use Own API Key')}
+                                </Link>
+                            </Button>
+                        )}
+                        {canRenewCurrentPlan ? (
+                            <>
+                                <Button variant="outline" asChild className="w-full sm:w-auto">
+                                    <Link href="/billing/plans">
+                                        <Sparkles className="h-4 w-4 me-2" />
+                                        {t('Upgrade Plan')}
+                                    </Link>
+                                </Button>
+                                <Button asChild className="w-full sm:w-auto">
+                                    <Link href="/billing/plans?renew=1">
+                                        <RefreshCw className="h-4 w-4 me-2" />
+                                        {t('Renew Plan Now')}
+                                    </Link>
+                                </Button>
+                            </>
+                        ) : (
+                            <Button asChild className="w-full sm:w-auto">
+                                <Link href="/billing/plans">
+                                    <Sparkles className="h-4 w-4 me-2" />
+                                    {t('Upgrade Plan')}
+                                </Link>
+                            </Button>
+                        )}
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

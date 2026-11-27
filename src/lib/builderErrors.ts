@@ -89,7 +89,7 @@ const ERROR_PATTERNS: ErrorPattern[] = [
     },
     // Build credits exhausted
     {
-        pattern: /\bcredits?\b.*(?:exhausted|depleted|exceeded|insufficient|run\s*out|remaining|reset)|no\s+credits?\b|\bcredit\s+balance\b/i,
+        pattern: /\bcredits?\b.*(?:exhausted|depleted|exceeded|insufficient|run\s*out|remaining|reset)|(?:insufficient|out\s+of|no)\s+(?:build\s+)?credits?\b|\bcredit\s+balance\b/i,
         message: "You've run out of build credits. Please upgrade your plan or wait for your credits to reset.",
     },
     // No builders available

@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState } from 'react';
 import { Link, router, usePage } from '@/lib/inertia-compat';
@@ -23,6 +23,7 @@ export default function Index({
     subscription,
     pendingSubscription,
     transactions,
+    creditsResetDate,
 }: BillingPageProps) {
     const { auth, broadcastConfig } = usePage<
         BillingPageProps & { broadcastConfig?: BroadcastConfig | null }
@@ -150,7 +151,10 @@ export default function Index({
 
                 {/* Current Subscription or No Subscription Alert */}
                 {subscription ? (
-                    <CurrentSubscriptionCard subscription={subscription} />
+                    <CurrentSubscriptionCard
+                        subscription={subscription}
+                        creditsResetDate={creditsResetDate}
+                    />
                 ) : pendingSubscription ? (
                     <BankTransferPending subscription={pendingSubscription} />
                 ) : (

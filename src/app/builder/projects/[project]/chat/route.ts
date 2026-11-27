@@ -22,6 +22,7 @@ import {
   getAiConfigForUser,
   ReasoningEffort,
 } from '@/services/builder';
+import { validatePlanAndCreditsForUser } from '@/services/credits';
 
 export const runtime = 'nodejs';
 
@@ -82,7 +83,23 @@ export async function POST(
     priorHistory,
   });
 
-  const plan = effectiveFileIds.length > 0 ? await getUserCurrentPlan(ctx.user) : null;
+  const [plan, aiConfig] = await Promise.all([
+    getUserCurrentPlan(ctx.user),
+    getAiConfigForUser(ctx.user, project.reasoning_effort as ReasoningEffort | undefined),
+  ]);
+
+  const creditCheck = validatePlanAndCreditsForUser(
+    ctx.user,
+    plan,
+    Boolean(aiConfig?.using_own_key)
+  );
+  if (!creditCheck.allowed) {
+    return NextResponse.json(
+      { error: creditCheck.reason || 'Insufficient build credits.' },
+      { status: 403 }
+    );
+  }
+
   const { attachedFiles, fileRefs, attachedImages } = await resolveAttachedProjectFiles({
     projectId: String(project._id),
     user: ctx.user,
@@ -147,11 +164,6 @@ export async function POST(
       conversation_history: priorHistory,
       compacted_history: priorCompacted,
     });
-
-    const aiConfig = await getAiConfigForUser(
-      ctx.user,
-      project.reasoning_effort as ReasoningEffort | undefined
-    );
 
     const res = await builderFetch(builder, `/api/chat/${project.build_session_id}`, {
       method: 'POST',

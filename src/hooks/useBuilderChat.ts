@@ -663,13 +663,15 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                         )
                 );
                 const polledCredits = response.data.credits as BuildCreditsInfo | undefined;
+                const polledExemptFromLimits = Boolean(
+                    polledCredits?.isUnlimited || polledCredits?.usingOwnKey
+                );
                 if (
+                    !polledExemptFromLimits &&
                     !creditExceededNotifiedRef.current &&
                     (hasCreditStopMsg ||
                         (status === 'failed' &&
                             polledCredits &&
-                            !polledCredits.isUnlimited &&
-                            !polledCredits.usingOwnKey &&
                             polledCredits.remaining <= 0))
                 ) {
                     creditExceededNotifiedRef.current = true;

@@ -3,6 +3,7 @@ import { cookies, headers } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB, isValidObjectId } from './db';
 import { generateHexToken, timingSafeEqualStr } from './crypto';
+import { hasUnlimitedBuildCredits } from './credits-policy';
 import { getSetting } from './settings';
 import { areSubdomainsEnabled, getEffectiveBaseDomain } from './domains';
 import { SessionModel, RateLimit } from '@/models/Counter';
@@ -23,15 +24,26 @@ export function isDemoMode(): boolean {
   return demo && (env === 'local' || env === 'development');
 }
 
-export function isSuperAdminUser(user: { numeric_id?: number; email?: string; role?: string } | null | undefined): boolean {
+export function isSuperAdminUser(user: { numeric_id?: number; email?: string; role?: string | null } | null | undefined): boolean {
   if (!user) return false;
   if (user.numeric_id === 1) return true;
   if (isDemoMode() && (user.email === 'admin@crevo.ai' || user.email === 'admin@crevo.com' || user.email === 'admin@webby.com')) return true;
   return false;
 }
 
-export function isDemoAdminUser(user: { numeric_id?: number; email?: string; role?: string } | null | undefined): boolean {
+export function isDemoAdminUser(user: { numeric_id?: number; email?: string; role?: string | null } | null | undefined): boolean {
   return isDemoMode() && isSuperAdminUser(user);
+}
+
+export function hasUnlimitedBuildCreditsAccess(
+  user: { role?: string | null; numeric_id?: number; email?: string } | null | undefined,
+  plan?: Pick<IPlan, 'monthly_build_credits'> | null
+): boolean {
+  return hasUnlimitedBuildCredits({
+    userRole: user?.role,
+    isDemoAdmin: isDemoAdminUser(user),
+    planMonthlyCredits: plan?.monthly_build_credits ?? null,
+  });
 }
 
 export function demoDeniedResponse() {

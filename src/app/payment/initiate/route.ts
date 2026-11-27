@@ -4,6 +4,7 @@ import { requireVerified } from '@/lib/auth';
 import { getSetting } from '@/lib/settings';
 import { formatCurrencyAmount } from '@/lib/currency';
 import { parseRequestBody, toBool, validationError } from '@/lib/http';
+import { isRenewalEligibleRequest } from '@/lib/credits-policy';
 import { sendUserEmailNotification, sendAdminEventEmail } from '@/lib/email';
 import { getNextSequence } from '@/models/Counter';
 import { Plan, Subscription, Transaction, Plugin, type ISubscription } from '@/models/Billing';
@@ -85,6 +86,7 @@ export async function POST(req: NextRequest) {
   const planId = typeof body.plan_id === 'string' ? body.plan_id.trim() : String(body.plan_id || '').trim();
   const gateway = typeof body.gateway === 'string' ? body.gateway.trim() : '';
   const applyReferralCredits = toBool(body.apply_referral_credits, false);
+  const renew = toBool(body.renew, false);
 
   if (!planId || !isValidObjectId(planId)) {
     return validationError({ plan_id: 'Please select a valid plan.' });
@@ -120,14 +122,24 @@ export async function POST(req: NextRequest) {
     .sort({ created_at: -1 })
     .lean();
 
-  if (activeSub && String(activeSub.plan_id) === String(plan._id)) {
+  const planPrice = Number(plan.price ?? 0);
+  const isSameActivePlan = Boolean(activeSub && String(activeSub.plan_id) === String(plan._id));
+
+  if (
+    !isRenewalEligibleRequest({
+      isSameActivePlan,
+      renewRequested: renew,
+      planPrice,
+      billingPeriod: plan.billing_period,
+    })
+  ) {
     return validationError({
       subscription: 'You are already subscribed to this plan.',
     });
   }
 
+  const isRenewingCurrentPlan = isSameActivePlan && renew;
   const currency = ((await getSetting<string>('default_currency', 'USD')) || 'USD').toUpperCase();
-  const planPrice = Number(plan.price ?? 0);
 
   try {
     // 1. Full payment with Referral Credits
@@ -154,7 +166,9 @@ export async function POST(req: NextRequest) {
         await cancelExistingActiveSubscription(
           activeSub,
           String(user._id),
-          `Plan change to: ${plan.name}`
+          isRenewingCurrentPlan
+            ? `Plan renewal: ${plan.name}`
+            : `Plan change to: ${plan.name}`
         );
       }
 
@@ -190,7 +204,7 @@ export async function POST(req: NextRequest) {
         amount: planPrice,
         currency,
         status: 'completed',
-        type: 'subscription_new',
+        type: isRenewingCurrentPlan ? 'subscription_renewal' : 'subscription_new',
         payment_method: 'Referral Credits',
         transaction_date: now,
         metadata: {
@@ -240,7 +254,9 @@ export async function POST(req: NextRequest) {
         await cancelExistingActiveSubscription(
           activeSub,
           String(user._id),
-          `Plan change to: ${plan.name}`
+          isRenewingCurrentPlan
+            ? `Plan renewal: ${plan.name}`
+            : `Plan change to: ${plan.name}`
         );
       }
 
@@ -307,6 +323,7 @@ export async function POST(req: NextRequest) {
           plan_id: String(plan._id),
           plan_name: plan.name,
           billing_period: plan.billing_period,
+          ...(isRenewingCurrentPlan ? { renew: true } : {}),
         },
       });
     }

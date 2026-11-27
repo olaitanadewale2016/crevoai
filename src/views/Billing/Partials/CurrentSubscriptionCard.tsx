@@ -1,11 +1,12 @@
-﻿'use client';
+'use client';
 
 import { route } from '@/lib/route';
 import { useState } from 'react';
-import { router, usePage } from '@/lib/inertia-compat';
+import { Link, router, usePage } from '@/lib/inertia-compat';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { StatusBadge } from '@/components/Admin/StatusBadge';
 import {
     AlertDialog,
@@ -18,7 +19,17 @@ import {
     AlertDialogTitle,
     AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { CreditCard, Calendar, Banknote } from 'lucide-react';
+import {
+    CreditCard,
+    Calendar,
+    Banknote,
+    Coins,
+    Infinity as InfinityIcon,
+    KeyRound,
+    RefreshCw,
+    Sparkles,
+    AlertTriangle,
+} from 'lucide-react';
 import { useAppDate } from '@/lib/date';
 import type { Subscription } from '@/types/billing';
 import type { PageProps } from '@/types';
@@ -26,6 +37,7 @@ import { useTranslation } from '@/contexts/LanguageContext';
 
 interface CurrentSubscriptionCardProps {
     subscription: Subscription;
+    creditsResetDate?: string | null;
 }
 
 const formatCurrency = (amount: number, currency: string = 'USD', locale: string = 'en-US') => {
@@ -35,8 +47,23 @@ const formatCurrency = (amount: number, currency: string = 'USD', locale: string
     }).format(amount);
 };
 
-export default function CurrentSubscriptionCard({ subscription }: CurrentSubscriptionCardProps) {
+const planLikePrice = (planPrice: number | undefined, subscriptionAmount: number): number => {
+    return Number(planPrice ?? subscriptionAmount ?? 0);
+};
+
+export default function CurrentSubscriptionCard({
+    subscription,
+    creditsResetDate,
+}: CurrentSubscriptionCardProps) {
     const { t, locale, isRtl } = useTranslation();
+    const { userCredits } = usePage<PageProps>().props;
+    const isPaidRecurring = Boolean(
+        planLikePrice(subscription.plan?.price, subscription.amount) > 0 &&
+            subscription.plan?.billing_period !== 'lifetime'
+    );
+    const isOutOfCredits = Boolean(
+        userCredits && !userCredits.isUnlimited && !userCredits.usingOwnKey && userCredits.remaining <= 0
+    );
     const { appSettings } = usePage<PageProps>().props;
     const siteCurrency = (appSettings?.default_currency || 'USD').toUpperCase();
     const { formatDate } = useAppDate();
@@ -157,6 +184,75 @@ export default function CurrentSubscriptionCard({ subscription }: CurrentSubscri
                                 ))
                             ) : null}
                         </div>
+                    </div>
+                )}
+
+                {/* Build Credits Summary & Renewal CTA */}
+                {userCredits && (
+                    <div className="mt-6 pt-6 border-t border-border space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                                <Coins className="h-4 w-4 text-muted-foreground" />
+                                <span className="text-sm font-medium">{t('Build Credits')}</span>
+                                {userCredits.usingOwnKey ? (
+                                    <Badge variant="secondary" className="gap-1">
+                                        <KeyRound className="h-3 w-3" />
+                                        {t('Using your API key')}
+                                    </Badge>
+                                ) : userCredits.isUnlimited ? (
+                                    <Badge variant="secondary" className="gap-1">
+                                        <InfinityIcon className="h-3 w-3" />
+                                        {t('Unlimited')}
+                                    </Badge>
+                                ) : (
+                                    <Badge variant={isOutOfCredits ? 'destructive' : 'outline'}>
+                                        {userCredits.remaining.toLocaleString()} / {userCredits.monthlyLimit.toLocaleString()} {t('credits')}
+                                    </Badge>
+                                )}
+                            </div>
+                            {!userCredits.isUnlimited && !userCredits.usingOwnKey && creditsResetDate && (
+                                <p className="text-xs text-muted-foreground">
+                                    {t('Monthly reset on :date', { date: creditsResetDate })}
+                                </p>
+                            )}
+                        </div>
+
+                        {isOutOfCredits && (
+                            <Alert variant="destructive">
+                                <AlertTriangle className="h-4 w-4" />
+                                <AlertTitle>{t('Build credits exhausted')}</AlertTitle>
+                                <AlertDescription className="space-y-3">
+                                    <p>
+                                        {isPaidRecurring
+                                            ? t('You have used all build credits included in your current billing cycle. Your credits reset on :date, or you can renew your current plan now to refill credits immediately or upgrade to a higher plan.', {
+                                                  date: creditsResetDate || t('the beginning of next month'),
+                                              })
+                                            : t('You have used all build credits for this month. Your credits reset on :date, or you can upgrade your plan now to keep building.', {
+                                                  date: creditsResetDate || t('the beginning of next month'),
+                                              })}
+                                    </p>
+                                    <div className="flex flex-wrap gap-2 pt-1">
+                                        {isPaidRecurring && (
+                                            <Button size="sm" asChild>
+                                                <Link href="/billing/plans?renew=1">
+                                                    <RefreshCw className="h-3.5 w-3.5 me-1.5" />
+                                                    {t('Renew Plan Now')}
+                                                </Link>
+                                            </Button>
+                                        )}
+                                        <Button size="sm" variant={isPaidRecurring ? 'outline' : 'default'} asChild>
+                                            <Link href="/billing/plans">
+                                                <Sparkles className="h-3.5 w-3.5 me-1.5" />
+                                                {isPaidRecurring ? t('Upgrade Plan') : t('Choose a Plan')}
+                                            </Link>
+                                        </Button>
+                                        <Button size="sm" variant="ghost" asChild>
+                                            <Link href="/billing/usage">{t('View Usage')}</Link>
+                                        </Button>
+                                    </div>
+                                </AlertDescription>
+                            </Alert>
+                        )}
                     </div>
                 )}
 

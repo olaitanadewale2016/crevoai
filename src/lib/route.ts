@@ -153,6 +153,7 @@ const ROUTE_TEMPLATES: Record<string, string> = {
   'builder.undo': '/builder/projects/:project/undo',
   'builder.redo': '/builder/projects/:project/redo',
   'builder.revisions': '/builder/projects/:project/revisions',
+  'builder.revisions.restore': '/builder/projects/:project/revisions/restore',
   'preview.exists': '/preview/:project/exists',
   'preview.serve': '/preview/:project',
   'app.serve': '/app/:project',

@@ -25,7 +25,9 @@ import {
 import { formatHumanFileSize } from '@/lib/http';
 import { projectPreviewExists } from '@/services/builder';
 import { getSharedAppProps, getUserCreditsSnapshot } from '@/services/shared-context';
+import { getNextCreditsResetDateFormatted } from '@/services/credits';
 import { Project, ProjectFile, UserAiSettings } from '@/models';
+import { Subscription } from '@/models/Billing';
 import type { BroadcastConfig } from '@/hooks/useBuilderPusher';
 import type { SoundSettings } from '@/hooks/useChatSounds';
 
@@ -89,6 +91,8 @@ export default async function ProjectChatPage({
     customDomainCount,
     sysFirebaseCfg,
     sysAdminSa,
+    activeSubscription,
+    creditsResetDate,
   ] = await Promise.all([
     getSharedAppProps(),
     getBroadcastConfig(),
@@ -102,6 +106,8 @@ export default async function ProjectChatPage({
     Project.countDocuments({ user_id: user._id, deleted_at: null, custom_domain: { $ne: null } }),
     getSystemFirebaseConfig(),
     getSystemAdminServiceAccount(),
+    Subscription.findOne({ user_id: user._id, status: 'active' }).sort({ created_at: -1 }).lean(),
+    getNextCreditsResetDateFormatted(),
   ]);
 
   const buildCredits = sharedProps.userCredits;
@@ -372,6 +378,14 @@ export default async function ProjectChatPage({
       subdomainsGloballyEnabled={Boolean(subdomainsGloballyEnabled)}
       customDomainsGloballyEnabled={Boolean(customDomainsGloballyEnabled)}
       buildCredits={buildCredits}
+      currentPlanName={plan?.name ?? null}
+      currentPlanPrice={Number(plan?.price ?? 0)}
+      currentPlanBillingPeriod={plan?.billing_period ?? null}
+      canUseOwnApiKey={Boolean(plan?.allow_user_ai_api_key)}
+      creditsResetDate={creditsResetDate}
+      hasActivePaidSubscription={Boolean(
+        activeSubscription && Number(activeSubscription.amount ?? plan?.price ?? 0) > 0
+      )}
     />
   );
 }

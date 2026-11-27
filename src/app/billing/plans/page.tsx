@@ -5,6 +5,7 @@ import { getSetting } from '@/lib/settings';
 import { Plan, Subscription, type IPlan } from '@/models/Billing';
 import { getActiveGatewaysForCurrency } from '@/services/payment-gateways';
 import { isReferralEnabled } from '@/services/referrals';
+import { getNextCreditsResetDateFormatted } from '@/services/credits';
 import { getSharedAppProps } from '@/services/shared-context';
 import BillingPlans from '@/Pages/Billing/Plans';
 import type { Plan as UiPlan, PaymentGateway as UiPaymentGateway } from '@/types/billing';
@@ -40,7 +41,11 @@ function serializePlan(plan: IPlan): UiPlan {
   };
 }
 
-export default async function BillingPlansPage() {
+export default async function BillingPlansPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const session = await getSessionContext();
   if (!session) {
     redirect('/login');
@@ -51,17 +56,29 @@ export default async function BillingPlansPage() {
 
   await connectDB();
 
+  const sp = searchParams ? await searchParams : {};
+  const rawRenew = Array.isArray(sp.renew) ? sp.renew[0] : sp.renew;
+  const initialRenew = rawRenew === '1' || rawRenew === 'true';
+
   const user = session.user;
 
-  const [sharedProps, planDocs, rawGateways, activeSubDoc, minRedemptionRaw, referralEnabled] =
-    await Promise.all([
-      getSharedAppProps(),
-      Plan.find({ is_active: true }).sort({ sort_order: 1, price: 1 }).lean(),
-      getActiveGatewaysForCurrency(),
-      Subscription.findOne({ user_id: user._id, status: 'active' }).sort({ created_at: -1 }).lean(),
-      getSetting<string>('referral_min_redemption', '5.00'),
-      isReferralEnabled(),
-    ]);
+  const [
+    sharedProps,
+    planDocs,
+    rawGateways,
+    activeSubDoc,
+    minRedemptionRaw,
+    referralEnabled,
+    creditsResetDate,
+  ] = await Promise.all([
+    getSharedAppProps(),
+    Plan.find({ is_active: true }).sort({ sort_order: 1, price: 1 }).lean(),
+    getActiveGatewaysForCurrency(),
+    Subscription.findOne({ user_id: user._id, status: 'active' }).sort({ created_at: -1 }).lean(),
+    getSetting<string>('referral_min_redemption', '5.00'),
+    isReferralEnabled(),
+    getNextCreditsResetDateFormatted(),
+  ]);
 
   const plans = planDocs.map(serializePlan);
   const paymentGateways: UiPaymentGateway[] = rawGateways.filter(
@@ -83,6 +100,8 @@ export default async function BillingPlansPage() {
     referralBalance: referralCreditBalance,
     minRedemption,
     referralEnabled,
+    creditsResetDate,
+    initialRenew,
   };
 
   return <BillingPlans {...pageProps} />;

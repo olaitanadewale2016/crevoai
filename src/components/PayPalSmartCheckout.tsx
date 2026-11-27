@@ -110,6 +110,7 @@ export function PayPalSmartCheckout({
                 body: JSON.stringify({
                     plan_id: session.plan_id,
                     flow,
+                    ...(session.renew ? { renew: true } : {}),
                 }),
             });
             const data = (await res.json().catch(() => ({}))) as {
@@ -128,7 +129,7 @@ export function PayPalSmartCheckout({
             }
             return data;
         },
-        [session.plan_id, t]
+        [session.plan_id, session.renew, t]
     );
 
     const finalizeServerPayment = useCallback(

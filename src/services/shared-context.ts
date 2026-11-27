@@ -1,7 +1,15 @@
 import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { connectDB } from '@/lib/db';
-import { getSessionContext, isDemoMode, LOCALE_COOKIE_NAME, serializeUser, getUserCurrentPlan } from '@/lib/auth';
+import {
+  getSessionContext,
+  isDemoMode,
+  isDemoAdminUser,
+  hasUnlimitedBuildCreditsAccess,
+  LOCALE_COOKIE_NAME,
+  serializeUser,
+  getUserCurrentPlan,
+} from '@/lib/auth';
 import { getSharedAppSettings, getBroadcastConfig, ensureFreshSettingsCache } from '@/lib/settings';
 import { loadTranslationsForLocale, resolveLocale } from '@/lib/i18n';
 import { Project, ProjectShare } from '@/models/Project';
@@ -12,8 +20,8 @@ import type { SharedAppProps } from '@/lib/inertia-compat';
 
 export async function getUserCreditsSnapshot(user: IUser) {
   const plan = await getUserCurrentPlan(user);
-  const monthlyLimit = plan?.monthly_build_credits ?? 0;
-  const isUnlimited = monthlyLimit === -1;
+  const isUnlimited = hasUnlimitedBuildCreditsAccess(user, plan);
+  const monthlyLimit = isUnlimited ? -1 : (plan?.monthly_build_credits ?? 0);
 
   let usingOwnKey = false;
   if (plan?.allow_user_ai_api_key) {
@@ -133,8 +141,12 @@ export const getSharedAppProps = cache(async function getSharedAppProps(): Promi
     }
 
     if (planRes.status === 'fulfilled') {
-      const currentPrice = Number(planRes.value?.price ?? 0);
-      hasUpgradablePlans = maxPlanPrice > currentPrice;
+      if (user.role === 'admin' && !isDemoAdminUser(user)) {
+        hasUpgradablePlans = false;
+      } else {
+        const currentPrice = Number(planRes.value?.price ?? 0);
+        hasUpgradablePlans = maxPlanPrice > currentPrice;
+      }
     }
 
     if (creditsRes.status === 'fulfilled') {

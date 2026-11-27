@@ -20,6 +20,8 @@ import { getPusherConfigForBuilder } from '@/lib/broadcast';
 import { getProjectFirebaseConfig } from '@/lib/firebase-admin';
 import { getUserCurrentPlan } from '@/lib/auth';
 import { resolvePlanAiProvider, resolvePlanBuilder } from './credits';
+import { hasUnlimitedBuildCreditsAccess } from '@/lib/auth';
+import { computeRemainingCreditsBudget } from '@/lib/credits-policy';
 import { Project, Template, IProject, IConversationEntry } from '@/models/Project';
 import { User, UserAiSettings, IUser } from '@/models/User';
 import type { IPlan } from '@/models/Billing';
@@ -222,12 +224,13 @@ export async function getAiConfigForUser(
   const baseMaxTokens = Number(provider.config?.max_tokens || 16384);
   const effectiveMaxTokens = resolveEffortMaxTokens(baseMaxTokens, resolvedEffort);
   const summTokens = Number(provider.config?.summarizer_max_tokens || 1500);
-  const unlimited = plan?.monthly_build_credits === -1;
-  const effortMultiplier =
-    resolvedEffort === 'low' ? 0.75 : resolvedEffort === 'high' ? 1.5 : 1.0;
-  const remainingCreditsBudget = unlimited
-    ? 0
-    : Math.max(1, Math.floor((user.build_credits ?? 0) / effortMultiplier));
+  const unlimited = hasUnlimitedBuildCreditsAccess(user, plan);
+  const remainingCreditsBudget = computeRemainingCreditsBudget({
+    unlimited,
+    usingOwnKey: false,
+    userBuildCredits: user.build_credits ?? 0,
+    effort: resolvedEffort,
+  });
   const supportsPromptCaching = pType === 'anthropic' || pType === 'abhibots';
 
   return {
@@ -1162,8 +1165,8 @@ export async function serveBuiltSiteFromR2(params: {
         path.join(process.cwd(), 'public', 'storage', 'image-library', cleanAssetPath),
       ];
       for (const localFilePath of candidates) {
-        if (fs.existsSync(localFilePath) && fs.statSync(localFilePath).isFile()) {
-          const fileBuf = await fs.promises.readFile(localFilePath);
+        if (fs.existsSync(/*turbopackIgnore: true*/ localFilePath) && fs.statSync(/*turbopackIgnore: true*/ localFilePath).isFile()) {
+          const fileBuf = await fs.promises.readFile(/*turbopackIgnore: true*/ localFilePath);
           return new Response(fileBuf, {
             status: 200,
             headers: {
@@ -1503,6 +1506,8 @@ export async function classEditWorkspace(
   return (await res.json().catch(() => ({}))) as Record<string, unknown>;
 }
 
+import { normalizeRevisionState, planRevisionStepFallback } from '@/lib/revisions';
+
 export async function undoWorkspace(builder: IBuilder, workspaceId: string): Promise<Record<string, unknown>> {
   const res = await builderFetch(builder, `/api/undo-workspace/${workspaceId}`, { method: 'POST', timeoutMs: 30_000 });
   return (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -1513,9 +1518,79 @@ export async function redoWorkspace(builder: IBuilder, workspaceId: string): Pro
   return (await res.json().catch(() => ({}))) as Record<string, unknown>;
 }
 
+export async function restoreWorkspaceRevision(
+  builder: IBuilder,
+  workspaceId: string,
+  revisionId: number
+): Promise<Record<string, unknown>> {
+  const res = await builderFetch(builder, `/api/restore-revision-workspace/${workspaceId}`, {
+    method: 'POST',
+    body: { revision_id: revisionId },
+    timeoutMs: 30_000,
+  });
+
+  const rawText = await res.text().catch(() => '');
+  let parsed: Record<string, unknown> = {};
+  if (rawText) {
+    try {
+      const json = JSON.parse(rawText);
+      if (json && typeof json === 'object') {
+        parsed = json as Record<string, unknown>;
+      }
+    } catch {
+      // Non-JSON response (e.g. Gin 404 page not found on older builder deploys)
+    }
+  }
+
+  // Fallback for remote Go Builder instances without /api/restore-revision-workspace yet:
+  // step via /api/undo-workspace or /api/redo-workspace to reach target revision.
+  if (res.status === 404 && parsed.error !== 'Workspace not found') {
+    const state = normalizeRevisionState(await getWorkspaceRevisions(builder, workspaceId));
+    const plan = planRevisionStepFallback(state.revisions, state.current, revisionId);
+
+    if (plan.status === 'not_found') {
+      return {
+        success: false,
+        error: `Revision ${revisionId} not found`,
+        current: state.current,
+        total: state.total,
+        can_undo: state.can_undo,
+        can_redo: state.can_redo,
+      };
+    }
+
+    if (plan.status === 'current') {
+      return {
+        success: true,
+        revision: state.revisions[plan.targetIndex] ?? null,
+        current: state.current,
+        total: state.total,
+        can_undo: state.can_undo,
+        can_redo: state.can_redo,
+      };
+    }
+
+    let lastResult: Record<string, unknown> = {};
+    const stepFn = plan.direction === 'undo' ? undoWorkspace : redoWorkspace;
+    for (let i = 0; i < plan.steps; i++) {
+      lastResult = await stepFn(builder, workspaceId);
+      if (!lastResult?.success) {
+        return lastResult;
+      }
+    }
+    return lastResult;
+  }
+
+  if (res.status === 404 && parsed.error === 'Workspace not found') {
+    return { ...parsed, status: 404 };
+  }
+
+  return parsed;
+}
+
 export async function getWorkspaceRevisions(builder: IBuilder, workspaceId: string): Promise<unknown> {
   const res = await builderFetch(builder, `/api/revisions-workspace/${workspaceId}`, { method: 'GET', timeoutMs: 15_000 });
-  return await res.json().catch(() => []);
+  return await res.json().catch(() => ({}));
 }
 
 export async function getSessionSuggestions(builder: IBuilder, sessionId: string): Promise<{ suggestions: string[] }> {

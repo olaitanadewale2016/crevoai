@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { route } from '@/lib/route';
 import { useState } from 'react';
@@ -15,6 +15,7 @@ import { Progress } from '@/components/ui/progress';
 import { TanStackDataTable } from '@/components/Admin/TanStackDataTable';
 import { DataTableColumnHeader } from '@/components/ui/data-table-column-header';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { RefreshCw } from 'lucide-react';
 import {
     Coins,
     Sparkles,
@@ -55,6 +56,7 @@ interface UsageStats {
     is_unlimited: boolean;
     reset_date: string;
     percentage_used: number;
+    using_own_key?: boolean;
 }
 
 interface Plan {
@@ -331,6 +333,14 @@ export default function Usage({ stats, plan, history, period, used_own_api_key }
                                             <p className="font-medium">{stats.reset_date}</p>
                                         </div>
                                     </div>
+                                    {!stats.using_own_key && stats.credits_remaining <= 0 && (
+                                        <Button size="sm" className="w-full" asChild>
+                                            <Link href="/billing/plans?renew=1">
+                                                <RefreshCw className="h-3.5 w-3.5 me-1.5" />
+                                                {t('Renew or Upgrade Plan')}
+                                            </Link>
+                                        </Button>
+                                    )}
                                 </>
                             )}
                         </CardContent>

@@ -17,6 +17,7 @@ import {
   getPluginConfigDecrypted,
 } from '@/services/payment-gateways';
 import { getSharedAppProps } from '@/services/shared-context';
+import { getNextCreditsResetDateFormatted } from '@/services/credits';
 import BillingIndex from '@/Pages/Billing/Index';
 import type {
   Plan as UiPlan,
@@ -163,6 +164,7 @@ export default async function BillingPage({
     rawGateways,
     bankTransferPlugin,
     minRedemptionRaw,
+    creditsResetDate,
   ] = await Promise.all([
     getSharedAppProps(),
     Subscription.findOne({ user_id: user._id, status: 'active' }).sort({ created_at: -1 }).lean(),
@@ -183,6 +185,7 @@ export default async function BillingPage({
     getActiveGatewaysForCurrency(),
     Plugin.findOne({ slug: 'bank-transfer', type: 'payment_gateway' }).lean(),
     getSetting<string>('referral_min_redemption', '5.00'),
+    getNextCreditsResetDateFormatted(),
   ]);
 
   const bankTransferCfg = bankTransferPlugin ? getPluginConfigDecrypted(bankTransferPlugin) : {};
@@ -269,6 +272,7 @@ export default async function BillingPage({
     bankTransferDetails,
     referralBalance,
     canRedeemReferral,
+    creditsResetDate,
   };
 
   return <BillingIndex {...pageProps} />;

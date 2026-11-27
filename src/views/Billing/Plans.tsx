@@ -1,7 +1,7 @@
 'use client';
 
 import { route } from '@/lib/route';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, router, usePage } from '@/lib/inertia-compat';
 import { usePageLoading } from '@/hooks/usePageLoading';
 import { PlansSkeleton } from './PlansSkeleton';
@@ -9,6 +9,7 @@ import AdminLayout from '@/Layouts/AdminLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
     Dialog,
     DialogContent,
@@ -17,9 +18,10 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Check, X, Star, ArrowLeft, Loader2, CreditCard, Gift, Copy, Building2, Clock } from 'lucide-react';
+import { Check, X, Star, ArrowLeft, Loader2, CreditCard, Gift, Copy, Building2, Clock, RefreshCw, AlertTriangle } from 'lucide-react';
 import { PaymentGatewayIcon } from '@/components/PaymentGatewayIcon';
 import { PayPalSmartCheckout } from '@/components/PayPalSmartCheckout';
+import { canRenewPaidSubscriptionPlan } from '@/lib/credits-policy';
 import type { Plan, PaymentGateway, PayPalCheckoutSession } from '@/types/billing';
 import type { PageProps } from '@/types';
 import { useTranslation } from '@/contexts/LanguageContext';
@@ -39,6 +41,8 @@ interface PlansPageProps extends PageProps {
     paymentGateways: PaymentGateway[];
     currentPlanId: number | null;
     referralCreditBalance: number;
+    creditsResetDate?: string | null;
+    initialRenew?: boolean;
 }
 
 export default function Plans({
@@ -46,8 +50,10 @@ export default function Plans({
     paymentGateways,
     currentPlanId,
     referralCreditBalance,
+    creditsResetDate,
+    initialRenew = false,
 }: PlansPageProps) {
-    const { auth, flash, appSettings } = usePage<PlansPageProps & { flash: { bankTransfer?: BankTransferData } }>().props;
+    const { auth, flash, appSettings, userCredits } = usePage<PlansPageProps & { flash: { bankTransfer?: BankTransferData } }>().props;
     const { t, locale } = useTranslation();
     const { isLoading } = usePageLoading();
     const siteCurrency = (appSettings?.default_currency || 'USD').toUpperCase();
@@ -60,8 +66,24 @@ export default function Plans({
     const [bankTransferData, setBankTransferData] = useState<BankTransferData | null>(null);
     const [isBankTransferModalOpen, setIsBankTransferModalOpen] = useState(false);
     const [copied, setCopied] = useState(false);
+    const autoRenewTriggeredRef = useRef(false);
 
     const isPaymentBusy = isProcessing || processingGateway !== null;
+    const isOutOfCredits = Boolean(
+        userCredits && !userCredits.isUnlimited && !userCredits.usingOwnKey && userCredits.remaining <= 0
+    );
+    const currentPlan = plans.find((p) => p.id === currentPlanId) || null;
+    const canRenewActivePlan = currentPlan
+        ? canRenewPaidSubscriptionPlan({
+              isCurrentPlan: true,
+              planPrice: currentPlan.price,
+              billingPeriod: currentPlan.billing_period,
+              isUnlimited: Boolean(userCredits?.isUnlimited),
+              usingOwnKey: Boolean(userCredits?.usingOwnKey),
+              remainingCredits: userCredits?.remaining ?? 0,
+              forceRenew: initialRenew,
+          })
+        : false;
 
     // Check for bank transfer flash data
     useEffect(() => {
@@ -117,8 +139,18 @@ export default function Plans({
         lifetime: t(' one-time'),
     };
 
-    const handlePlanSelect = (plan: Plan) => {
-        if (plan.id === currentPlanId) return;
+    const handlePlanSelect = (plan: Plan, options?: { renew?: boolean }) => {
+        const isCurrentPlan = plan.id === currentPlanId;
+        const canRenewThisPlan = canRenewPaidSubscriptionPlan({
+            isCurrentPlan,
+            planPrice: plan.price,
+            billingPeriod: plan.billing_period,
+            isUnlimited: Boolean(userCredits?.isUnlimited),
+            usingOwnKey: Boolean(userCredits?.usingOwnKey),
+            remainingCredits: userCredits?.remaining ?? 0,
+            forceRenew: Boolean(options?.renew || initialRenew),
+        });
+        if (isCurrentPlan && !canRenewThisPlan) return;
 
         // If plan is free (price = 0), subscribe directly
         if (plan.price === 0) {
@@ -134,6 +166,23 @@ export default function Plans({
         setIsGatewayModalOpen(true);
     };
 
+    useEffect(() => {
+        if (
+            !autoRenewTriggeredRef.current &&
+            initialRenew &&
+            currentPlan &&
+            canRenewActivePlan &&
+            !isGatewayModalOpen
+        ) {
+            autoRenewTriggeredRef.current = true;
+            setSelectedPlan(currentPlan);
+            setUseReferralCredits(false);
+            setProcessingGateway(null);
+            setPaypalSession(null);
+            setIsGatewayModalOpen(true);
+        }
+    }, [initialRenew, currentPlan, canRenewActivePlan, isGatewayModalOpen]);
+
     const canUseReferralCredits = (plan: Plan) => {
         return referralCreditBalance >= plan.price && plan.price > 0;
     };
@@ -148,6 +197,7 @@ export default function Plans({
                 plan_id: selectedPlan.id,
                 gateway: 'referral_credits',
                 apply_referral_credits: true,
+                ...(selectedPlan.id === currentPlanId ? { renew: true } : {}),
             },
             {
                 onError: (errors) => {
@@ -187,6 +237,7 @@ export default function Plans({
                 plan_id: selectedPlan.id,
                 gateway: gateway.slug,
                 ...(gateway.slug === 'paypal' ? { paypal_sdk: true } : {}),
+                ...(selectedPlan.id === currentPlanId ? { renew: true } : {}),
             },
             {
                 onSuccess: (page) => {
@@ -334,10 +385,50 @@ export default function Plans({
                     </Button>
                 </div>
 
+                {/* Out of Credits Alert */}
+                {isOutOfCredits && (
+                    <Alert variant="destructive">
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertTitle>{t('You have run out of build credits')}</AlertTitle>
+                        <AlertDescription className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <span>
+                                {canRenewActivePlan && currentPlan
+                                    ? t('Your credits reset on :date. Renew your :plan plan now to refill :credits credits immediately, or choose a larger plan below.', {
+                                          date: creditsResetDate || t('the beginning of next month'),
+                                          plan: currentPlan.name,
+                                          credits: (currentPlan.monthly_build_credits ?? 0).toLocaleString(),
+                                      })
+                                    : t('Your credits reset on :date. Upgrade to a plan with higher monthly build credits below to continue building.', {
+                                          date: creditsResetDate || t('the beginning of next month'),
+                                      })}
+                            </span>
+                            {canRenewActivePlan && currentPlan && (
+                                <Button
+                                    size="sm"
+                                    className="shrink-0"
+                                    onClick={() => handlePlanSelect(currentPlan, { renew: true })}
+                                >
+                                    <RefreshCw className="h-3.5 w-3.5 me-1.5" />
+                                    {t('Renew :plan Now', { plan: currentPlan.name })}
+                                </Button>
+                            )}
+                        </AlertDescription>
+                    </Alert>
+                )}
+
                 {/* Plans Grid */}
                 <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
                     {plans.map((plan) => {
                         const isCurrentPlan = plan.id === currentPlanId;
+                        const canRenewPlan = canRenewPaidSubscriptionPlan({
+                            isCurrentPlan,
+                            planPrice: plan.price,
+                            billingPeriod: plan.billing_period,
+                            isUnlimited: Boolean(userCredits?.isUnlimited),
+                            usingOwnKey: Boolean(userCredits?.usingOwnKey),
+                            remainingCredits: userCredits?.remaining ?? 0,
+                            forceRenew: initialRenew,
+                        });
                         return (
                             <Card
                                 key={plan.id}
@@ -387,14 +478,19 @@ export default function Plans({
                                     <Button
                                         className="w-full"
                                         size="lg"
-                                        variant={isCurrentPlan ? 'secondary' : plan.is_popular ? 'default' : 'outline'}
-                                        disabled={isCurrentPlan || isProcessing}
-                                        onClick={() => handlePlanSelect(plan)}
+                                        variant={canRenewPlan ? 'default' : isCurrentPlan ? 'secondary' : plan.is_popular ? 'default' : 'outline'}
+                                        disabled={(isCurrentPlan && !canRenewPlan) || isProcessing}
+                                        onClick={() => handlePlanSelect(plan, canRenewPlan ? { renew: true } : undefined)}
                                     >
                                         {isProcessing && selectedPlan?.id === plan.id ? (
                                             <>
                                                 <Loader2 className="h-4 w-4 me-2 animate-spin" />
                                                 {t('Processing...')}
+                                            </>
+                                        ) : canRenewPlan ? (
+                                            <>
+                                                <RefreshCw className="h-4 w-4 me-2" />
+                                                {t('Renew Plan (Refill Credits)')}
                                             </>
                                         ) : isCurrentPlan ? (
                                             t('Current Plan')
@@ -451,9 +547,20 @@ export default function Plans({
                             <div className="p-4 bg-muted rounded-lg overflow-hidden">
                                 <div className="flex items-center justify-between gap-4">
                                     <div className="min-w-0 flex-1">
-                                        <h4 className="font-semibold">{selectedPlan.name}</h4>
+                                        <div className="flex items-center gap-2">
+                                            <h4 className="font-semibold">{selectedPlan.name}</h4>
+                                            {selectedPlan.id === currentPlanId && (
+                                                <Badge variant="outline" className="text-xs">
+                                                    {t('Plan Renewal')}
+                                                </Badge>
+                                            )}
+                                        </div>
                                         <p className="text-sm text-muted-foreground truncate">
-                                            {selectedPlan.description}
+                                            {selectedPlan.id === currentPlanId && (selectedPlan.monthly_build_credits ?? 0) > 0
+                                                ? t('Refills :credits monthly build credits upon payment', {
+                                                      credits: (selectedPlan.monthly_build_credits ?? 0).toLocaleString(),
+                                                  })
+                                                : selectedPlan.description}
                                         </p>
                                     </div>
                                     <div className="text-right flex-shrink-0">

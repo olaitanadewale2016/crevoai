@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB, isValidObjectId } from '@/lib/db';
 import { requireVerified } from '@/lib/auth';
 import { getSetting } from '@/lib/settings';
-import { parseRequestBody, validationError } from '@/lib/http';
+import { parseRequestBody, toBool, validationError } from '@/lib/http';
+import { isRenewalEligibleRequest } from '@/lib/credits-policy';
 import { Plan, Plugin, Subscription } from '@/models/Billing';
 import {
   GATEWAY_REGISTRY,
@@ -24,6 +25,7 @@ export async function POST(req: NextRequest) {
   const { body } = await parseRequestBody(req);
   const planId = typeof body.plan_id === 'string' ? body.plan_id.trim() : String(body.plan_id || '').trim();
   const flow = typeof body.flow === 'string' ? body.flow.trim().toLowerCase() : 'order';
+  const renew = toBool(body.renew, false);
 
   if (!planId || !isValidObjectId(planId)) {
     return validationError({ plan_id: 'Please select a valid plan.' });
@@ -45,7 +47,15 @@ export async function POST(req: NextRequest) {
   const activeSub = await Subscription.findOne({ user_id: user._id, status: 'active' })
     .sort({ created_at: -1 })
     .lean();
-  if (activeSub && String(activeSub.plan_id) === String(plan._id)) {
+  const isSameActivePlan = Boolean(activeSub && String(activeSub.plan_id) === String(plan._id));
+  if (
+    !isRenewalEligibleRequest({
+      isSameActivePlan,
+      renewRequested: renew,
+      planPrice: Number(plan.price ?? 0),
+      billingPeriod: plan.billing_period,
+    })
+  ) {
     return validationError({ subscription: 'You are already subscribed to this plan.' });
   }
 

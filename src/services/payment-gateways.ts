@@ -1013,6 +1013,10 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
         external_subscription_id: reference,
         metadata: { reference, bank_transfer_instructions: instructions },
       });
+      const hasExistingOrCompleted = Boolean(
+        (await Subscription.exists({ user_id: user._id, status: { $in: ['active', 'expired'] } })) ||
+        (await Transaction.exists({ user_id: user._id, status: 'completed' }))
+      );
       const seq = await getNextSequence('transaction_invoice_seq');
       await Transaction.create({
         invoice_seq: seq,
@@ -1021,7 +1025,7 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
         amount: plan.price,
         currency,
         status: 'pending',
-        type: 'subscription_new',
+        type: hasExistingOrCompleted ? 'subscription_renewal' : 'subscription_new',
         payment_method: 'bank_transfer',
         external_transaction_id: reference,
         metadata: { bank_transfer_instructions: instructions },

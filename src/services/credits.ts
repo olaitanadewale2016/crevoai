@@ -3,8 +3,14 @@ import { User, UserAiSettings, IUser } from '@/models/User';
 import { AiProvider, BuildCreditUsage, Builder, calculateAiCost } from '@/models/BuilderAi';
 import { Project } from '@/models/Project';
 import { Plan, IPlan } from '@/models/Billing';
-import { getSetting } from '@/lib/settings';
-import { getUserCurrentPlan, isDemoAdminUser } from '@/lib/auth';
+import { getSetting, getSettingGroup } from '@/lib/settings';
+import {
+  getUserCurrentPlan,
+  hasUnlimitedBuildCreditsAccess,
+  isDemoAdminUser,
+} from '@/lib/auth';
+import { formatDateWithSettings } from '@/lib/currency';
+import { validatePlanAndCredits } from '@/lib/credits-policy';
 import { broadcastUserCredits, notifyCreditsLow } from './notifications';
 
 export async function resolvePlanAiProvider(plan: IPlan | null) {
@@ -56,6 +62,24 @@ export async function isUserUsingOwnAiKey(user: IUser, plan?: IPlan | null): Pro
   return Boolean(aiSettings[field]);
 }
 
+/**
+ * Validate plan and build-credit eligibility using shared PHP-parity rules.
+ * Non-demo admins always pass plan & credit checks.
+ */
+export function validatePlanAndCreditsForUser(
+  user: IUser,
+  plan: IPlan | null,
+  usingOwnKey: boolean
+): { allowed: boolean; reason: string | null } {
+  return validatePlanAndCredits({
+    isUnlimitedAdmin: user.role === 'admin' && !isDemoAdminUser(user),
+    hasPlan: Boolean(plan),
+    planMonthlyCredits: plan?.monthly_build_credits ?? 0,
+    userBuildCredits: user.build_credits ?? 0,
+    usingOwnKey,
+  });
+}
+
 export async function canPerformBuild(user: IUser): Promise<{ allowed: boolean; reason: string | null }> {
   if (isDemoAdminUser(user)) {
     return {
@@ -66,27 +90,12 @@ export async function canPerformBuild(user: IUser): Promise<{ allowed: boolean; 
 
   const plan = await getUserCurrentPlan(user);
   const usingOwnKey = await isUserUsingOwnAiKey(user, plan);
+  const creditCheck = validatePlanAndCreditsForUser(user, plan, usingOwnKey);
+  if (!creditCheck.allowed) {
+    return creditCheck;
+  }
 
   if (!usingOwnKey) {
-    if (!plan) {
-      return { allowed: false, reason: 'No active plan. Please subscribe to a plan to start a project.' };
-    }
-
-    const unlimited = plan.monthly_build_credits === -1;
-    if ((plan.monthly_build_credits ?? 0) === 0 && !unlimited) {
-      return {
-        allowed: false,
-        reason: 'Your plan does not include AI build credits.',
-      };
-    }
-
-    if (!unlimited && (user.build_credits ?? 0) < 1) {
-      return {
-        allowed: false,
-        reason: 'Insufficient build credits. Your credits will reset at the beginning of next month.',
-      };
-    }
-
     const aiProvider = await resolvePlanAiProvider(plan);
     if (!aiProvider) {
       return {
@@ -115,7 +124,7 @@ export async function refillUserBuildCredits(userId: string, planId?: string | n
   if (!plan) return;
 
   const update: Record<string, unknown> = { plan_id: plan._id };
-  if (plan.monthly_build_credits !== -1) {
+  if (!hasUnlimitedBuildCreditsAccess(user, plan)) {
     update.build_credits = plan.monthly_build_credits;
     update.credits_reset_at = new Date();
   }
@@ -202,7 +211,7 @@ export async function trackBuildCreditUsage(params: {
 
   let deducted = 0;
   let remainingCredits: number | null = null;
-  const unlimited = plan?.monthly_build_credits === -1;
+  const unlimited = hasUnlimitedBuildCreditsAccess(user, plan);
 
   if (!usedOwnKey && !unlimited && totalTokens > 0) {
     // Atomic deduction clamped at 0 (consumed credits are never refunded).
@@ -351,5 +360,52 @@ export async function getMonthlyUsageStats(userId: string, usedOwnKeyFilter?: bo
     completion_tokens: agg?.completion_tokens ?? 0,
     estimated_cost: Number((agg?.estimated_cost ?? 0).toFixed(6)),
     request_count: agg?.request_count ?? 0,
+  };
+}
+
+export async function getNextCreditsResetDateFormatted(): Promise<string> {
+  const generalSettings = await getSettingGroup('general');
+  const now = new Date();
+  const nextMonthFirst = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0)
+  );
+  const dateFormat = generalSettings.date_format || 'Y-m-d';
+  const timezone = generalSettings.timezone || 'UTC';
+  return formatDateWithSettings(nextMonthFirst, dateFormat, timezone);
+}
+
+export async function getBillingUsageSnapshot(user: IUser) {
+  await connectDB();
+  const [plan, monthlyStats, resetDate] = await Promise.all([
+    getUserCurrentPlan(user),
+    getMonthlyUsageStats(String(user._id)),
+    getNextCreditsResetDateFormatted(),
+  ]);
+
+  const usingOwnKey = await isUserUsingOwnAiKey(user, plan);
+  const isUnlimited = hasUnlimitedBuildCreditsAccess(user, plan);
+  const monthlyLimit = isUnlimited ? -1 : (plan?.monthly_build_credits ?? 0);
+  const creditsRemaining = isUnlimited
+    ? Number.MAX_SAFE_INTEGER
+    : Math.max(0, Number(user.build_credits ?? 0));
+  const percentageUsed = isUnlimited
+    ? 0
+    : monthlyLimit > 0
+      ? Math.min(100, Math.round((monthlyStats.total_tokens / monthlyLimit) * 1000) / 10)
+      : 0;
+
+  return {
+    plan,
+    usingOwnKey,
+    monthlyStats,
+    stats: {
+      credits_remaining: creditsRemaining,
+      credits_used: monthlyStats.total_tokens,
+      monthly_limit: monthlyLimit,
+      is_unlimited: isUnlimited,
+      reset_date: resetDate,
+      percentage_used: percentageUsed,
+      using_own_key: usingOwnKey,
+    },
   };
 }

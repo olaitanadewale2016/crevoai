@@ -11,6 +11,8 @@ import { usePreviewThemeSync } from '@/hooks/usePreviewThemeSync';
 import { useTranslation } from '@/contexts/LanguageContext';
 import { Button } from '@/components/ui/button';
 import { MousePointerClick, Loader2, Palette, Undo2, Redo2, Bot, Cog, Wrench, Monitor, Tablet, Smartphone, RotateCw } from 'lucide-react';
+import { VersionHistoryPopover } from './VersionHistoryPopover';
+import type { WorkspaceRevision } from '@/lib/revisions';
 import { toast } from 'sonner';
 import type { InspectorElement, ElementMention, PendingEdit } from '@/types/inspector';
 import { formatStyleEditMessage } from '@/lib/style-save';
@@ -43,7 +45,7 @@ interface InspectPreviewProps {
     isSavingTheme?: boolean;
     currentTheme?: string | null;  // The saved/applied theme preset
     onSendStyleEdit?: (message: string) => void;
-    // Undo/Redo
+    // Undo/Redo & Version History
     onUndo?: () => void;
     onRedo?: () => void;
     isUndoing?: boolean;
@@ -51,6 +53,12 @@ interface InspectPreviewProps {
     isUndoRedoDisabled?: boolean;
     canUndo?: boolean;
     canRedo?: boolean;
+    revisions?: WorkspaceRevision[];
+    currentRevisionIndex?: number;
+    onRestoreRevision?: (revisionId: number) => void;
+    onRefreshRevisions?: () => void;
+    isRestoringRevision?: boolean;
+    restoringRevisionId?: number | null;
 }
 
 function BuildingAnimation({ t }: { t: (key: string) => string }) {
@@ -106,6 +114,12 @@ export function InspectPreview({
     isUndoRedoDisabled = false,
     canUndo = true,
     canRedo = true,
+    revisions = [],
+    currentRevisionIndex = -1,
+    onRestoreRevision,
+    onRefreshRevisions,
+    isRestoringRevision = false,
+    restoringRevisionId = null,
 }: InspectPreviewProps) {
     const { t } = useTranslation();
     const containerRef = useRef<HTMLDivElement>(null);
@@ -382,6 +396,7 @@ export function InspectPreview({
                         <Button
                             variant={mode === 'inspect' ? 'default' : 'outline'}
                             size="sm"
+                            data-tour="inspect-toggle"
                             onClick={() => onModeChange?.(mode === 'inspect' ? 'preview' : 'inspect')}
                             className="h-7 px-3 text-xs"
                         >
@@ -391,6 +406,7 @@ export function InspectPreview({
                         <Button
                             variant={mode === 'design' ? 'default' : 'outline'}
                             size="sm"
+                            data-tour="design-toggle"
                             onClick={() => onModeChange?.(mode === 'design' ? 'preview' : 'design')}
                             className="h-7 px-3 text-xs"
                         >
@@ -400,15 +416,14 @@ export function InspectPreview({
                     </div>
 
                     {/* Desktop-only Responsive Device Viewport Switcher (Desktop, Tablet, Mobile) */}
-                    <div className="hidden md:flex items-center bg-muted/70 p-0.5 rounded-lg border border-border/50">
+                    <div data-tour="device-switcher" className="hidden md:flex items-center bg-muted/70 p-0.5 rounded-lg border border-border/50">
                         <Button
                             variant={deviceMode === 'desktop' ? 'secondary' : 'ghost'}
                             size="icon"
-                            className={`h-7 w-7 rounded-md transition-all ${
-                                deviceMode === 'desktop'
-                                    ? 'bg-background shadow-xs text-foreground font-semibold'
-                                    : 'text-muted-foreground hover:text-foreground'
-                            }`}
+                            className={`h-7 w-7 rounded-md transition-all ${deviceMode === 'desktop'
+                                ? 'bg-background shadow-xs text-foreground font-semibold'
+                                : 'text-muted-foreground hover:text-foreground'
+                                }`}
                             onClick={() => handleSetDeviceMode('desktop')}
                             title={t('Desktop View (100%)')}
                         >
@@ -417,11 +432,10 @@ export function InspectPreview({
                         <Button
                             variant={deviceMode === 'tablet' ? 'secondary' : 'ghost'}
                             size="icon"
-                            className={`h-7 w-7 rounded-md transition-all ${
-                                deviceMode === 'tablet'
-                                    ? 'bg-background shadow-xs text-foreground font-semibold'
-                                    : 'text-muted-foreground hover:text-foreground'
-                            }`}
+                            className={`h-7 w-7 rounded-md transition-all ${deviceMode === 'tablet'
+                                ? 'bg-background shadow-xs text-foreground font-semibold'
+                                : 'text-muted-foreground hover:text-foreground'
+                                }`}
                             onClick={() => handleSetDeviceMode('tablet')}
                             title={t('Tablet View (768px)')}
                         >
@@ -430,11 +444,10 @@ export function InspectPreview({
                         <Button
                             variant={deviceMode === 'mobile' ? 'secondary' : 'ghost'}
                             size="icon"
-                            className={`h-7 w-7 rounded-md transition-all ${
-                                deviceMode === 'mobile'
-                                    ? 'bg-background shadow-xs text-foreground font-semibold'
-                                    : 'text-muted-foreground hover:text-foreground'
-                            }`}
+                            className={`h-7 w-7 rounded-md transition-all ${deviceMode === 'mobile'
+                                ? 'bg-background shadow-xs text-foreground font-semibold'
+                                : 'text-muted-foreground hover:text-foreground'
+                                }`}
                             onClick={() => handleSetDeviceMode('mobile')}
                             title={t('Mobile View (390px)')}
                         >
@@ -462,7 +475,7 @@ export function InspectPreview({
                             variant="outline"
                             size="icon"
                             onClick={onUndo}
-                            disabled={isUndoing || isUndoRedoDisabled || canUndo === false}
+                            disabled={isUndoing || isRedoing || isRestoringRevision || isUndoRedoDisabled || canUndo === false}
                             className="h-7 w-7"
                             title={`${t('Undo')} (${typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+Z)`}
                         >
@@ -472,12 +485,27 @@ export function InspectPreview({
                             variant="outline"
                             size="icon"
                             onClick={onRedo}
-                            disabled={isRedoing || isUndoRedoDisabled || canRedo === false}
+                            disabled={isUndoing || isRedoing || isRestoringRevision || isUndoRedoDisabled || canRedo === false}
                             className="h-7 w-7"
                             title={`${t('Redo')} (${typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+Shift+Z)`}
                         >
                             {isRedoing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Redo2 className="h-3.5 w-3.5" />}
                         </Button>
+                        <VersionHistoryPopover
+                            revisions={revisions}
+                            currentRevisionIndex={currentRevisionIndex}
+                            canUndo={Boolean(canUndo)}
+                            canRedo={Boolean(canRedo)}
+                            isUndoing={isUndoing}
+                            isRedoing={isRedoing}
+                            isRestoring={isRestoringRevision}
+                            restoringRevisionId={restoringRevisionId}
+                            disabled={isUndoRedoDisabled}
+                            onUndo={onUndo}
+                            onRedo={onRedo}
+                            onRestoreRevision={onRestoreRevision}
+                            onRefreshRevisions={onRefreshRevisions}
+                        />
                         <Button
                             variant="outline"
                             size="icon"
@@ -509,17 +537,16 @@ export function InspectPreview({
 
                     {/* iframe container */}
                     <div
-                        className={`flex-1 min-h-0 relative flex items-center justify-center overflow-auto ${
-                            deviceMode !== 'desktop' ? 'md:bg-muted/30' : ''
-                        }`}
+                        className={`flex-1 min-h-0 relative flex items-center justify-center overflow-auto ${deviceMode !== 'desktop' ? 'md:bg-muted/30' : ''
+                            }`}
                     >
                         <div
                             className={
                                 deviceMode === 'mobile'
                                     ? 'relative w-full h-full md:w-[390px] md:max-w-full md:h-[min(844px,calc(100%-24px))] md:my-3 md:rounded-[24px] md:border-4 md:border-foreground/15 md:shadow-2xl md:overflow-hidden bg-background transition-all duration-200'
                                     : deviceMode === 'tablet'
-                                    ? 'relative w-full h-full md:w-[768px] md:max-w-full md:h-[calc(100%-24px)] md:my-3 md:rounded-xl md:border md:shadow-xl md:overflow-hidden bg-background transition-all duration-200'
-                                    : 'relative w-full h-full'
+                                        ? 'relative w-full h-full md:w-[768px] md:max-w-full md:h-[calc(100%-24px)] md:my-3 md:rounded-xl md:border md:shadow-xl md:overflow-hidden bg-background transition-all duration-200'
+                                        : 'relative w-full h-full'
                             }
                         >
                             {iframeSrc ? (

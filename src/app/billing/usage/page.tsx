@@ -1,12 +1,12 @@
 import { redirect } from 'next/navigation';
 import { connectDB } from '@/lib/db';
-import { getSessionContext, hasVerifiedEmail, getUserCurrentPlan } from '@/lib/auth';
+import { getSessionContext, hasVerifiedEmail } from '@/lib/auth';
 import { getSettingGroup } from '@/lib/settings';
 import { formatDateWithSettings } from '@/lib/currency';
 import { toBool } from '@/lib/http';
 import { BuildCreditUsage } from '@/models/BuilderAi';
 import { Project } from '@/models/Project';
-import { getMonthlyUsageStats, isUserUsingOwnAiKey } from '@/services/credits';
+import { getBillingUsageSnapshot } from '@/services/credits';
 import { getSharedAppProps } from '@/services/shared-context';
 import BillingUsage from '@/Pages/Billing/Usage';
 
@@ -63,12 +63,11 @@ export default async function BillingUsagePage({
     historyFilter.created_at = { $gte: thirtyDaysAgo };
   }
 
-  const [sharedProps, generalSettings, plan, monthlyStats, usageDocs, totalUsage] =
+  const [sharedProps, generalSettings, usageSnapshot, usageDocs, totalUsage] =
     await Promise.all([
       getSharedAppProps(),
       getSettingGroup('general'),
-      getUserCurrentPlan(user),
-      getMonthlyUsageStats(String(user._id)),
+      getBillingUsageSnapshot(user),
       BuildCreditUsage.find(historyFilter)
         .sort({ created_at: -1 })
         .skip((page - 1) * perPage)
@@ -77,7 +76,9 @@ export default async function BillingUsagePage({
       BuildCreditUsage.countDocuments(historyFilter),
     ]);
 
-  const usingOwnKey = await isUserUsingOwnAiKey(user, plan);
+  const { plan, usingOwnKey, stats } = usageSnapshot;
+  const dateFormat = generalSettings.date_format || 'Y-m-d';
+  const timezone = generalSettings.timezone || 'UTC';
 
   // Resolve project names for history items
   const projectIds = Array.from(
@@ -93,36 +94,11 @@ export default async function BillingUsagePage({
       : [];
   const projectMap = new Map<string, string>(projectDocs.map((p) => [String(p._id), p.name]));
 
-  const monthlyLimit = plan?.monthly_build_credits ?? 0;
-  const isUnlimited = monthlyLimit === -1;
-  const creditsRemaining = isUnlimited
-    ? Number.MAX_SAFE_INTEGER
-    : Math.max(0, Number(user.build_credits ?? 0));
-  const percentageUsed = isUnlimited
-    ? 0
-    : monthlyLimit > 0
-    ? Math.min(100, Math.round((monthlyStats.total_tokens / monthlyLimit) * 1000) / 10)
-    : 0;
-
-  const nextMonthFirst = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0));
-  const dateFormat = generalSettings.date_format || 'Y-m-d';
-  const timezone = generalSettings.timezone || 'UTC';
-
-  const stats = {
-    credits_remaining: creditsRemaining,
-    credits_used: monthlyStats.total_tokens,
-    monthly_limit: monthlyLimit,
-    is_unlimited: isUnlimited,
-    reset_date: formatDateWithSettings(nextMonthFirst, dateFormat, timezone),
-    percentage_used: percentageUsed,
-    using_own_key: usingOwnKey,
-  };
-
   const uiPlan = plan
     ? {
         name: plan.name,
         monthly_build_credits: Number(plan.monthly_build_credits ?? 0),
-        is_unlimited: plan.monthly_build_credits === -1,
+        is_unlimited: stats.is_unlimited,
         allows_own_api_key: Boolean(plan.allow_user_ai_api_key),
       }
     : null;

@@ -10,7 +10,7 @@ import { withLock } from '@/lib/cache';
 import { parseRequestBody, validationError } from '@/lib/http';
 import { Project, Template, IConversationEntry } from '@/models/Project';
 import { Builder, IBuilder } from '@/models/BuilderAi';
-import { resolvePlanBuilder } from '@/services/credits';
+import { resolvePlanBuilder, validatePlanAndCreditsForUser } from '@/services/credits';
 import {
   analyzeAttachedImagesDesign,
   buildAttachedFilesPromptSection,
@@ -324,33 +324,18 @@ export async function POST(
     })(),
   ]);
 
-  // Validate build credits & plan eligibility using already-resolved plan & aiConfig (no duplicate DB queries)
-  if (!aiConfig?.using_own_key) {
-    if (!plan) {
-      await clearInitialPromptOnEarlyExit();
-      return NextResponse.json(
-        { error: 'No active plan. Please subscribe to a plan to start a project.' },
-        { status: 403 }
-      );
-    }
-    const unlimited = plan.monthly_build_credits === -1;
-    if ((plan.monthly_build_credits ?? 0) === 0 && !unlimited) {
-      await clearInitialPromptOnEarlyExit();
-      return NextResponse.json(
-        { error: 'Your plan does not include AI build credits.' },
-        { status: 403 }
-      );
-    }
-    if (!unlimited && (ctx.user.build_credits ?? 0) < 1) {
-      await clearInitialPromptOnEarlyExit();
-      return NextResponse.json(
-        {
-          error:
-            'Insufficient build credits. Your credits will reset at the beginning of next month.',
-        },
-        { status: 403 }
-      );
-    }
+  // Validate build credits & plan eligibility using shared PHP-parity helper (non-demo admins always allowed)
+  const creditCheck = validatePlanAndCreditsForUser(
+    ctx.user,
+    plan,
+    Boolean(aiConfig?.using_own_key)
+  );
+  if (!creditCheck.allowed) {
+    await clearInitialPromptOnEarlyExit();
+    return NextResponse.json(
+      { error: creditCheck.reason || 'Insufficient build credits.' },
+      { status: 403 }
+    );
   }
 
   if (!aiConfig) {
