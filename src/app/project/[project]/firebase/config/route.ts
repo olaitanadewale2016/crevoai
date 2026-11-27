@@ -46,7 +46,7 @@ export async function GET(
     config,
     uses_system_firebase: Boolean(project.uses_system_firebase),
     can_use_own_config: isAdmin || Boolean(plan?.allow_user_firebase_config),
-    collection_prefix: project.uses_system_firebase ? `projects/${project._id}/` : '',
+    collection_prefix: `projects/${project._id}`,
     admin_sdk_configured: Boolean(project.firebase_admin_service_account),
   });
 }

@@ -95,17 +95,24 @@ const initialProgress: BuildProgress = {
 
 export function useBuilderChat(projectId: string, options: UseBuilderChatOptions): UseBuilderChatReturn {
     const { pusherConfig, initialHistory, initialPreviewUrl, onComplete, onError, onMessage, onAction, autoBuild = true, onBuildStart, onBuildComplete, onBuildError, onTokenUsage, onCreditWarning, onCreditExceeded, onCreditsSync, errorSanitizer } = options;
+    const isInitiallyRunning = Boolean(options.initialCanReconnect && options.initialSessionId);
     const history = useChatHistory({ projectId, initialHistory });
-    const [sessionId, setSessionId] = useState<string | null>(null);
+    const [sessionId, setSessionId] = useState<string | null>(
+        isInitiallyRunning ? (options.initialSessionId ?? null) : null
+    );
     const [isStarting, setIsStarting] = useState(false);
     const [startError, setStartError] = useState<string | null>(null);
     const [progress, setProgress] = useState<BuildProgress>(() => ({
         ...initialProgress,
+        status: isInitiallyRunning ? 'running' : 'idle',
         previewUrl: initialPreviewUrl ?? null,
     }));
     const [isBuildingPreview, setIsBuildingPreview] = useState(false);
     const isBuildingPreviewRef = useRef(false);
     const triggerBuildRef = useRef<(opts?: { silent?: boolean }) => Promise<void>>(() => Promise.resolve());
+    const pollStatusRef = useRef<(opts?: { force?: boolean; suppressAutoBuild?: boolean }) => Promise<void>>(
+        () => Promise.resolve()
+    );
     const pendingMessageRef = useRef<string | null>(null);
     const buildTriggeredRef = useRef(false);
     const fallbackBuildTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -117,12 +124,38 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     }, []);
     const lastEventTimeRef = useRef<number>(0);
     const lastPollTimeRef = useRef<number>(0);
-    // Ref-based dedup: tracks content of assistant messages already added to history.
-    // Using a ref avoids stale closure issues with history.messages state.
-    const addedMessagesRef = useRef(new Set<string>());
+    // Ref-based dedup seeded from initialHistory current turn so reconnecting/polling
+    // never duplicates action or assistant entries already hydrated from SSR history.
+    const initialDedupSeeds = useMemo(() => {
+        const list = Array.isArray(initialHistory) ? initialHistory : [];
+        let lastUserIdx = -1;
+        for (let i = list.length - 1; i >= 0; i--) {
+            if (list[i]?.role === 'user') {
+                lastUserIdx = i;
+                break;
+            }
+        }
+        const currentTurn = lastUserIdx >= 0 ? list.slice(lastUserIdx + 1) : [];
+        const messages = new Set<string>();
+        const actionTexts = new Set<string>();
+        for (const entry of currentTurn) {
+            const rawContent = String(entry?.content || '');
+            const trimmed = rawContent.trim();
+            if (!trimmed) continue;
+            if (entry.role === 'assistant') {
+                messages.add(rawContent);
+                messages.add(trimmed);
+            } else if (entry.role === 'action') {
+                actionTexts.add(trimmed.toLowerCase());
+            }
+        }
+        return { messages, actionTexts };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    const addedMessagesRef = useRef(initialDedupSeeds.messages);
     // Dedup for action events (Go builder + Laravel broadcast + HTTP poll fallback)
     const addedActionsRef = useRef(new Set<string>());
-    const seenActionTextsRef = useRef(new Set<string>());
+    const seenActionTextsRef = useRef(initialDedupSeeds.actionTexts);
     // Dedup for error events (separate namespace from messages to avoid collisions)
     const addedErrorsRef = useRef(new Set<string>());
     // Dedup: prevent duplicate complete or credit alerts within the same session
@@ -149,15 +182,27 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         initialCanReconnect: options.initialCanReconnect ?? false,
         onReconnected: (sessionStatus: SessionStatus) => {
             setSessionId(sessionStatus.sessionId);
-            // Set progress to running so the UI shows the correct state
-            setProgress(prev => ({ ...prev, status: 'running' }));
+            setProgress(prev => ({
+                ...prev,
+                status: 'running',
+                ...(sessionStatus.previewUrl ? { previewUrl: sessionStatus.previewUrl } : {}),
+            }));
+            void pollStatusRef.current({ force: true });
         },
         onReconnectFailed: (error) => {
+            setSessionId(null);
+            setProgress(prev =>
+                prev.status === 'running' || prev.status === 'connecting'
+                    ? { ...prev, status: 'idle', thinkingContent: null, thinkingStartTime: null }
+                    : prev
+            );
             const sanitized = errorSanitizerRef.current ? errorSanitizerRef.current(error) : error;
             onError?.(sanitized);
         },
         onSessionNotFound: () => {
-            // Session no longer available - this is fine, just don't reconnect
+            // Active session already ended or healed on server: hydrate final DB state without auto-rebuilding
+            setSessionId(null);
+            void pollStatusRef.current({ force: true, suppressAutoBuild: true });
         },
     });
 
@@ -312,6 +357,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
         const sanitized = errorSanitizerRef.current ? errorSanitizerRef.current(data.error) : data.error;
 
+        setSessionId(null);
         setProgress(prev => ({
             ...prev,
             status: 'failed',
@@ -349,6 +395,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         }
 
         // Update progress state; clarifying/chat-only replies return to idle without triggering builds
+        setSessionId(null);
         setProgress(prev => ({
             ...prev,
             status: isClarifyingOrChatOnly ? 'idle' : 'completed',
@@ -438,45 +485,8 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     // since events may have been missed during the disconnection
     const handleWsReconnected = useCallback(async () => {
         if (progress.status !== 'running' || !sessionId) return;
-        try {
-            const response = await axios.get(`/builder/projects/${projectId}/status?quick=1`);
-            const status = response.data.status;
-            if (typeof response.data.tokens_used === 'number' && response.data.tokens_used > 0) {
-                setProgress(prev => ({
-                    ...prev,
-                    tokensUsed: Math.max(prev.tokensUsed, response.data.tokens_used),
-                }));
-            }
-            if (response.data.credits) {
-                onCreditsSync?.(response.data.credits);
-            }
-            if (status === 'completed' || status === 'failed') {
-                const previewUrl = response.data.preview_url || undefined;
-                if (previewUrl) {
-                    clearFallbackBuildTimer();
-                    buildTriggeredRef.current = true;
-                }
-                setProgress(prev => ({
-                    ...prev,
-                    status: status as BuildProgress['status'],
-                    hasFileChanges: status === 'completed' && !previewUrl ? true : prev.hasFileChanges,
-                    ...(previewUrl && { previewUrl }),
-                    thinkingContent: null,
-                    thinkingStartTime: null,
-                }));
-                if (status === 'completed') {
-                    if (previewUrl) {
-                        onBuildComplete?.(previewUrl);
-                    } else if (autoBuild && !buildTriggeredRef.current) {
-                        buildTriggeredRef.current = true;
-                        void triggerBuildRef.current();
-                    }
-                }
-            }
-        } catch {
-            // Silent - regular polling will catch it
-        }
-    }, [progress.status, sessionId, projectId, autoBuild, onBuildStart, onBuildComplete, onCreditsSync, clearFallbackBuildTimer]);
+        await pollStatusRef.current({ force: true });
+    }, [progress.status, sessionId]);
 
     const isReverb = pusherConfig.provider === 'reverb';
 
@@ -541,9 +551,9 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
     // Shared poll logic with debounce to prevent redundant requests.
     // Also acts as a live HTTP streaming fallback if Pusher WebSocket events are delayed or unavailable.
-    const pollStatus = useCallback(async () => {
+    const pollStatus = useCallback(async (opts?: { force?: boolean; suppressAutoBuild?: boolean }) => {
         const now = Date.now();
-        if (now - lastPollTimeRef.current < 2000) return;
+        if (!opts?.force && now - lastPollTimeRef.current < 2000) return;
         lastPollTimeRef.current = now;
 
         try {
@@ -616,15 +626,15 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                 }));
             }
 
-            const hasAssistantReply = currentTurnEntries.some(msg => msg.role === 'assistant');
             const hasBuildAction = currentTurnEntries.some(msg => msg.role === 'action');
-
-            if (
+            const isTerminalOrIdle =
                 status === 'completed' ||
                 status === 'failed' ||
                 status === 'cancelled' ||
-                (status === 'idle' && hasAssistantReply)
-            ) {
+                status === 'idle';
+
+            if (isTerminalOrIdle) {
+                setSessionId(null);
                 const previewUrl = response.data.preview_url || undefined;
                 if (previewUrl) {
                     clearFallbackBuildTimer();
@@ -636,9 +646,11 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                     ...prev,
                     status: status as BuildProgress['status'],
                     hasFileChanges:
-                        status === 'completed' && !previewUrl && hasBuildAction
+                        status === 'completed' && !previewUrl && hasBuildAction && !opts?.suppressAutoBuild
                             ? true
-                            : prev.hasFileChanges,
+                            : status === 'idle' || status === 'failed' || status === 'cancelled'
+                              ? false
+                              : prev.hasFileChanges,
                     ...(previewUrl && { previewUrl }),
                     thinkingContent: null,
                     thinkingStartTime: null,
@@ -671,7 +683,12 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                 if (status === 'completed') {
                     if (previewUrl) {
                         onBuildComplete?.(previewUrl);
-                    } else if (hasBuildAction && autoBuild && !buildTriggeredRef.current) {
+                    } else if (
+                        hasBuildAction &&
+                        autoBuild &&
+                        !buildTriggeredRef.current &&
+                        !opts?.suppressAutoBuild
+                    ) {
                         buildTriggeredRef.current = true;
                         void triggerBuildRef.current();
                     }
@@ -681,6 +698,10 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             // Silent - will retry on next interval
         }
     }, [projectId, autoBuild, onBuildComplete, onCreditExceeded, onCreditsSync, clearFallbackBuildTimer]);
+
+    useEffect(() => {
+        pollStatusRef.current = pollStatus;
+    }, [pollStatus]);
 
     // Safety & streaming fallback: poll status while running whenever Pusher hasn't delivered an event recently.
     // Keeps UI streaming live actions/messages even if Pusher is disconnected, blocked, or misconfigured.
@@ -789,6 +810,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
         try {
             await axios.post(`/builder/projects/${projectId}/cancel`);
+            setSessionId(null);
             setProgress(prev => ({
                 ...prev,
                 status: 'cancelled',

@@ -37,8 +37,9 @@ export default async function DatabasePage() {
     getSystemAdminServiceAccount(),
   ]);
 
-  const firebaseEnabled = Boolean(plan?.enable_firebase);
-  const canUseOwnConfig = Boolean(plan?.allow_user_firebase_config);
+  const isAdmin = user.role === 'admin';
+  const firebaseEnabled = Boolean(isAdmin || plan?.enable_firebase);
+  const canUseOwnConfig = Boolean(isAdmin || plan?.allow_user_firebase_config);
   const systemFirebaseConfigured = Boolean(
     sysFirebaseCfg?.apiKey && sysFirebaseCfg?.projectId && sysFirebaseCfg?.authDomain
   );

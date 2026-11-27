@@ -92,13 +92,19 @@ export function validateFirebaseWebConfig(cfg: Partial<FirebaseWebConfig>): stri
   return null;
 }
 
-export function generateFirestoreRules(projectId: string): string {
+export function generateFirestoreRules(projectId: string, collectionPrefix?: string): string {
+  const rawPrefix = (collectionPrefix ?? `projects/${projectId}`).replace(/^\/+|\/+$/g, '');
+  const matchPath = rawPrefix ? `/${rawPrefix}/{collection}/{document=**}` : `/{collection}/{document=**}`;
   return `rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Scoped rules for Crevo project ${projectId}
-    match /projects/${projectId}/{collection}/{document=**} {
-      allow read, write: if true;
+    // Project-specific rules for project: ${projectId}
+    match ${matchPath} {
+      // Allow read access to public documents
+      allow read: if resource.data.visibility == 'public';
+
+      // Allow read/write access to authenticated users
+      allow read, write: if request.auth != null;
     }
   }
 }`;

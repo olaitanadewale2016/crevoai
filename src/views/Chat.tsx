@@ -727,19 +727,7 @@ export default function Chat({
         playSound,
     ]);
 
-    // Auto-rebuild preview for completed projects with history but no preview
-    const autoRebuildTriggered = useRef(false);
-    useEffect(() => {
-        if (
-            project.has_history &&
-            !project.preview_url &&
-            project.build_status === 'completed' &&
-            !autoRebuildTriggered.current
-        ) {
-            autoRebuildTriggered.current = true;
-            triggerBuild();
-        }
-    }, [project.has_history, project.preview_url, project.build_status, triggerBuild]);
+    // Do not auto-rebuild when opening an existing/recent project; keep it as left unless manually rebuilt.
 
     // Track if initial page load is complete
     const isInitialLoad = useRef(true);

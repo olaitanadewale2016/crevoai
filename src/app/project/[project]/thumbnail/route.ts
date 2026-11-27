@@ -49,9 +49,11 @@ export async function POST(
     cacheControl: 'public, max-age=31536000, immutable',
   });
 
-  project.thumbnail = path;
-  project.updated_at = new Date();
-  await project.save();
+  await Project.updateOne(
+    { _id: project._id },
+    { $set: { thumbnail: path } },
+    { timestamps: false }
+  );
 
   return NextResponse.json({
     success: true,

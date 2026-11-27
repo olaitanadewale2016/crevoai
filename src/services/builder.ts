@@ -21,7 +21,7 @@ import { getProjectFirebaseConfig } from '@/lib/firebase-admin';
 import { getUserCurrentPlan } from '@/lib/auth';
 import { resolvePlanAiProvider, resolvePlanBuilder } from './credits';
 import { Project, Template, IProject, IConversationEntry } from '@/models/Project';
-import { UserAiSettings, IUser } from '@/models/User';
+import { User, UserAiSettings, IUser } from '@/models/User';
 import type { IPlan } from '@/models/Billing';
 import type { AttachedImageVisionPayload } from '@/services/attached-images';
 import {
@@ -1034,14 +1034,24 @@ export async function buildDynamicHtml(
   // SEO / OpenGraph / Twitter meta tags + window.__APP_CONFIG__
   const desc = escapeHtmlAttr(project.published_description || project.description || '');
   const shareImgUrl = project.share_image ? getPublicAssetUrl(project.share_image) : null;
-  const firebaseCfg = await getProjectFirebaseConfig(project);
+  const owner = project.user_id
+    ? await User.findById(project.user_id).select('_id role email').lean()
+    : null;
+  const [ownerPlan, rawFirebaseCfg] = await Promise.all([
+    owner ? getUserCurrentPlan(owner) : Promise.resolve(null),
+    getProjectFirebaseConfig(project),
+  ]);
+  const firebaseAllowed = Boolean(owner?.role === 'admin' || ownerPlan?.enable_firebase);
+  const firebaseCfg = firebaseAllowed ? rawFirebaseCfg : null;
 
   const appConfig: Record<string, unknown> = {
     apiUrl: appUrl,
     projectId: project._id,
     apiToken: project.api_token || '',
-    firebasePrefix: `projects/${project._id}`,
   };
+  if (firebaseAllowed) {
+    appConfig.firebasePrefix = `projects/${project._id}`;
+  }
   if (firebaseCfg) appConfig.firebase = firebaseCfg;
   if (project.supabase_config) {
     const supa = decryptJson<{ url?: string; anonKey?: string }>(project.supabase_config);

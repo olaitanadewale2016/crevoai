@@ -67,10 +67,12 @@ export default async function ProjectChatPage({
   const allowed = await canViewProject(ctx.user, project);
   if (!allowed) notFound();
 
-  // Touch last_viewed_at
-  await Project.updateOne({ _id: project._id }, { $set: { last_viewed_at: new Date() } }).catch(
-    () => {}
-  );
+  // Touch last_viewed_at without updating updated_at so opening a project preserves its state and order
+  await Project.updateOne(
+    { _id: project._id },
+    { $set: { last_viewed_at: new Date() } },
+    { timestamps: false }
+  ).catch(() => {});
 
   const user = ctx.user;
 
