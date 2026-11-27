@@ -5,10 +5,13 @@ import { parseRequestBody, toBool } from '@/lib/http';
 import { Plugin } from '@/models/Billing';
 import { cacheForgetPrefix } from '@/lib/cache';
 import {
+  EMPTY_SELECT_SENTINEL,
   GATEWAY_REGISTRY,
   encryptPluginConfig,
   getPluginConfigDecrypted,
+  getSchemaForPlugin,
   resolveAppUrl,
+  trimmedString,
 } from '@/services/payment-gateways';
 
 export const dynamic = 'force-dynamic';
@@ -43,7 +46,7 @@ export async function POST(
   const body = await parseRequestBody<Record<string, any>>(req);
 
   const appUrl = resolveAppUrl(req);
-  const schema = def ? def.getConfigSchema(appUrl) : [];
+  const schema = getSchemaForPlugin(plugin, slug, appUrl);
   const existingConfig = getPluginConfigDecrypted(plugin);
 
   // Filter schema-defined fields, strip readonly, coerce toggles, and keep existing secrets when masked/blank
@@ -52,11 +55,12 @@ export async function POST(
     if (field.type === 'readonly') continue;
     const rawVal = body[field.name];
     if (field.type === 'toggle') {
-      cleanConfig[field.name] = toBool(rawVal, Boolean(existingConfig[field.name] ?? field.default));
+      const fallbackBool = toBool(existingConfig[field.name] ?? field.default, false);
+      cleanConfig[field.name] = toBool(rawVal, fallbackBool);
       continue;
     }
-    if (field.sensitive) {
-      const strVal = typeof rawVal === 'string' ? rawVal.trim() : '';
+    if (field.sensitive || field.type === 'password') {
+      const strVal = trimmedString(rawVal);
       if (!strVal || strVal === '••••••••') {
         if (existingConfig[field.name]) cleanConfig[field.name] = existingConfig[field.name];
       } else {
@@ -65,14 +69,36 @@ export async function POST(
       continue;
     }
     if (rawVal !== undefined) {
-      cleanConfig[field.name] = typeof rawVal === 'string' ? rawVal.trim() : rawVal;
+      let strVal = trimmedString(rawVal);
+      if (field.type === 'select' && strVal === EMPTY_SELECT_SENTINEL) {
+        strVal = '';
+      }
+      cleanConfig[field.name] = typeof rawVal === 'string' || field.type === 'select' ? strVal : rawVal;
     }
   }
 
   if (def && def.validateConfig) {
-    const valErr = await def.validateConfig(cleanConfig);
-    if (valErr) {
-      return NextResponse.json({ errors: { config: valErr } }, { status: 422 });
+    try {
+      const valErr = await def.validateConfig(cleanConfig);
+      if (valErr) {
+        return NextResponse.json({ errors: { config: valErr } }, { status: 422 });
+      }
+    } catch (err: any) {
+      return NextResponse.json(
+        { errors: { config: err?.message || `Failed to validate ${def.name} configuration.` } },
+        { status: 422 }
+      );
+    }
+  } else {
+    for (const field of schema) {
+      if (field.required && field.type !== 'readonly' && field.type !== 'toggle') {
+        if (!trimmedString(cleanConfig[field.name])) {
+          return NextResponse.json(
+            { errors: { config: `${field.label} is required.` } },
+            { status: 422 }
+          );
+        }
+      }
     }
   }
 
@@ -81,6 +107,8 @@ export async function POST(
 
   if (slug === 'paypal') {
     await cacheForgetPrefix('paypal:');
+  } else if (slug === 'paystack') {
+    await cacheForgetPrefix('paystack:');
   }
 
   if (req.headers.get('x-inertia')) {

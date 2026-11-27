@@ -1,8 +1,9 @@
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import Plugins from '@/Pages/Admin/Plugins';
 import { getSessionContext } from '@/lib/auth';
 import { getSharedAppProps } from '@/services/shared-context';
-import { getPluginsForAdmin } from '@/services/payment-gateways';
+import { getPluginsForAdmin, resolveAppUrlFromHeaders } from '@/services/payment-gateways';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,8 +13,11 @@ export default async function AdminPluginsPage() {
     redirect('/login');
   }
 
+  const hdrs = await headers();
+  const appUrl = resolveAppUrlFromHeaders(hdrs);
+
   const [plugins, sharedProps] = await Promise.all([
-    getPluginsForAdmin(),
+    getPluginsForAdmin(appUrl),
     getSharedAppProps(),
   ]);
 

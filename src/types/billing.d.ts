@@ -1,4 +1,4 @@
-﻿// Subscription Types
+// Subscription Types
 export type SubscriptionStatus = 'active' | 'pending' | 'expired' | 'cancelled';
 
 export type PaymentMethod =
@@ -156,6 +156,7 @@ export interface PluginConfigField {
     label: string;
     type: 'text' | 'password' | 'textarea' | 'toggle' | 'select' | 'readonly';
     required?: boolean;
+    sensitive?: boolean;
     default?: string | boolean;
     placeholder?: string;
     help?: string;

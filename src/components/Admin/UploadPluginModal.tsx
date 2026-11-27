@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { route } from '@/lib/route';
 import { useState, useRef, DragEvent, ChangeEvent } from 'react';
@@ -58,7 +58,7 @@ export default function UploadPluginModal({ open, onOpenChange }: UploadPluginMo
 
     const validateAndSetFile = (newFile: File) => {
         setError(null);
-        if (!newFile.name.endsWith('.zip')) {
+        if (!newFile.name.toLowerCase().endsWith('.zip')) {
             setError(t('Only ZIP files are allowed'));
             return;
         }
@@ -105,7 +105,7 @@ export default function UploadPluginModal({ open, onOpenChange }: UploadPluginMo
 
     return (
         <Dialog open={open} onOpenChange={handleClose}>
-            <DialogContent className="max-w-md">
+            <DialogContent className="max-w-md max-h-[85dvh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle>{t('Upload Plugin')}</DialogTitle>
                     <DialogDescription>

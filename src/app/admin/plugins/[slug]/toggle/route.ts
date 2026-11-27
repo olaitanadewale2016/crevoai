@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { getSessionContext, isDemoAdminUser } from '@/lib/auth';
 import { Plugin } from '@/models/Billing';
-import { GATEWAY_REGISTRY, getPluginConfigDecrypted } from '@/services/payment-gateways';
+import { GATEWAY_REGISTRY, getPluginConfigDecrypted, isPluginConfigured } from '@/services/payment-gateways';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,11 +32,9 @@ export async function POST(
     );
   }
 
-  const def = GATEWAY_REGISTRY[slug];
-
   if (plugin.status === 'inactive') {
     const config = getPluginConfigDecrypted(plugin);
-    if (def && !def.isConfigured(config)) {
+    if (!isPluginConfigured(plugin, slug, config)) {
       return NextResponse.json(
         { errors: { plugin: 'Please configure the plugin before activating it.' } },
         { status: 422 }

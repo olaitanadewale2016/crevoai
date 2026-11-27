@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { route } from '@/lib/route';
 import { useState } from 'react';
@@ -41,6 +41,8 @@ import {
     Trash2,
     Shield,
     Upload,
+    Eye,
+    EyeOff,
 } from 'lucide-react';
 import UploadPluginModal from '@/components/Admin/UploadPluginModal';
 import type { AdminPluginsPageProps } from '@/types/admin';
@@ -80,6 +82,15 @@ function fallbackCopy(text: string): boolean {
     return success;
 }
 
+const EMPTY_SELECT_SENTINEL = '__default__';
+
+function coerceToggleValue(raw: unknown): boolean {
+    if (typeof raw === 'boolean') return raw;
+    if (typeof raw === 'number') return raw !== 0;
+    const s = String(raw ?? '').trim().toLowerCase();
+    return s === 'true' || s === '1' || s === 'yes' || s === 'on';
+}
+
 export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
     const { t } = useTranslation();
     const { isLoading: isPageLoading } = useAdminLoading();
@@ -87,7 +98,10 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
     const [isUninstallDialogOpen, setIsUninstallDialogOpen] = useState(false);
     const [selectedPlugin, setSelectedPlugin] = useState<Plugin | null>(null);
     const [configValues, setConfigValues] = useState<Record<string, string | boolean>>({});
+    const [savedMaskedFields, setSavedMaskedFields] = useState<string[]>([]);
+    const [showPasswordFields, setShowPasswordFields] = useState<Record<string, boolean>>({});
     const [configFormErrors, setConfigFormErrors] = useState<Record<string, string>>({});
+    const [togglingSlug, setTogglingSlug] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
 
@@ -120,6 +134,7 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
             return;
         }
 
+        setTogglingSlug(plugin.slug);
         router.post(
             route('admin.plugins.toggle', plugin.slug),
             {},
@@ -135,32 +150,71 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
                 onError: (errors) => {
                     toast.error(Object.values(errors)[0] as string);
                 },
+                onFinish: () => setTogglingSlug(null),
             }
         );
     };
 
     const openConfigDialog = (plugin: Plugin) => {
         setSelectedPlugin(plugin);
-        // Initialize config values from existing config
         const initialValues: Record<string, string | boolean> = {};
+        const masked: string[] = [];
+
         plugin.config_schema.forEach((field) => {
             if (field.type === 'readonly') return;
+            if (field.type === 'toggle') {
+                initialValues[field.name] = coerceToggleValue(
+                    plugin.config[field.name] ?? field.default ?? false
+                );
+                return;
+            }
+            const raw = plugin.config[field.name];
+            if ((field.sensitive || field.type === 'password') && raw === '••••••••') {
+                initialValues[field.name] = '';
+                masked.push(field.name);
+                return;
+            }
             initialValues[field.name] =
-                (plugin.config[field.name] as string | boolean) ?? field.default ?? '';
+                raw !== undefined && raw !== null
+                    ? String(raw)
+                    : field.default !== undefined && field.default !== null
+                      ? String(field.default)
+                      : '';
         });
+
         setConfigValues(initialValues);
+        setSavedMaskedFields(masked);
+        setShowPasswordFields({});
         setConfigFormErrors({});
         setIsConfigDialogOpen(true);
+    };
+
+    const updateConfigField = (fieldName: string, nextValue: string | boolean) => {
+        setConfigValues((prev) => ({ ...prev, [fieldName]: nextValue }));
+        setConfigFormErrors((prev) => {
+            if (!prev[fieldName] && !prev.config && !prev.plugin && !prev.error) return prev;
+            const next = { ...prev };
+            delete next[fieldName];
+            delete next.config;
+            delete next.plugin;
+            delete next.error;
+            return next;
+        });
     };
 
     const validateConfigForm = () => {
         if (!selectedPlugin) return false;
         const errors: Record<string, string> = {};
         selectedPlugin.config_schema.forEach((field) => {
-            if (field.type === 'readonly') return;
+            if (field.type === 'readonly' || field.type === 'toggle') return;
             if (field.required) {
-                const value = configValues[field.name];
-                if (value === undefined || value === '' || value === null) {
+                const raw = configValues[field.name];
+                const trimmed = typeof raw === 'string' ? raw.trim() : raw;
+                const keepSavedSecret =
+                    (field.sensitive || field.type === 'password') &&
+                    savedMaskedFields.includes(field.name) &&
+                    trimmed === '';
+                if (!keepSavedSecret && (trimmed === undefined || trimmed === '' || trimmed === null)) {
                     errors[field.name] = t(':field is required', { field: field.label });
                 }
             }
@@ -176,18 +230,26 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
             return;
         }
 
+        const sanitizedPayload: Record<string, string | boolean> = {};
+        for (const [k, v] of Object.entries(configValues)) {
+            sanitizedPayload[k] = typeof v === 'string' ? v.trim() : v;
+        }
+
         setIsLoading(true);
-        router.post(route('admin.plugins.configure', selectedPlugin.slug), configValues, {
+        router.post(route('admin.plugins.configure', selectedPlugin.slug), sanitizedPayload, {
             preserveScroll: true,
             onSuccess: () => {
                 toast.success(t('Plugin configured successfully'));
                 setIsConfigDialogOpen(false);
                 setSelectedPlugin(null);
+                setSavedMaskedFields([]);
+                setShowPasswordFields({});
                 setConfigFormErrors({});
             },
             onError: (errors) => {
                 setConfigFormErrors(errors as Record<string, string>);
-                toast.error(Object.values(errors)[0] as string);
+                const firstMsg = Object.values(errors)[0] as string;
+                if (firstMsg) toast.error(firstMsg);
             },
             onFinish: () => setIsLoading(false),
         });
@@ -229,16 +291,52 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
                             {field.label}
                             {field.required && <span className="text-destructive ms-1">*</span>}
                         </Label>
-                        <Input
-                            id={field.name}
-                            type={field.type}
-                            value={(value as string) || ''}
-                            onChange={(e) =>
-                                setConfigValues({ ...configValues, [field.name]: e.target.value })
-                            }
-                            placeholder={field.placeholder}
-                            className={error ? 'border-destructive' : ''}
-                        />
+                        <div className={field.type === 'password' ? 'relative' : ''}>
+                            <Input
+                                id={field.name}
+                                type={
+                                    field.type === 'password' && showPasswordFields[field.name]
+                                        ? 'text'
+                                        : field.type
+                                }
+                                value={(value as string) || ''}
+                                onChange={(e) => updateConfigField(field.name, e.target.value)}
+                                placeholder={
+                                    field.type === 'password' &&
+                                    savedMaskedFields.includes(field.name) &&
+                                    !(value as string)
+                                        ? t('Saved secret — leave blank to keep existing')
+                                        : field.placeholder
+                                }
+                                className={`${field.type === 'password' ? 'pe-10 ' : ''}${error ? 'border-destructive' : ''}`.trim()}
+                            />
+                            {field.type === 'password' && (
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    tabIndex={-1}
+                                    className="absolute end-1 top-1/2 -translate-y-1/2 h-7 w-7 text-muted-foreground hover:text-foreground"
+                                    onClick={() =>
+                                        setShowPasswordFields((prev) => ({
+                                            ...prev,
+                                            [field.name]: !prev[field.name],
+                                        }))
+                                    }
+                                    aria-label={
+                                        showPasswordFields[field.name]
+                                            ? t('Hide secret')
+                                            : t('Show secret')
+                                    }
+                                >
+                                    {showPasswordFields[field.name] ? (
+                                        <EyeOff className="h-4 w-4" />
+                                    ) : (
+                                        <Eye className="h-4 w-4" />
+                                    )}
+                                </Button>
+                            )}
+                        </div>
                         {error && (
                             <p className="text-sm text-destructive">{error}</p>
                         )}
@@ -291,12 +389,14 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
                         <Textarea
                             id={field.name}
                             value={(value as string) || ''}
-                            onChange={(e) =>
-                                setConfigValues({ ...configValues, [field.name]: e.target.value })
-                            }
+                            onChange={(e) => updateConfigField(field.name, e.target.value)}
                             placeholder={field.placeholder}
                             rows={field.rows || 4}
+                            className={error ? 'border-destructive' : ''}
                         />
+                        {error && (
+                            <p className="text-sm text-destructive">{error}</p>
+                        )}
                         {field.help && (
                             <p className="text-xs text-muted-foreground">{field.help}</p>
                         )}
@@ -305,7 +405,7 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
 
             case 'toggle':
                 return (
-                    <div key={field.name} className="flex items-center justify-between">
+                    <div key={field.name} className="flex items-center justify-between gap-4">
                         <div className="space-y-0.5">
                             <Label htmlFor={field.name}>{field.label}</Label>
                             {field.help && (
@@ -314,15 +414,19 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
                         </div>
                         <Switch
                             id={field.name}
-                            checked={(value as boolean) || false}
-                            onCheckedChange={(checked) =>
-                                setConfigValues({ ...configValues, [field.name]: checked })
-                            }
+                            checked={coerceToggleValue(value)}
+                            onCheckedChange={(checked) => updateConfigField(field.name, checked)}
                         />
                     </div>
                 );
 
-            case 'select':
+            case 'select': {
+                const options = field.options || [];
+                const hasEmptyOption = options.some((opt) => opt.value === '');
+                const strValue = value === undefined || value === null ? '' : String(value);
+                const selectValue =
+                    strValue === '' && hasEmptyOption ? EMPTY_SELECT_SENTINEL : strValue;
+
                 return (
                     <div key={field.name} className="space-y-2">
                         <Label htmlFor={field.name}>
@@ -330,27 +434,38 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
                             {field.required && <span className="text-destructive ms-1">*</span>}
                         </Label>
                         <Select
-                            value={(value as string) || ''}
+                            value={selectValue}
                             onValueChange={(v) =>
-                                setConfigValues({ ...configValues, [field.name]: v })
+                                updateConfigField(
+                                    field.name,
+                                    v === EMPTY_SELECT_SENTINEL ? '' : v
+                                )
                             }
                         >
-                            <SelectTrigger>
+                            <SelectTrigger className={error ? 'border-destructive' : ''}>
                                 <SelectValue placeholder={field.placeholder || t('Select an option...')} />
                             </SelectTrigger>
                             <SelectContent>
-                                {field.options?.map((option) => (
-                                    <SelectItem key={option.value} value={option.value}>
-                                        {option.label}
-                                    </SelectItem>
-                                ))}
+                                {options.map((option) => {
+                                    const itemValue =
+                                        option.value === '' ? EMPTY_SELECT_SENTINEL : option.value;
+                                    return (
+                                        <SelectItem key={itemValue} value={itemValue}>
+                                            {option.label}
+                                        </SelectItem>
+                                    );
+                                })}
                             </SelectContent>
                         </Select>
+                        {error && (
+                            <p className="text-sm text-destructive">{error}</p>
+                        )}
                         {field.help && (
                             <p className="text-xs text-muted-foreground">{field.help}</p>
                         )}
                     </div>
                 );
+            }
 
             default:
                 return null;
@@ -449,7 +564,12 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
                                         <Switch
                                             checked={plugin.is_active}
                                             onCheckedChange={() => handleToggle(plugin)}
-                                            disabled={!plugin.is_configured}
+                                            disabled={togglingSlug === plugin.slug}
+                                            title={
+                                                !plugin.is_configured && !plugin.is_active
+                                                    ? t('Configure plugin before activating')
+                                                    : undefined
+                                            }
                                         />
                                     )}
                                 </div>
@@ -529,7 +649,7 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
                 setIsConfigDialogOpen(open);
                 if (!open) setConfigFormErrors({});
             }}>
-                <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+                <DialogContent className="max-w-lg max-h-[85dvh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>{t('Configure :name', { name: selectedPlugin?.name || '' })}</DialogTitle>
                         <DialogDescription>
@@ -537,7 +657,32 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
-                        {selectedPlugin?.config_schema.map((field) => renderConfigField(field))}
+                        {(() => {
+                            const fieldNames = new Set(
+                                selectedPlugin?.config_schema.map((f) => f.name) || []
+                            );
+                            const generalErrors = Object.entries(configFormErrors)
+                                .filter(([k, v]) => Boolean(v) && !fieldNames.has(k))
+                                .map(([, v]) => v);
+                            if (generalErrors.length === 0) return null;
+                            return (
+                                <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+                                    <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                                    <div className="space-y-1">
+                                        {generalErrors.map((msg, idx) => (
+                                            <p key={idx}>{msg}</p>
+                                        ))}
+                                    </div>
+                                </div>
+                            );
+                        })()}
+                        {selectedPlugin && selectedPlugin.config_schema.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">
+                                {t('No configuration fields are required for this plugin.')}
+                            </p>
+                        ) : (
+                            selectedPlugin?.config_schema.map((field) => renderConfigField(field))
+                        )}
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setIsConfigDialogOpen(false)}>

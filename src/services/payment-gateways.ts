@@ -11,7 +11,7 @@ import {
   timingSafeEqualStr,
 } from '@/lib/crypto';
 import { getSetting } from '@/lib/settings';
-import { cacheForget, cacheRemember, cacheSet, withLock } from '@/lib/cache';
+import { cacheForget, cacheForgetPrefix, cacheRemember, cacheSet, withLock } from '@/lib/cache';
 import { getNextSequence } from '@/models/Counter';
 import { Plugin, Subscription, Transaction, Plan, IPlan, ISubscription, IPlugin, CORE_PLUGINS } from '@/models/Billing';
 import { User, IUser } from '@/models/User';
@@ -25,6 +25,23 @@ import {
 import { sendUserEmailNotification, sendAdminEventEmail } from '@/lib/email';
 import { formatCurrencyAmount, fromSmallestUnit, toSmallestUnit } from '@/lib/currency';
 
+export const EMPTY_SELECT_SENTINEL = '__default__';
+
+export function resolveAppUrlFromHeaders(
+  hdrs?: { get(name: string): string | null } | null
+): string {
+  const configured = (process.env.APP_URL || '').trim().replace(/\/+$/, '');
+  if (configured && !configured.includes('localhost')) {
+    return configured;
+  }
+  if (hdrs) {
+    const host = hdrs.get('x-forwarded-host') || hdrs.get('host');
+    const proto = hdrs.get('x-forwarded-proto') || 'https';
+    if (host) return `${proto}://${host}`.replace(/\/+$/, '');
+  }
+  return configured || 'http://localhost:3000';
+}
+
 export function resolveAppUrl(req?: Request | NextRequest): string {
   const configured = (process.env.APP_URL || '').trim().replace(/\/+$/, '');
   if (configured && !configured.includes('localhost')) {
@@ -33,12 +50,36 @@ export function resolveAppUrl(req?: Request | NextRequest): string {
   if (req && 'nextUrl' in req && req.nextUrl?.origin) {
     return req.nextUrl.origin.replace(/\/+$/, '');
   }
-  if (req?.headers) {
-    const host = req.headers.get('x-forwarded-host') || req.headers.get('host');
-    const proto = req.headers.get('x-forwarded-proto') || 'https';
-    if (host) return `${proto}://${host}`.replace(/\/+$/, '');
+  return resolveAppUrlFromHeaders(req?.headers);
+}
+
+export function trimmedString(val: unknown): string {
+  if (typeof val === 'string') return val.trim();
+  if (val === null || val === undefined) return '';
+  return String(val).trim();
+}
+
+export function isFlagEnabled(val: unknown, defaultVal = false): boolean {
+  if (val === undefined || val === null || val === '') return defaultVal;
+  if (typeof val === 'boolean') return val;
+  if (typeof val === 'number') return val !== 0;
+  const s = String(val).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(s)) return true;
+  if (['false', '0', 'no', 'off'].includes(s)) return false;
+  return defaultVal;
+}
+
+export function maskSensitiveConfig(
+  cfg: Record<string, any>,
+  schema: PluginConfigField[]
+): Record<string, any> {
+  const masked: Record<string, any> = { ...cfg };
+  for (const field of schema) {
+    if ((field.sensitive || field.type === 'password') && masked[field.name]) {
+      masked[field.name] = '••••••••';
+    }
   }
-  return configured || 'http://localhost:3000';
+  return masked;
 }
 
 export interface PluginConfigField {
@@ -124,8 +165,10 @@ export function resolvePaystackChargeParams(
   cfg: Record<string, any>
 ): { currency: string; amount: number; converted: boolean; rate: number } {
   const siteCurr = (siteCurrency || 'USD').toUpperCase();
-  const settlement = String(cfg?.settlement_currency || '').trim().toUpperCase();
-  const rawRate = parseFloat(String(cfg?.exchange_rate || '1'));
+  const rawSettlement = trimmedString(cfg?.settlement_currency);
+  const settlement =
+    rawSettlement === EMPTY_SELECT_SENTINEL ? '' : rawSettlement.toUpperCase();
+  const rawRate = parseFloat(trimmedString(cfg?.exchange_rate) || '1');
   const rate = Number.isFinite(rawRate) && rawRate > 0 ? rawRate : 1;
 
   if (settlement && ['NGN', 'GHS', 'ZAR', 'KES', 'USD'].includes(settlement) && settlement !== siteCurr) {
@@ -583,15 +626,16 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
         default: true,
       },
     ],
-    isConfigured: (cfg) => Boolean(cfg?.instructions && String(cfg.instructions).trim().length > 0),
+    isConfigured: (cfg) => Boolean(trimmedString(cfg?.instructions)),
     validateConfig: async (cfg) => {
-      if (!cfg?.instructions || !String(cfg.instructions).trim()) {
+      if (!trimmedString(cfg?.instructions)) {
         return 'Bank transfer instructions are required.';
       }
       return null;
     },
     initPayment: async (plan, user, cfg, currency) => {
       await connectDB();
+      const instructions = trimmedString(cfg.instructions);
       const pending = await Subscription.exists({
         user_id: user._id,
         status: 'pending',
@@ -608,7 +652,7 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
         amount: plan.price,
         payment_method: 'bank_transfer',
         external_subscription_id: reference,
-        metadata: { reference, bank_transfer_instructions: cfg.instructions },
+        metadata: { reference, bank_transfer_instructions: instructions },
       });
       const seq = await getNextSequence('transaction_invoice_seq');
       await Transaction.create({
@@ -621,19 +665,19 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
         type: 'subscription_new',
         payment_method: 'bank_transfer',
         external_transaction_id: reference,
-        metadata: { bank_transfer_instructions: cfg.instructions },
+        metadata: { bank_transfer_instructions: instructions },
       });
 
-      if (cfg.confirmation_email !== false) {
+      if (isFlagEnabled(cfg.confirmation_email, true)) {
         await sendUserEmailNotification('bank_transfer_instructions', user, {
           reference,
           plan_name: plan.name,
           amount: plan.price,
           currency,
-          instructions: cfg.instructions,
+          instructions,
         }).catch(() => {});
       }
-      if (cfg.admin_notification !== false) {
+      if (isFlagEnabled(cfg.admin_notification, true)) {
         await sendAdminEventEmail('bank_transfer_pending', {
           title: 'Pending Bank Transfer Approval',
           summary: `${user.name} submitted a bank transfer for ${plan.name}.`,
@@ -654,7 +698,7 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
           reference,
           amount: plan.price,
           plan_name: plan.name,
-          instructions: String(cfg.instructions || ''),
+          instructions,
         },
       };
     },
@@ -698,9 +742,11 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
       },
       { name: 'sandbox', label: 'Sandbox Mode', type: 'toggle', default: true },
     ],
-    isConfigured: (cfg) => Boolean(cfg?.client_id && cfg?.client_secret),
+    isConfigured: (cfg) => Boolean(trimmedString(cfg?.client_id) && trimmedString(cfg?.client_secret)),
     validateConfig: async (cfg) => {
-      if (!cfg?.client_id || !cfg?.client_secret) return 'PayPal Client ID and Client Secret are required.';
+      if (!trimmedString(cfg?.client_id) || !trimmedString(cfg?.client_secret)) {
+        return 'PayPal Client ID and Client Secret are required.';
+      }
       try {
         await getPayPalAccessToken(cfg);
         return null;
@@ -1223,20 +1269,56 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
     requiresManualApproval: false,
     getConfigSchema: (appUrl) => [
       { name: 'webhook_url', label: 'Webhook URL', type: 'readonly', default: `${appUrl}/payment-gateways/stripe/webhook` },
-      { name: 'publishable_key', label: 'Publishable Key', type: 'text', required: true },
-      { name: 'secret_key', label: 'Secret Key', type: 'password', required: true, sensitive: true },
-      { name: 'webhook_secret', label: 'Webhook Signing Secret', type: 'password', required: true, sensitive: true },
+      { name: 'publishable_key', label: 'Publishable Key', type: 'text', required: true, placeholder: 'pk_test_... or pk_live_...' },
+      { name: 'secret_key', label: 'Secret Key', type: 'password', required: true, sensitive: true, placeholder: 'sk_test_... or sk_live_...' },
+      {
+        name: 'webhook_secret',
+        label: 'Webhook Signing Secret',
+        type: 'password',
+        required: false,
+        sensitive: true,
+        placeholder: 'whsec_...',
+        help: 'Recommended for production webhooks. Checkout session verification also runs on return URL.',
+      },
     ],
-    isConfigured: (cfg) => Boolean(cfg?.secret_key && cfg?.publishable_key),
+    isConfigured: (cfg) => Boolean(trimmedString(cfg?.secret_key) && trimmedString(cfg?.publishable_key)),
     validateConfig: async (cfg) => {
-      if (!cfg?.secret_key) return 'Stripe Secret Key is required.';
-      const res = await fetch('https://api.stripe.com/v1/balance', {
-        headers: { Authorization: `Bearer ${cfg.secret_key}` },
-      });
-      return res.ok ? null : 'Invalid Stripe Secret Key.';
+      const pubKey = trimmedString(cfg?.publishable_key);
+      const secKey = trimmedString(cfg?.secret_key);
+      const webhookSecret = trimmedString(cfg?.webhook_secret);
+      if (!pubKey || !secKey) return 'Stripe Publishable Key and Secret Key are required.';
+      if (!pubKey.startsWith('pk_test_') && !pubKey.startsWith('pk_live_')) {
+        return 'Stripe Publishable Key must start with pk_test_ or pk_live_.';
+      }
+      if (!secKey.startsWith('sk_test_') && !secKey.startsWith('sk_live_') && !secKey.startsWith('rk_')) {
+        return 'Stripe Secret Key must start with sk_test_, sk_live_, or rk_.';
+      }
+      const pubIsTest = pubKey.startsWith('pk_test_');
+      const secIsTest = secKey.startsWith('sk_test_') || secKey.startsWith('rk_test_');
+      const secIsLive = secKey.startsWith('sk_live_') || secKey.startsWith('rk_live_');
+      if ((pubIsTest && secIsLive) || (!pubIsTest && secIsTest)) {
+        return 'Stripe mode mismatch: Publishable Key and Secret Key must both be Test or both Live.';
+      }
+      if (webhookSecret && !webhookSecret.startsWith('whsec_')) {
+        return 'Stripe Webhook Signing Secret must start with whsec_.';
+      }
+      try {
+        const res = await fetch('https://api.stripe.com/v1/balance', {
+          headers: { Authorization: `Bearer ${secKey}` },
+          signal: AbortSignal.timeout(12_000),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+          return data?.error?.message || `Invalid Stripe Secret Key (${res.status}).`;
+        }
+        return null;
+      } catch (e: any) {
+        return e?.message || 'Unable to verify Stripe credentials.';
+      }
     },
     initPayment: async (plan, user, cfg, currency, opts) => {
-      const appUrl = opts?.appUrl || resolveAppUrl();
+      const appUrl = (opts?.appUrl || resolveAppUrl()).replace(/\/+$/, '');
+      const secretKey = trimmedString(cfg.secret_key);
       const params = new URLSearchParams();
       params.append('mode', plan.billing_period === 'lifetime' ? 'payment' : 'subscription');
       params.append('success_url', `${appUrl}/payment-gateways/callback?gateway=stripe&session_id={CHECKOUT_SESSION_ID}`);
@@ -1255,10 +1337,11 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
       const res = await fetch('https://api.stripe.com/v1/checkout/sessions', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${cfg.secret_key}`,
+          Authorization: `Bearer ${secretKey}`,
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: params.toString(),
+        signal: AbortSignal.timeout(15_000),
       });
       const data = (await res.json()) as { url?: string; error?: { message?: string } };
       if (!res.ok || !data.url) {
@@ -1268,11 +1351,13 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
     },
     verifyCallback: async (req, cfg) => {
       const sessionId = new URL(req.url).searchParams.get('session_id');
-      if (!sessionId || !cfg.secret_key) {
+      const secretKey = trimmedString(cfg.secret_key);
+      if (!sessionId || !secretKey) {
         return { status: 'pending', message: 'Awaiting Stripe confirmation.' };
       }
       const res = await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`, {
-        headers: { Authorization: `Bearer ${cfg.secret_key}` },
+        headers: { Authorization: `Bearer ${secretKey}` },
+        signal: AbortSignal.timeout(15_000),
       });
       if (!res.ok) return { status: 'failed', message: 'Failed to verify Stripe checkout session.' };
       const obj = (await res.json()) as any;
@@ -1360,10 +1445,11 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
       return { status: 200, body: { received: true } };
     },
     cancelSubscription: async (sub, cfg) => {
-      if (!sub.external_subscription_id || !cfg.secret_key) return;
+      const secretKey = trimmedString(cfg.secret_key);
+      if (!sub.external_subscription_id || !secretKey) return;
       await fetch(`https://api.stripe.com/v1/subscriptions/${sub.external_subscription_id}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${cfg.secret_key}` },
+        headers: { Authorization: `Bearer ${secretKey}` },
       });
     },
   },
@@ -1421,24 +1507,51 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
         help: 'Multiplier applied when Charge Currency Override differs from Site Currency (e.g. 1600 means 1 USD = 1600 NGN).',
       },
     ],
-    isConfigured: (cfg) => Boolean(cfg?.secret_key && cfg?.public_key),
+    isConfigured: (cfg) => Boolean(trimmedString(cfg?.secret_key) && trimmedString(cfg?.public_key)),
     validateConfig: async (cfg) => {
-      if (!cfg?.public_key || !cfg?.secret_key) return 'Paystack Public Key and Secret Key are required.';
-      if (!String(cfg.public_key).startsWith('pk_')) return 'Paystack Public Key must start with pk_test_ or pk_live_.';
-      if (!String(cfg.secret_key).startsWith('sk_')) return 'Paystack Secret Key must start with sk_test_ or sk_live_.';
+      const pubKey = trimmedString(cfg?.public_key);
+      const secKey = trimmedString(cfg?.secret_key);
+      if (!pubKey || !secKey) return 'Paystack Public Key and Secret Key are required.';
+      if (!pubKey.startsWith('pk_test_') && !pubKey.startsWith('pk_live_')) {
+        return 'Paystack Public Key must start with pk_test_ or pk_live_.';
+      }
+      if (!secKey.startsWith('sk_test_') && !secKey.startsWith('sk_live_')) {
+        return 'Paystack Secret Key must start with sk_test_ or sk_live_.';
+      }
+      const pubIsTest = pubKey.startsWith('pk_test_');
+      const secIsTest = secKey.startsWith('sk_test_');
+      if (pubIsTest !== secIsTest) {
+        return 'Paystack mode mismatch: Public Key and Secret Key must both be Test or both Live.';
+      }
+      const rawCurr = trimmedString(cfg?.settlement_currency);
+      const curr = rawCurr === EMPTY_SELECT_SENTINEL ? '' : rawCurr.toUpperCase();
+      if (curr && !['NGN', 'GHS', 'ZAR', 'KES', 'USD'].includes(curr)) {
+        return `Unsupported Paystack Charge Currency Override: ${curr}.`;
+      }
+      const rateRaw = trimmedString(cfg?.exchange_rate);
+      if (rateRaw) {
+        const rateNum = Number(rateRaw);
+        if (!Number.isFinite(rateNum) || rateNum <= 0) {
+          return 'Paystack Exchange Rate must be a positive number (e.g. 1600).';
+        }
+      }
       try {
         const res = await fetch('https://api.paystack.co/transaction?perPage=1', {
-          headers: { Authorization: `Bearer ${cfg.secret_key}` },
-          signal: AbortSignal.timeout(10_000),
+          headers: { Authorization: `Bearer ${secKey}` },
+          signal: AbortSignal.timeout(12_000),
         });
-        if (!res.ok) return 'Invalid Paystack Secret Key (authentication failed).';
+        if (!res.ok) {
+          const data = (await res.json().catch(() => null)) as { message?: string } | null;
+          return data?.message || 'Invalid Paystack Secret Key (authentication failed).';
+        }
         return null;
       } catch (e: any) {
         return e?.message || 'Unable to verify Paystack credentials.';
       }
     },
     initPayment: async (plan, user, cfg, currency, opts) => {
-      const appUrl = opts?.appUrl || resolveAppUrl();
+      const appUrl = (opts?.appUrl || resolveAppUrl()).replace(/\/+$/, '');
+      const secretKey = trimmedString(cfg.secret_key);
       const charge = resolvePaystackChargeParams(Number(plan.price ?? 0), currency, cfg);
       if (!['NGN', 'GHS', 'ZAR', 'KES', 'USD'].includes(charge.currency)) {
         return { type: 'error', error: `Paystack does not support currency ${charge.currency}.` };
@@ -1448,18 +1561,19 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
       let paystackPlanCode: string | null = null;
 
       if (plan.billing_period !== 'lifetime') {
-        const keyTag = sha256Hex(String(cfg.secret_key)).slice(0, 12);
+        const keyTag = sha256Hex(secretKey).slice(0, 12);
         const planKey = `paystack:plan:${keyTag}:${plan._id}:${charge.currency}:${chargeSmallest}:${plan.billing_period}`;
         paystackPlanCode = await cacheRemember(planKey, 30 * 86400, async () => {
           const pRes = await fetch('https://api.paystack.co/plan', {
             method: 'POST',
-            headers: { Authorization: `Bearer ${cfg.secret_key}`, 'Content-Type': 'application/json' },
+            headers: { Authorization: `Bearer ${secretKey}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
               name: `${plan.name} (${plan.billing_period})`,
               amount: chargeSmallest,
               currency: charge.currency,
               interval: plan.billing_period === 'yearly' ? 'annually' : 'monthly',
             }),
+            signal: AbortSignal.timeout(15_000),
           });
           const pData = (await pRes.json()) as { status?: boolean; data?: { plan_code?: string }; message?: string };
           if (!pRes.ok || !pData.status || !pData.data?.plan_code) {
@@ -1493,8 +1607,9 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
 
       const res = await fetch('https://api.paystack.co/transaction/initialize', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${cfg.secret_key}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${secretKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(initPayload),
+        signal: AbortSignal.timeout(15_000),
       });
       const data = (await res.json()) as {
         status?: boolean;
@@ -1507,6 +1622,7 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
       return { type: 'redirect', url: data.data.authorization_url };
     },
     verifyCallback: async (req, cfg) => {
+      const secretKey = trimmedString(cfg.secret_key);
       const { searchParams } = new URL(req.url);
       const reference = searchParams.get('reference') || searchParams.get('trxref');
       if (!reference) {
@@ -1514,7 +1630,8 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
       }
 
       const res = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
-        headers: { Authorization: `Bearer ${cfg.secret_key}` },
+        headers: { Authorization: `Bearer ${secretKey}` },
+        signal: AbortSignal.timeout(15_000),
       });
       const data = (await res.json()) as { status?: boolean; data?: any; message?: string };
       if (!res.ok || !data.status || !data.data) {
@@ -1683,7 +1800,8 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
       return { status: 200, body: { received: true } };
     },
     cancelSubscription: async (sub, cfg) => {
-      if (!cfg.secret_key) return;
+      const secretKey = trimmedString(cfg.secret_key);
+      if (!secretKey) return;
       const meta = (sub.metadata && typeof sub.metadata === 'object' ? sub.metadata : {}) as Record<string, any>;
       let code: string | undefined = meta.paystack_subscription_code;
       let token: string | undefined = meta.paystack_email_token;
@@ -1692,7 +1810,7 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
         try {
           const listRes = await fetch(
             `https://api.paystack.co/subscription?customer=${encodeURIComponent(String(meta.paystack_customer_code))}`,
-            { headers: { Authorization: `Bearer ${cfg.secret_key}` } }
+            { headers: { Authorization: `Bearer ${secretKey}` } }
           );
           if (listRes.ok) {
             const listData = (await listRes.json()) as { data?: Array<any> };
@@ -1712,7 +1830,7 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
       if (code && token) {
         await fetch('https://api.paystack.co/subscription/disable', {
           method: 'POST',
-          headers: { Authorization: `Bearer ${cfg.secret_key}`, 'Content-Type': 'application/json' },
+          headers: { Authorization: `Bearer ${secretKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ code, token }),
         });
       }
@@ -1733,15 +1851,45 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
     requiresManualApproval: false,
     getConfigSchema: (appUrl) => [
       { name: 'webhook_url', label: 'Webhook URL', type: 'readonly', default: `${appUrl}/payment-gateways/razorpay/webhook` },
-      { name: 'key_id', label: 'Key ID', type: 'text', required: true },
-      { name: 'key_secret', label: 'Key Secret', type: 'password', required: true, sensitive: true },
-      { name: 'webhook_secret', label: 'Webhook Secret', type: 'password', required: true, sensitive: true },
+      { name: 'key_id', label: 'Key ID', type: 'text', required: true, placeholder: 'rzp_test_... or rzp_live_...' },
+      { name: 'key_secret', label: 'Key Secret', type: 'password', required: true, sensitive: true, placeholder: 'Enter your Razorpay Key Secret' },
+      {
+        name: 'webhook_secret',
+        label: 'Webhook Secret',
+        type: 'password',
+        required: false,
+        sensitive: true,
+        help: 'Recommended for verifying asynchronous Razorpay webhook events in production.',
+      },
     ],
-    isConfigured: (cfg) => Boolean(cfg?.key_id && cfg?.key_secret),
-    validateConfig: async (cfg) => (cfg?.key_id && cfg?.key_secret ? null : 'Razorpay Key ID and Secret are required.'),
-    initPayment: async (plan, user, cfg, currency) => {
-      const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
-      const auth = Buffer.from(`${cfg.key_id}:${cfg.key_secret}`).toString('base64');
+    isConfigured: (cfg) => Boolean(trimmedString(cfg?.key_id) && trimmedString(cfg?.key_secret)),
+    validateConfig: async (cfg) => {
+      const keyId = trimmedString(cfg?.key_id);
+      const keySecret = trimmedString(cfg?.key_secret);
+      if (!keyId || !keySecret) return 'Razorpay Key ID and Key Secret are required.';
+      if (!keyId.startsWith('rzp_test_') && !keyId.startsWith('rzp_live_')) {
+        return 'Razorpay Key ID must start with rzp_test_ or rzp_live_.';
+      }
+      try {
+        const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+        const res = await fetch('https://api.razorpay.com/v1/orders?count=1', {
+          headers: { Authorization: `Basic ${auth}` },
+          signal: AbortSignal.timeout(12_000),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => null)) as { error?: { description?: string } } | null;
+          return data?.error?.description || `Invalid Razorpay credentials (${res.status}).`;
+        }
+        return null;
+      } catch (e: any) {
+        return e?.message || 'Unable to verify Razorpay credentials.';
+      }
+    },
+    initPayment: async (plan, user, cfg, currency, opts) => {
+      const appUrl = (opts?.appUrl || resolveAppUrl()).replace(/\/+$/, '');
+      const keyId = trimmedString(cfg.key_id);
+      const keySecret = trimmedString(cfg.key_secret);
+      const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
       const res = await fetch('https://api.razorpay.com/v1/payment_links', {
         method: 'POST',
         headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
@@ -1754,6 +1902,7 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
           callback_url: `${appUrl}/payment-gateways/callback?gateway=razorpay`,
           callback_method: 'get',
         }),
+        signal: AbortSignal.timeout(15_000),
       });
       const data = (await res.json()) as { short_url?: string; error?: { description?: string } };
       if (!res.ok || !data.short_url) {
@@ -1810,15 +1959,50 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
     requiresManualApproval: false,
     getConfigSchema: (appUrl) => [
       { name: 'webhook_url', label: 'Webhook URL', type: 'readonly', default: `${appUrl}/payment-gateways/cryptocom/webhook` },
-      { name: 'publishable_key', label: 'Publishable Key', type: 'text', required: true },
-      { name: 'secret_key', label: 'Secret Key', type: 'password', required: true, sensitive: true },
-      { name: 'webhook_secret', label: 'Webhook Secret', type: 'password', required: true, sensitive: true },
+      { name: 'publishable_key', label: 'Publishable Key', type: 'text', required: true, placeholder: 'pk_test_... or pk_live_...' },
+      { name: 'secret_key', label: 'Secret Key', type: 'password', required: true, sensitive: true, placeholder: 'sk_test_... or sk_live_...' },
+      {
+        name: 'webhook_secret',
+        label: 'Webhook Secret',
+        type: 'password',
+        required: false,
+        sensitive: true,
+        help: 'Optional signature secret for Crypto.com Pay webhook notifications.',
+      },
     ],
-    isConfigured: (cfg) => Boolean(cfg?.secret_key && cfg?.publishable_key),
-    validateConfig: async (cfg) => (cfg?.secret_key ? null : 'Crypto.com Secret Key is required.'),
-    initPayment: async (plan, user, cfg, currency) => {
-      const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
-      const auth = Buffer.from(`${cfg.secret_key}:`).toString('base64');
+    isConfigured: (cfg) => Boolean(trimmedString(cfg?.secret_key) && trimmedString(cfg?.publishable_key)),
+    validateConfig: async (cfg) => {
+      const pubKey = trimmedString(cfg?.publishable_key);
+      const secKey = trimmedString(cfg?.secret_key);
+      if (!pubKey || !secKey) return 'Crypto.com Publishable Key and Secret Key are required.';
+      if (!pubKey.startsWith('pk_test_') && !pubKey.startsWith('pk_live_')) {
+        return 'Crypto.com Publishable Key must start with pk_test_ or pk_live_.';
+      }
+      if (!secKey.startsWith('sk_test_') && !secKey.startsWith('sk_live_')) {
+        return 'Crypto.com Secret Key must start with sk_test_ or sk_live_.';
+      }
+      const pubIsTest = pubKey.startsWith('pk_test_');
+      const secIsTest = secKey.startsWith('sk_test_');
+      if (pubIsTest !== secIsTest) {
+        return 'Crypto.com mode mismatch: Publishable Key and Secret Key must both be Test or both Live.';
+      }
+      try {
+        const auth = Buffer.from(`${secKey}:`).toString('base64');
+        const res = await fetch('https://pay.crypto.com/api/payments/auth_probe_check', {
+          headers: { Authorization: `Basic ${auth}` },
+          signal: AbortSignal.timeout(12_000),
+        });
+        if (res.status === 401 || res.status === 403) {
+          return 'Invalid Crypto.com Secret Key (authentication failed).';
+        }
+        return null;
+      } catch (e: any) {
+        return e?.message || 'Unable to verify Crypto.com Pay credentials.';
+      }
+    },
+    initPayment: async (plan, user, cfg, currency, opts) => {
+      const appUrl = (opts?.appUrl || resolveAppUrl()).replace(/\/+$/, '');
+      const auth = Buffer.from(`${trimmedString(cfg.secret_key)}:`).toString('base64');
       const res = await fetch('https://pay.crypto.com/api/payments', {
         method: 'POST',
         headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
@@ -1830,6 +2014,7 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
           cancel_url: `${appUrl}/payment-gateways/callback?gateway=cryptocom&cancelled=1`,
           metadata: { user_id: String(user._id), plan_id: String(plan._id) },
         }),
+        signal: AbortSignal.timeout(15_000),
       });
       const data = (await res.json()) as { payment_url?: string };
       if (!res.ok || !data.payment_url) return { type: 'error', error: 'Crypto.com payment creation failed.' };
@@ -1880,14 +2065,33 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
     requiresManualApproval: false,
     getConfigSchema: (appUrl) => [
       { name: 'webhook_url', label: 'Webhook URL', type: 'readonly', default: `${appUrl}/payment-gateways/yookassa/webhook` },
-      { name: 'shop_id', label: 'Shop ID', type: 'text', required: true },
-      { name: 'secret_key', label: 'Secret Key', type: 'password', required: true, sensitive: true },
+      { name: 'shop_id', label: 'Shop ID', type: 'text', required: true, placeholder: '123456' },
+      { name: 'secret_key', label: 'Secret Key', type: 'password', required: true, sensitive: true, placeholder: 'test_... or live_...' },
     ],
-    isConfigured: (cfg) => Boolean(cfg?.shop_id && cfg?.secret_key),
-    validateConfig: async (cfg) => (cfg?.shop_id && cfg?.secret_key ? null : 'YooKassa Shop ID and Secret Key are required.'),
-    initPayment: async (plan, user, cfg, currency) => {
-      const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
-      const auth = Buffer.from(`${cfg.shop_id}:${cfg.secret_key}`).toString('base64');
+    isConfigured: (cfg) => Boolean(trimmedString(cfg?.shop_id) && trimmedString(cfg?.secret_key)),
+    validateConfig: async (cfg) => {
+      const shopId = trimmedString(cfg?.shop_id);
+      const secKey = trimmedString(cfg?.secret_key);
+      if (!shopId || !secKey) return 'YooKassa Shop ID and Secret Key are required.';
+      if (!/^\d+$/.test(shopId)) return 'YooKassa Shop ID must be numeric.';
+      try {
+        const auth = Buffer.from(`${shopId}:${secKey}`).toString('base64');
+        const res = await fetch('https://api.yookassa.ru/v3/me', {
+          headers: { Authorization: `Basic ${auth}` },
+          signal: AbortSignal.timeout(12_000),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => null)) as { description?: string } | null;
+          return data?.description || `Invalid YooKassa Shop ID or Secret Key (${res.status}).`;
+        }
+        return null;
+      } catch (e: any) {
+        return e?.message || 'Unable to verify YooKassa credentials.';
+      }
+    },
+    initPayment: async (plan, user, cfg, currency, opts) => {
+      const appUrl = (opts?.appUrl || resolveAppUrl()).replace(/\/+$/, '');
+      const auth = Buffer.from(`${trimmedString(cfg.shop_id)}:${trimmedString(cfg.secret_key)}`).toString('base64');
       const res = await fetch('https://api.yookassa.ru/v3/payments', {
         method: 'POST',
         headers: {
@@ -1906,6 +2110,7 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
           description: `${plan.name} Subscription`,
           metadata: { user_id: String(user._id), plan_id: String(plan._id) },
         }),
+        signal: AbortSignal.timeout(15_000),
       });
       const data = (await res.json()) as { confirmation?: { confirmation_url?: string } };
       if (!res.ok || !data.confirmation?.confirmation_url) {
@@ -1944,7 +2149,7 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
     },
     cancelSubscription: async () => {},
     createRenewalPayment: async (sub, paymentMethodId, amount, currency, cfg) => {
-      const auth = Buffer.from(`${cfg.shop_id}:${cfg.secret_key}`).toString('base64');
+      const auth = Buffer.from(`${trimmedString(cfg.shop_id)}:${trimmedString(cfg.secret_key)}`).toString('base64');
       const res = await fetch('https://api.yookassa.ru/v3/payments', {
         method: 'POST',
         headers: {
@@ -1966,22 +2171,54 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
   },
 };
 
-export async function getPluginsForAdmin() {
+export function getSchemaForPlugin(
+  plugin: IPlugin | null,
+  slug: string,
+  appUrl: string
+): PluginConfigField[] {
+  const def = GATEWAY_REGISTRY[slug];
+  if (def) {
+    return def.getConfigSchema(appUrl);
+  }
+  const metaSchema = (plugin?.metadata as Record<string, any> | null)?.config_schema;
+  if (!Array.isArray(metaSchema)) return [];
+  return metaSchema
+    .filter((f): f is PluginConfigField => Boolean(f && typeof f === 'object' && typeof f.name === 'string'))
+    .map((f) => ({
+      ...f,
+      default: typeof f.default === 'string' ? f.default.replace(/\{appUrl\}/g, appUrl) : f.default,
+    }));
+}
+
+export function isPluginConfigured(
+  plugin: IPlugin | null,
+  slug: string,
+  cfg: Record<string, any>
+): boolean {
+  const def = GATEWAY_REGISTRY[slug];
+  if (def) {
+    return def.isConfigured(cfg);
+  }
+  const schema = getSchemaForPlugin(plugin, slug, resolveAppUrl());
+  for (const field of schema) {
+    if (field.required && field.type !== 'readonly' && field.type !== 'toggle') {
+      if (!trimmedString(cfg?.[field.name])) return false;
+    }
+  }
+  return true;
+}
+
+export async function getPluginsForAdmin(appUrlOverride?: string) {
   await connectDB();
-  const appUrl = resolveAppUrl();
+  const appUrl = (appUrlOverride || resolveAppUrl()).replace(/\/+$/, '');
   const installedDocs = await Plugin.find({}).lean();
   const bySlug = new Map(installedDocs.map((p) => [p.slug, p]));
 
-  return Object.values(GATEWAY_REGISTRY).map((def) => {
+  const builtInList = Object.values(GATEWAY_REGISTRY).map((def) => {
     const doc = bySlug.get(def.slug);
     const decryptedCfg = doc?.config ? decryptJson<Record<string, any>>(doc.config) || {} : {};
     const schema = def.getConfigSchema(appUrl);
-    const maskedCfg: Record<string, any> = { ...decryptedCfg };
-    for (const field of schema) {
-      if (field.sensitive && maskedCfg[field.name]) {
-        maskedCfg[field.name] = '••••••••';
-      }
-    }
+    const maskedCfg = maskSensitiveConfig(decryptedCfg, schema);
     return {
       id: doc ? String(doc._id) : null,
       slug: def.slug,
@@ -2000,6 +2237,33 @@ export async function getPluginsForAdmin() {
       migrations: doc?.migrations || [],
     };
   });
+
+  const customDocs = installedDocs.filter((p) => !GATEWAY_REGISTRY[p.slug]);
+  const customList = customDocs.map((doc) => {
+    const meta = (doc.metadata || {}) as Record<string, any>;
+    const decryptedCfg = doc.config ? decryptJson<Record<string, any>>(doc.config) || {} : {};
+    const schema = getSchemaForPlugin(doc as any, doc.slug, appUrl);
+    const maskedCfg = maskSensitiveConfig(decryptedCfg, schema);
+    return {
+      id: String(doc._id),
+      slug: doc.slug,
+      name: doc.name,
+      description: typeof meta.description === 'string' ? meta.description : `${doc.name} payment gateway plugin.`,
+      type: (doc.type || 'payment_gateway') as 'payment_gateway',
+      version: doc.version || '1.0.0',
+      author: typeof meta.author === 'string' ? meta.author : 'Custom',
+      icon: typeof meta.icon === 'string' ? meta.icon : `/plugins/${doc.slug}/icon.svg`,
+      is_installed: true,
+      is_active: doc.status === 'active',
+      is_configured: isPluginConfigured(doc as any, doc.slug, decryptedCfg),
+      is_core: CORE_PLUGINS.includes(doc.slug as any),
+      config_schema: schema,
+      config: maskedCfg,
+      migrations: doc.migrations || [],
+    };
+  });
+
+  return [...builtInList, ...customList];
 }
 
 export async function getActiveGatewaysForCurrency(currency?: string) {
