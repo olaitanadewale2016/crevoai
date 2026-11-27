@@ -222,7 +222,7 @@ export async function getAiConfigForUser(
   const baseMaxTokens = Number(provider.config?.max_tokens || 16384);
   const effectiveMaxTokens = resolveEffortMaxTokens(baseMaxTokens, resolvedEffort);
   const summTokens = Number(provider.config?.summarizer_max_tokens || 1500);
-  const unlimited = user.role === 'admin' || plan?.monthly_build_credits === -1;
+  const unlimited = plan?.monthly_build_credits === -1;
   const effortMultiplier =
     resolvedEffort === 'low' ? 0.75 : resolvedEffort === 'high' ? 1.5 : 1.0;
   const remainingCreditsBudget = unlimited

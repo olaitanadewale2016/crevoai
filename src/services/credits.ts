@@ -205,11 +205,20 @@ export async function trackBuildCreditUsage(params: {
   const unlimited = plan?.monthly_build_credits === -1;
 
   if (!usedOwnKey && !unlimited && totalTokens > 0) {
-    // Atomic deduction clamped at 0 (consumed credits are never refunded)
+    // Atomic deduction clamped at 0 (consumed credits are never refunded).
+    // Mongoose requires `updatePipeline: true` when passing an aggregation pipeline update.
     const updated = await User.findOneAndUpdate(
       { _id: user._id },
-      [{ $set: { build_credits: { $max: [0, { $subtract: ['$build_credits', totalTokens] }] } } }],
-      { new: true }
+      [
+        {
+          $set: {
+            build_credits: {
+              $max: [0, { $subtract: [{ $ifNull: ['$build_credits', 0] }, totalTokens] }],
+            },
+          },
+        },
+      ],
+      { returnDocument: 'after', updatePipeline: true }
     ).lean();
 
     deducted = totalTokens;

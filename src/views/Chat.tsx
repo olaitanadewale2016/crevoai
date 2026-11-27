@@ -421,6 +421,9 @@ export default function Chat({
         axios
             .post(`/builder/projects/${project.id}/complete`, {
                 tokens_used: event.tokens_used,
+                prompt_tokens: event.prompt_tokens,
+                completion_tokens: event.completion_tokens,
+                model: event.model,
                 iterations: event.iterations,
                 files_changed: event.files_changed,
                 message: event.message,
