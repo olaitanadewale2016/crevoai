@@ -11,6 +11,7 @@ import {
   GATEWAY_REGISTRY,
   calculateNextRenewalDate,
   getPluginConfigDecrypted,
+  resolveAppUrl,
 } from '@/services/payment-gateways';
 import { refillUserBuildCredits } from '@/services/credits';
 import { redeemReferralCreditsForBilling } from '@/services/referrals';
@@ -295,7 +296,7 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await def.initPayment(plan, user, cfg, currency, {
-      appUrl: req.nextUrl.origin.replace(/\/+$/, ''),
+      appUrl: resolveAppUrl(req),
     });
 
     if (result.type === 'error') {

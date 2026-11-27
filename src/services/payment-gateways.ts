@@ -11,7 +11,7 @@ import {
   timingSafeEqualStr,
 } from '@/lib/crypto';
 import { getSetting } from '@/lib/settings';
-import { cacheRemember, withLock } from '@/lib/cache';
+import { cacheForget, cacheRemember, cacheSet, withLock } from '@/lib/cache';
 import { getNextSequence } from '@/models/Counter';
 import { Plugin, Subscription, Transaction, Plan, IPlan, ISubscription, IPlugin, CORE_PLUGINS } from '@/models/Billing';
 import { User, IUser } from '@/models/User';
@@ -389,9 +389,21 @@ async function recordCompletedTransaction(params: {
 // =========================================================
 // PayPal Helpers
 // =========================================================
+function isPayPalSandbox(cfg: Record<string, any>): boolean {
+  const v = cfg?.sandbox;
+  return v === true || v === 'true' || v === 1 || v === '1';
+}
+
+function getPayPalBaseUrl(cfg: Record<string, any>): string {
+  return isPayPalSandbox(cfg) ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
+}
+
 async function getPayPalAccessToken(cfg: Record<string, any>): Promise<string> {
-  const base = cfg.sandbox ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
-  const auth = Buffer.from(`${cfg.client_id}:${cfg.client_secret}`).toString('base64');
+  const isSandbox = isPayPalSandbox(cfg);
+  const base = getPayPalBaseUrl(cfg);
+  const clientId = String(cfg?.client_id || '').trim();
+  const clientSecret = String(cfg?.client_secret || '').trim();
+  const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
   const res = await fetch(`${base}/v1/oauth2/token`, {
     method: 'POST',
     headers: {
@@ -402,10 +414,133 @@ async function getPayPalAccessToken(cfg: Record<string, any>): Promise<string> {
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) {
-    throw new Error(`PayPal OAuth failed (${res.status})`);
+    const errJson = (await res.json().catch(() => null)) as { error?: string; error_description?: string } | null;
+    const modeLabel = isSandbox ? 'Sandbox' : 'Live';
+    const detail = errJson?.error_description || errJson?.error || '';
+    throw new Error(
+      `PayPal ${modeLabel} OAuth failed (${res.status})${detail ? `: ${detail}` : ''}. Verify Client ID, Client Secret, and Sandbox Mode.`
+    );
   }
   const data = (await res.json()) as { access_token: string };
   return data.access_token;
+}
+
+async function createOrFetchPayPalPlan(params: {
+  base: string;
+  token: string;
+  catalogTag: string;
+  brandName: string;
+  plan: IPlan;
+  currency: string;
+}): Promise<string> {
+  const { base, token, catalogTag, brandName, plan, currency } = params;
+  const productCacheKey = `paypal:product:${catalogTag}`;
+  const planCacheKey = `paypal:plan:${catalogTag}:${plan._id}:${currency}:${plan.price}:${plan.billing_period}`;
+
+  const createProduct = async (): Promise<string> => {
+    const prodName = `${brandName} Subscription`.slice(0, 127) || 'Subscription';
+    const pRes = await fetch(`${base}/v1/catalogs/products`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: prodName,
+        description: `Subscription service for ${brandName}`.slice(0, 127),
+        type: 'SERVICE',
+        category: 'SOFTWARE',
+      }),
+    });
+    const pData = (await pRes.json().catch(() => ({}))) as { id?: string; message?: string };
+    if (!pRes.ok || !pData.id) {
+      throw new Error(pData.message || `Failed to create PayPal product (${pRes.status})`);
+    }
+    await cacheSet(productCacheKey, pData.id, 30 * 86400);
+    return pData.id;
+  };
+
+  const createPlan = async (productId: string): Promise<{ ok: boolean; id?: string; error?: string; status: number; issue?: string }> => {
+    const ppName = (plan.name || 'Subscription Plan').trim().slice(0, 127) || 'Subscription Plan';
+    const ppDesc = (plan.description || plan.name || 'Subscription Plan').trim().slice(0, 127) || 'Subscription Plan';
+    const bRes = await fetch(`${base}/v1/billing/plans`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        product_id: productId,
+        name: ppName,
+        description: ppDesc,
+        status: 'ACTIVE',
+        billing_cycles: [
+          {
+            frequency: {
+              interval_unit: plan.billing_period === 'yearly' ? 'YEAR' : 'MONTH',
+              interval_count: 1,
+            },
+            tenure_type: 'REGULAR',
+            sequence: 1,
+            total_cycles: 0,
+            pricing_scheme: {
+              fixed_price: { value: Number(plan.price).toFixed(2), currency_code: currency.toUpperCase() },
+            },
+          },
+        ],
+        payment_preferences: {
+          auto_bill_outstanding: true,
+          setup_fee_failure_action: 'CONTINUE',
+          payment_failure_threshold: 3,
+        },
+      }),
+    });
+    const bData = (await bRes.json().catch(() => ({}))) as {
+      id?: string;
+      message?: string;
+      details?: Array<{ issue?: string }>;
+    };
+    if (bRes.ok && bData.id) {
+      await cacheSet(planCacheKey, bData.id, 30 * 86400);
+      return { ok: true, id: bData.id, status: bRes.status };
+    }
+    return {
+      ok: false,
+      status: bRes.status,
+      error: bData.message || `Failed to create PayPal billing plan (${bRes.status})`,
+      issue: bData.details?.[0]?.issue,
+    };
+  };
+
+  let productId = await cacheRemember(productCacheKey, 30 * 86400, createProduct);
+  const cachedPlanId = await cacheRemember(planCacheKey, 30 * 86400, async () => {
+    const first = await createPlan(productId);
+    if (first.ok && first.id) return first.id;
+    // Recover automatically if cached product_id was deleted in PayPal
+    if (first.status === 404 || first.issue === 'INVALID_RESOURCE_ID') {
+      await cacheForget(productCacheKey);
+      productId = await createProduct();
+      const retry = await createPlan(productId);
+      if (retry.ok && retry.id) return retry.id;
+      throw new Error(retry.error || first.error);
+    }
+    throw new Error(first.error);
+  });
+
+  // Verify cached PayPal Plan still exists & is ACTIVE (e.g., if recreated or deleted in PayPal dashboard)
+  const checkRes = await fetch(`${base}/v1/billing/plans/${encodeURIComponent(cachedPlanId)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }).catch(() => null);
+  const checkData = checkRes?.ok ? ((await checkRes.json().catch(() => null)) as { status?: string } | null) : null;
+  if (checkRes && (!checkRes.ok || checkData?.status !== 'ACTIVE')) {
+    await cacheForget(planCacheKey);
+    let fresh = await createPlan(productId);
+    if (!fresh.ok && (fresh.status === 404 || fresh.issue === 'INVALID_RESOURCE_ID')) {
+      await cacheForget(productCacheKey);
+      productId = await createProduct();
+      fresh = await createPlan(productId);
+    }
+    if (!fresh.ok || !fresh.id) {
+      throw new Error(fresh.error || 'Failed to recreate PayPal billing plan');
+    }
+    return fresh.id;
+  }
+
+  return cachedPlanId;
 }
 
 // =========================================================
@@ -574,40 +709,59 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
       }
     },
     initPayment: async (plan, user, cfg, currency, opts) => {
-      const base = cfg.sandbox ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
-      const appUrl = opts?.appUrl || resolveAppUrl();
-      const envTag = `${cfg.sandbox ? 'sb' : 'live'}:${sha256Hex(String(cfg.client_id)).slice(0, 12)}`;
-      const token = await cacheRemember(`paypal:token:${envTag}`, 2700, () => getPayPalAccessToken(cfg));
-      const siteName = await getSetting<string>('site_name', 'Crevo');
+      const isSandbox = isPayPalSandbox(cfg);
+      const base = getPayPalBaseUrl(cfg);
+      const appUrl = (opts?.appUrl || resolveAppUrl()).replace(/\/+$/, '');
+      const clientId = String(cfg.client_id || '').trim();
+      const clientSecret = String(cfg.client_secret || '').trim();
+      const modeTag = isSandbox ? 'sb' : 'live';
+      const tokenTag = `${modeTag}:${sha256Hex(`${clientId}:${clientSecret}`).slice(0, 12)}`;
+      const catalogTag = `${modeTag}:${sha256Hex(clientId).slice(0, 12)}`;
+      const tokenKey = `paypal:token:${tokenTag}`;
+      const token = await cacheRemember(tokenKey, 2700, () => getPayPalAccessToken(cfg));
+      const rawSiteName = await getSetting<string>('site_name', 'Crevo');
+      const brandName = (rawSiteName || 'Crevo').trim().slice(0, 127) || 'Crevo';
       const customRef = `${user._id}:${plan._id}`;
 
       // Lifetime / one-time plans use PayPal Orders v2 capture flow
       if (plan.billing_period === 'lifetime') {
-        const orderRes = await fetch(`${base}/v2/checkout/orders`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            intent: 'CAPTURE',
-            purchase_units: [
-              {
-                custom_id: customRef,
-                description: `${siteName} - ${plan.name}`,
-                amount: {
-                  currency_code: currency.toUpperCase(),
-                  value: Number(plan.price).toFixed(2),
-                },
+        const buildOrderPayload = () => JSON.stringify({
+          intent: 'CAPTURE',
+          purchase_units: [
+            {
+              custom_id: customRef,
+              description: `${brandName} - ${plan.name}`.slice(0, 127),
+              amount: {
+                currency_code: currency.toUpperCase(),
+                value: Number(plan.price).toFixed(2),
               },
-            ],
-            application_context: {
-              brand_name: siteName,
-              shipping_preference: 'NO_SHIPPING',
-              user_action: 'PAY_NOW',
-              return_url: `${appUrl}/payment-gateways/callback?gateway=paypal&mode=order`,
-              cancel_url: `${appUrl}/payment-gateways/callback?gateway=paypal&cancelled=1`,
             },
-          }),
+          ],
+          application_context: {
+            brand_name: brandName,
+            shipping_preference: 'NO_SHIPPING',
+            user_action: 'PAY_NOW',
+            return_url: `${appUrl}/payment-gateways/callback?gateway=paypal&mode=order`,
+            cancel_url: `${appUrl}/payment-gateways/callback?gateway=paypal&cancelled=1`,
+          },
         });
-        const orderData = (await orderRes.json()) as {
+        let activeToken = token;
+        let orderRes = await fetch(`${base}/v2/checkout/orders`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${activeToken}`, 'Content-Type': 'application/json' },
+          body: buildOrderPayload(),
+        });
+        if (orderRes.status === 401) {
+          await cacheForget(tokenKey);
+          activeToken = await getPayPalAccessToken(cfg);
+          await cacheSet(tokenKey, activeToken, 2700);
+          orderRes = await fetch(`${base}/v2/checkout/orders`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${activeToken}`, 'Content-Type': 'application/json' },
+            body: buildOrderPayload(),
+          });
+        }
+        const orderData = (await orderRes.json().catch(() => ({}))) as {
           links?: Array<{ rel: string; href: string }>;
           message?: string;
         };
@@ -622,95 +776,43 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
       }
 
       // Recurring plans use PayPal Billing Subscriptions v1
-      const productId = await cacheRemember(`paypal:product:${envTag}`, 30 * 86400, async () => {
-        const pRes = await fetch(`${base}/v1/catalogs/products`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: `${siteName} Subscription`,
-            type: 'SERVICE',
-            category: 'SOFTWARE',
-          }),
+      let activeToken = token;
+      let paypalPlanId: string;
+      try {
+        paypalPlanId = await createOrFetchPayPalPlan({
+          base,
+          token: activeToken,
+          catalogTag,
+          brandName,
+          plan,
+          currency,
         });
-        const pData = (await pRes.json()) as { id?: string; message?: string };
-        if (!pRes.ok || !pData.id) throw new Error(pData.message || 'Failed to create PayPal product');
-        return pData.id;
-      });
-
-      const planCacheKey = `paypal:plan:${envTag}:${plan._id}:${currency}:${plan.price}:${plan.billing_period}`;
-      let paypalPlanId = await cacheRemember(planCacheKey, 30 * 86400, async () => {
-        const bRes = await fetch(`${base}/v1/billing/plans`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            product_id: productId,
-            name: plan.name,
-            description: plan.description || plan.name,
-            status: 'ACTIVE',
-            billing_cycles: [
-              {
-                frequency: {
-                  interval_unit: plan.billing_period === 'yearly' ? 'YEAR' : 'MONTH',
-                  interval_count: 1,
-                },
-                tenure_type: 'REGULAR',
-                sequence: 1,
-                total_cycles: 0,
-                pricing_scheme: {
-                  fixed_price: { value: Number(plan.price).toFixed(2), currency_code: currency.toUpperCase() },
-                },
-              },
-            ],
-            payment_preferences: { auto_bill_outstanding: true, payment_failure_threshold: 3 },
-          }),
-        });
-        const bData = (await bRes.json()) as { id?: string; message?: string };
-        if (!bRes.ok || !bData.id) throw new Error(bData.message || 'Failed to create PayPal billing plan');
-        return bData.id;
-      });
-
-      // Verify cached PayPal Plan still exists (e.g., if recreated in PayPal dashboard)
-      const checkPlan = await fetch(`${base}/v1/billing/plans/${paypalPlanId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }).catch(() => null);
-      if (checkPlan && checkPlan.status === 404) {
-        const bRes = await fetch(`${base}/v1/billing/plans`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            product_id: productId,
-            name: plan.name,
-            description: plan.description || plan.name,
-            status: 'ACTIVE',
-            billing_cycles: [
-              {
-                frequency: {
-                  interval_unit: plan.billing_period === 'yearly' ? 'YEAR' : 'MONTH',
-                  interval_count: 1,
-                },
-                tenure_type: 'REGULAR',
-                sequence: 1,
-                total_cycles: 0,
-                pricing_scheme: {
-                  fixed_price: { value: Number(plan.price).toFixed(2), currency_code: currency.toUpperCase() },
-                },
-              },
-            ],
-            payment_preferences: { auto_bill_outstanding: true, payment_failure_threshold: 3 },
-          }),
-        });
-        const bData = (await bRes.json()) as { id?: string };
-        if (bData.id) paypalPlanId = bData.id;
+      } catch (err: any) {
+        if (String(err?.message || '').includes('401')) {
+          await cacheForget(tokenKey);
+          activeToken = await getPayPalAccessToken(cfg);
+          await cacheSet(tokenKey, activeToken, 2700);
+          paypalPlanId = await createOrFetchPayPalPlan({
+            base,
+            token: activeToken,
+            catalogTag,
+            brandName,
+            plan,
+            currency,
+          });
+        } else {
+          throw err;
+        }
       }
 
       const subRes = await fetch(`${base}/v1/billing/subscriptions`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${activeToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           plan_id: paypalPlanId,
           custom_id: customRef,
           application_context: {
-            brand_name: siteName,
+            brand_name: brandName,
             shipping_preference: 'NO_SHIPPING',
             user_action: 'SUBSCRIBE_NOW',
             return_url: `${appUrl}/payment-gateways/callback?gateway=paypal&mode=subscription`,
@@ -718,7 +820,7 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
           },
         }),
       });
-      const subData = (await subRes.json()) as { links?: Array<{ rel: string; href: string }>; message?: string };
+      const subData = (await subRes.json().catch(() => ({}))) as { links?: Array<{ rel: string; href: string }>; message?: string };
       const approveUrl = subData.links?.find((l) => l.rel === 'approve')?.href;
       if (!subRes.ok || !approveUrl) {
         return { type: 'error', error: subData.message || 'PayPal did not return an approval URL.' };
@@ -730,7 +832,7 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
       const subscriptionId = searchParams.get('subscription_id');
       const tokenParam = searchParams.get('token');
       const mode = searchParams.get('mode') || '';
-      const base = cfg.sandbox ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
+      const base = getPayPalBaseUrl(cfg);
       const token = await getPayPalAccessToken(cfg);
       const siteCurr = ((await getSetting<string>('default_currency', 'USD')) || 'USD').toUpperCase();
 
@@ -791,22 +893,34 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
 
       // Subscription v1 verification on return
       if (subscriptionId) {
-        const subRes = await fetch(`${base}/v1/billing/subscriptions/${encodeURIComponent(subscriptionId)}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!subRes.ok) {
-          return { status: 'failed', message: 'Unable to verify PayPal subscription.' };
-        }
-        const subData = (await subRes.json()) as {
-          id: string;
-          status: string;
-          custom_id?: string;
-          plan_id?: string;
-          billing_info?: {
-            last_payment?: { amount?: { value?: string; currency_code?: string }; time?: string };
-            next_billing_time?: string;
+        const fetchSub = async () => {
+          const res = await fetch(`${base}/v1/billing/subscriptions/${encodeURIComponent(subscriptionId)}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) return null;
+          return (await res.json()) as {
+            id: string;
+            status: string;
+            custom_id?: string;
+            plan_id?: string;
+            billing_info?: {
+              last_payment?: { amount?: { value?: string; currency_code?: string }; time?: string };
+              next_billing_time?: string;
+            };
           };
         };
+
+        let subData = await fetchSub();
+        if (!subData) {
+          return { status: 'failed', message: 'Unable to verify PayPal subscription.' };
+        }
+
+        // Handle brief eventual consistency right after PayPal approval redirect
+        if (subData.status === 'APPROVAL_PENDING') {
+          await new Promise((r) => setTimeout(r, 1200));
+          const retried = await fetchSub();
+          if (retried) subData = retried;
+        }
 
         if (!['ACTIVE', 'APPROVED'].includes(subData.status)) {
           if (subData.status === 'APPROVAL_PENDING') {
@@ -836,14 +950,39 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
           const lastPay = subData.billing_info?.last_payment;
           const existingTx = await Transaction.exists({ subscription_id: sub._id, status: 'completed' });
           if (!existingTx && lastPay?.amount?.value) {
+            // Try fetching real PayPal sale ID so callback and webhook share external_transaction_id cleanly
+            let realTxId: string | null = null;
+            try {
+              const end = new Date();
+              const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+              const txRes = await fetch(
+                `${base}/v1/billing/subscriptions/${encodeURIComponent(subData.id)}/transactions?start_time=${encodeURIComponent(start.toISOString())}&end_time=${encodeURIComponent(end.toISOString())}`,
+                { headers: { Authorization: `Bearer ${token}` } }
+              );
+              if (txRes.ok) {
+                const txData = (await txRes.json()) as {
+                  transactions?: Array<{ id?: string; status?: string }>;
+                };
+                const completedTx = txData.transactions?.find(
+                  (t) => !t.status || t.status === 'COMPLETED'
+                );
+                if (completedTx?.id) realTxId = completedTx.id;
+              }
+            } catch {
+              // Fall back to synthetic ID; webhook PAYMENT.SALE.COMPLETED upgrades it idempotently
+            }
+
             await recordCompletedTransaction({
               userId,
               subscriptionId: String(sub._id),
               amount: Number(lastPay.amount.value),
               currency: String(lastPay.amount.currency_code || siteCurr).toUpperCase(),
               paymentMethod: 'paypal',
-              externalTransactionId: `pp_init_${subData.id}`,
-              metadata: { paypal_subscription_id: subData.id },
+              externalTransactionId: realTxId || `pp_init_${subData.id}`,
+              metadata: {
+                paypal_subscription_id: subData.id,
+                ...(realTxId ? { paypal_capture_id: realTxId } : {}),
+              },
             });
           }
         }
@@ -854,7 +993,7 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
     },
     handleWebhook: async (req, rawBody, cfg) => {
       if (!cfg.webhook_id) return { status: 400, body: { error: 'PayPal webhook_id not configured' } };
-      const base = cfg.sandbox ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
+      const base = getPayPalBaseUrl(cfg);
       const token = await getPayPalAccessToken(cfg);
       const event = JSON.parse(rawBody);
 
@@ -868,12 +1007,21 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
           transmission_id: req.headers.get('paypal-transmission-id'),
           transmission_sig: req.headers.get('paypal-transmission-sig'),
           transmission_time: req.headers.get('paypal-transmission-time'),
-          webhook_id: cfg.webhook_id,
+          webhook_id: String(cfg.webhook_id).trim(),
           webhook_event: event,
         }),
       });
-      const verifyData = (await verifyRes.json()) as { verification_status?: string };
-      if (verifyData.verification_status !== 'SUCCESS') {
+      const verifyData = (await verifyRes.json().catch(() => ({}))) as {
+        verification_status?: string;
+        message?: string;
+      };
+      if (!verifyRes.ok || verifyData.verification_status !== 'SUCCESS') {
+        console.warn('[PayPal Webhook] Signature verification failed:', {
+          sandbox: isPayPalSandbox(cfg),
+          httpStatus: verifyRes.status,
+          verification_status: verifyData.verification_status,
+          message: verifyData.message,
+        });
         return { status: 400, body: { error: 'Invalid PayPal webhook signature' } };
       }
 
@@ -894,7 +1042,24 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
           });
         }
       } else if (eventType === 'PAYMENT.CAPTURE.COMPLETED') {
-        const [userId, planId] = String(resource.custom_id || '').split(':');
+        let customId = String(resource.custom_id || '');
+        const relatedOrderId = resource.supplementary_data?.related_ids?.order_id;
+        if (!customId && relatedOrderId) {
+          try {
+            const ordRes = await fetch(`${base}/v2/checkout/orders/${encodeURIComponent(relatedOrderId)}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (ordRes.ok) {
+              const ordData = (await ordRes.json()) as {
+                purchase_units?: Array<{ custom_id?: string }>;
+              };
+              customId = String(ordData.purchase_units?.[0]?.custom_id || '');
+            }
+          } catch {
+            // Non-fatal fallback
+          }
+        }
+        const [userId, planId] = customId.split(':');
         if (userId && planId) {
           const plan = await Plan.findById(planId).lean();
           const paidAmt = Number(resource.amount?.value ?? plan?.price ?? 0);
@@ -904,8 +1069,11 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
             planId,
             paymentMethod: 'paypal',
             amount: plan?.price ?? paidAmt,
-            externalSubId: resource.supplementary_data?.related_ids?.order_id || resource.id,
-            metadata: { paypal_capture_id: resource.id },
+            externalSubId: relatedOrderId || resource.id,
+            metadata: {
+              paypal_order_id: relatedOrderId || undefined,
+              paypal_capture_id: resource.id,
+            },
           });
           if (sub) {
             await recordCompletedTransaction({
@@ -941,7 +1109,7 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
         // If PAYMENT.SALE.COMPLETED arrived before BILLING.SUBSCRIPTION.ACTIVATED, fetch subscription to bootstrap it
         if (!sub && subId) {
           try {
-            const ppRes = await fetch(`${base}/v1/billing/subscriptions/${subId}`, {
+            const ppRes = await fetch(`${base}/v1/billing/subscriptions/${encodeURIComponent(subId)}`, {
               headers: { Authorization: `Bearer ${token}` },
             });
             if (ppRes.ok) {
@@ -964,6 +1132,29 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
         }
 
         if (sub) {
+          // Idempotent deduplication: skip if exact PayPal sale ID was already recorded
+          const alreadyRecorded = resource.id
+            ? await Transaction.exists({ external_transaction_id: resource.id })
+            : null;
+          if (alreadyRecorded) {
+            return { status: 200, body: { received: true, deduplicated: true } };
+          }
+
+          // Upgrade synthetic initial callback record (`pp_init_${subId}`) to real PayPal sale ID without triggering false renewal
+          const upgradedInitTx = await Transaction.findOneAndUpdate(
+            { subscription_id: sub._id, external_transaction_id: `pp_init_${subId}` },
+            {
+              $set: {
+                external_transaction_id: resource.id,
+                metadata: { paypal_subscription_id: subId, paypal_capture_id: resource.id },
+              },
+            },
+            { returnDocument: 'after' }
+          ).lean();
+          if (upgradedInitTx) {
+            return { status: 200, body: { received: true } };
+          }
+
           const paidAmt = Number(resource.amount?.total ?? sub.amount);
           const paidCurr = String(resource.amount?.currency || 'USD').toUpperCase();
           const hasCompletedBefore = await Transaction.exists({
@@ -997,13 +1188,24 @@ export const GATEWAY_REGISTRY: Record<string, GatewayDefinition> = {
     },
     cancelSubscription: async (sub, cfg) => {
       if (!sub.external_subscription_id) return;
-      const base = cfg.sandbox ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
+      // Lifetime one-time orders (`paypal_order_id`) are not Billing Subscriptions (`I-...`)
+      if ((sub.metadata as any)?.paypal_order_id && !sub.external_subscription_id.startsWith('I-')) {
+        return;
+      }
+      const base = getPayPalBaseUrl(cfg);
       const token = await getPayPalAccessToken(cfg);
-      await fetch(`${base}/v1/billing/subscriptions/${sub.external_subscription_id}/cancel`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: 'Cancelled by user' }),
-      });
+      const cancelRes = await fetch(
+        `${base}/v1/billing/subscriptions/${encodeURIComponent(sub.external_subscription_id)}/cancel`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'Cancelled by user' }),
+        }
+      );
+      if (!cancelRes.ok && cancelRes.status !== 404 && cancelRes.status !== 422) {
+        const errBody = await cancelRes.text().catch(() => '');
+        throw new Error(`PayPal cancellation failed (${cancelRes.status}): ${errBody.slice(0, 200)}`);
+      }
     },
   },
 

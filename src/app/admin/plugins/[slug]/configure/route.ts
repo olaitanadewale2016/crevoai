@@ -3,7 +3,13 @@ import { connectDB } from '@/lib/db';
 import { getSessionContext, isDemoAdminUser } from '@/lib/auth';
 import { parseRequestBody, toBool } from '@/lib/http';
 import { Plugin } from '@/models/Billing';
-import { GATEWAY_REGISTRY, encryptPluginConfig, getPluginConfigDecrypted } from '@/services/payment-gateways';
+import { cacheForgetPrefix } from '@/lib/cache';
+import {
+  GATEWAY_REGISTRY,
+  encryptPluginConfig,
+  getPluginConfigDecrypted,
+  resolveAppUrl,
+} from '@/services/payment-gateways';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,7 +42,7 @@ export async function POST(
   const def = GATEWAY_REGISTRY[slug];
   const body = await parseRequestBody<Record<string, any>>(req);
 
-  const appUrl = (process.env.APP_URL || req.nextUrl.origin || 'http://localhost:3000').replace(/\/+$/, '');
+  const appUrl = resolveAppUrl(req);
   const schema = def ? def.getConfigSchema(appUrl) : [];
   const existingConfig = getPluginConfigDecrypted(plugin);
 
@@ -72,6 +78,10 @@ export async function POST(
 
   plugin.config = encryptPluginConfig(cleanConfig);
   await plugin.save();
+
+  if (slug === 'paypal') {
+    await cacheForgetPrefix('paypal:');
+  }
 
   if (req.headers.get('x-inertia')) {
     return NextResponse.redirect(new URL('/admin/plugins', req.url), 303);

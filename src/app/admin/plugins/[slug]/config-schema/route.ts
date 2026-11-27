@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { getSessionContext } from '@/lib/auth';
 import { Plugin } from '@/models/Billing';
-import { GATEWAY_REGISTRY, getPluginConfigDecrypted } from '@/services/payment-gateways';
+import { GATEWAY_REGISTRY, getPluginConfigDecrypted, resolveAppUrl } from '@/services/payment-gateways';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,7 +23,7 @@ export async function GET(
 
   await connectDB();
   const plugin = await Plugin.findOne({ slug });
-  const appUrl = process.env.APP_URL || 'http://localhost:3000';
+  const appUrl = resolveAppUrl(req);
   const schema = def.getConfigSchema(appUrl);
   const config = plugin ? getPluginConfigDecrypted(plugin) : {};
 
