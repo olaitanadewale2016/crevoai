@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { route } from '@/lib/route';
 import { useState, useEffect } from 'react';
@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Check, X, Star, ArrowLeft, Loader2, CreditCard, Gift, Copy, Building2, Clock } from 'lucide-react';
+import { PaymentGatewayIcon } from '@/components/PaymentGatewayIcon';
 import type { Plan, PaymentGateway } from '@/types/billing';
 import type { PageProps } from '@/types';
 import { useTranslation } from '@/contexts/LanguageContext';
@@ -52,10 +53,13 @@ export default function Plans({
     const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
     const [isGatewayModalOpen, setIsGatewayModalOpen] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [processingGateway, setProcessingGateway] = useState<string | null>(null);
     const [useReferralCredits, setUseReferralCredits] = useState(false);
     const [bankTransferData, setBankTransferData] = useState<BankTransferData | null>(null);
     const [isBankTransferModalOpen, setIsBankTransferModalOpen] = useState(false);
     const [copied, setCopied] = useState(false);
+
+    const isPaymentBusy = isProcessing || processingGateway !== null;
 
     // Check for bank transfer flash data
     useEffect(() => {
@@ -65,6 +69,7 @@ export default function Plans({
             setIsBankTransferModalOpen(true);
             setIsGatewayModalOpen(false);
             setIsProcessing(false);
+            setProcessingGateway(null);
         }
     }, [flash?.bankTransfer]);
 
@@ -121,6 +126,7 @@ export default function Plans({
         // Otherwise, show gateway selection
         setSelectedPlan(plan);
         setUseReferralCredits(false); // Reset checkbox
+        setProcessingGateway(null);
         setIsGatewayModalOpen(true);
     };
 
@@ -129,7 +135,7 @@ export default function Plans({
     };
 
     const handleReferralCreditsPayment = () => {
-        if (!selectedPlan) return;
+        if (!selectedPlan || isPaymentBusy) return;
 
         setIsProcessing(true);
         router.post(
@@ -168,9 +174,9 @@ export default function Plans({
     };
 
     const handleGatewaySelect = (gateway: PaymentGateway) => {
-        if (!selectedPlan) return;
+        if (!selectedPlan || isPaymentBusy) return;
 
-        setIsProcessing(true);
+        setProcessingGateway(gateway.slug);
         router.post(
             route('payment.initiate'),
             {
@@ -178,8 +184,11 @@ export default function Plans({
                 gateway: gateway.slug,
             },
             {
+                onSuccess: () => {
+                    setProcessingGateway(null);
+                },
                 onError: (errors) => {
-                    setIsProcessing(false);
+                    setProcessingGateway(null);
                     const message = Object.values(errors)[0] as string;
                     if (message) toast.error(message);
                 },
@@ -396,8 +405,16 @@ export default function Plans({
             )}
 
             {/* Payment Gateway Selection Modal */}
-            <Dialog open={isGatewayModalOpen} onOpenChange={setIsGatewayModalOpen}>
-                <DialogContent className="sm:max-w-md overflow-hidden">
+            <Dialog
+                open={isGatewayModalOpen}
+                onOpenChange={(open) => {
+                    setIsGatewayModalOpen(open);
+                    if (!open) {
+                        setProcessingGateway(null);
+                    }
+                }}
+            >
+                <DialogContent className="sm:max-w-md max-h-[85dvh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <CreditCard className="h-5 w-5" />
@@ -437,6 +454,7 @@ export default function Plans({
                                         <Checkbox
                                             id="use-referral-credits"
                                             checked={useReferralCredits}
+                                            disabled={isPaymentBusy}
                                             onCheckedChange={(checked) => setUseReferralCredits(!!checked)}
                                         />
                                         <label htmlFor="use-referral-credits" className="flex-1 cursor-pointer">
@@ -469,7 +487,7 @@ export default function Plans({
                                 <Button
                                     className="w-full"
                                     size="lg"
-                                    disabled={isProcessing}
+                                    disabled={isPaymentBusy}
                                     onClick={handleReferralCreditsPayment}
                                 >
                                     {isProcessing ? (
@@ -487,6 +505,7 @@ export default function Plans({
                             ) : paymentGateways.length > 0 ? (
                                 <div className="space-y-2 w-full overflow-hidden">
                                     {paymentGateways.map((gateway) => {
+                                        const isSelectedProcessing = processingGateway === gateway.slug;
                                         const hasConversion = Boolean(gateway.charge_currency && gateway.exchange_rate && gateway.charge_currency !== siteCurrency);
                                         const convertedAmount = hasConversion
                                             ? Math.round(selectedPlan.price * (gateway.exchange_rate ?? 1) * 100) / 100
@@ -495,28 +514,31 @@ export default function Plans({
                                         <Button
                                             key={gateway.slug}
                                             variant="outline"
-                                            className="w-full max-w-full justify-between h-auto py-4 gap-3 overflow-hidden"
-                                            disabled={isProcessing}
+                                            className={`w-full max-w-full justify-between h-auto py-3.5 gap-3 overflow-hidden ${isSelectedProcessing ? 'border-primary bg-primary/5 disabled:opacity-100' : ''}`.trim()}
+                                            disabled={isPaymentBusy}
                                             onClick={() => handleGatewaySelect(gateway)}
                                         >
-                                            <div className="text-start min-w-0 flex-1">
-                                                <div className="flex items-center gap-2 flex-wrap">
-                                                    <span className="font-semibold">{gateway.name}</span>
-                                                    {hasConversion && (
-                                                        <Badge variant="secondary" className="text-[11px] font-normal">
-                                                            {formatCurrency(convertedAmount, gateway.charge_currency)}
-                                                        </Badge>
+                                            <div className="flex items-center gap-3 text-start min-w-0 flex-1">
+                                                <PaymentGatewayIcon slug={gateway.slug} size="sm" />
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <span className="font-semibold">{gateway.name}</span>
+                                                        {hasConversion && (
+                                                            <Badge variant="secondary" className="text-[11px] font-normal">
+                                                                {formatCurrency(convertedAmount, gateway.charge_currency)}
+                                                            </Badge>
+                                                        )}
+                                                    </div>
+                                                    {gateway.description && (
+                                                        <div className="text-xs text-muted-foreground line-clamp-1">
+                                                            {gateway.description}
+                                                        </div>
                                                     )}
                                                 </div>
-                                                {gateway.description && (
-                                                    <div className="text-xs text-muted-foreground line-clamp-1">
-                                                        {gateway.description}
-                                                    </div>
-                                                )}
                                             </div>
                                             <div className="flex-shrink-0">
-                                                {isProcessing ? (
-                                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                                {isSelectedProcessing ? (
+                                                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
                                                 ) : (
                                                     <ArrowLeft className="h-4 w-4 rotate-180 rtl:rotate-0" />
                                                 )}

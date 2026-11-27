@@ -35,33 +35,19 @@ import {
     Download,
     Check,
     AlertCircle,
-    Building2,
     Copy,
-    Wallet,
     Trash2,
     Shield,
     Upload,
     Eye,
     EyeOff,
 } from 'lucide-react';
+import { PaymentGatewayIcon } from '@/components/PaymentGatewayIcon';
 import UploadPluginModal from '@/components/Admin/UploadPluginModal';
 import type { AdminPluginsPageProps } from '@/types/admin';
 import type { Plugin, PluginConfigField } from '@/types/billing';
 import { toast } from 'sonner';
 import { useTranslation } from '@/contexts/LanguageContext';
-
-const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
-    'credit-card': CreditCard,
-    'plugins/paypal/icon.svg': Wallet,
-    '/plugins/paypal/icon.svg': Wallet,
-    'plugins/bank-transfer/icon.svg': Building2,
-    '/plugins/bank-transfer/icon.svg': Building2,
-    '/plugins/paystack/icon.svg': CreditCard,
-    '/plugins/stripe/icon.svg': CreditCard,
-    '/plugins/razorpay/icon.svg': CreditCard,
-    '/plugins/cryptocom/icon.svg': Shield,
-    '/plugins/yookassa/icon.svg': CreditCard,
-};
 
 function copyToClipboard(text: string): Promise<boolean> {
     if (navigator.clipboard?.writeText) {
@@ -472,12 +458,6 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
         }
     };
 
-    const getPluginIcon = (plugin: Plugin) => {
-        // Try to match icon from map
-        const Icon = iconMap[plugin.icon || ''] || CreditCard;
-        return Icon;
-    };
-
     const getStatusBadge = (plugin: Plugin) => {
         const badges = [];
 
@@ -543,16 +523,12 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
             />
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {plugins.map((plugin) => {
-                    const Icon = getPluginIcon(plugin);
-                    return (
+                {plugins.map((plugin) => (
                         <Card key={plugin.slug} className={!plugin.is_active ? 'opacity-75' : ''}>
                             <CardHeader>
                                 <div className="flex items-start justify-between">
                                     <div className="flex items-center gap-3">
-                                        <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                                            <Icon className="h-5 w-5 text-primary" />
-                                        </div>
+                                        <PaymentGatewayIcon slug={plugin.slug} size="md" />
                                         <div>
                                             <CardTitle className="text-lg">{plugin.name}</CardTitle>
                                             <p className="text-xs text-muted-foreground">
@@ -630,8 +606,7 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
                                 )}
                             </CardFooter>
                         </Card>
-                    );
-                })}
+                ))}
             </div>
 
             {plugins.length === 0 && (
@@ -651,7 +626,12 @@ export default function Plugins({ auth, plugins }: AdminPluginsPageProps) {
             }}>
                 <DialogContent className="max-w-lg max-h-[85dvh] overflow-y-auto">
                     <DialogHeader>
-                        <DialogTitle>{t('Configure :name', { name: selectedPlugin?.name || '' })}</DialogTitle>
+                        <DialogTitle className="flex items-center gap-2.5">
+                            {selectedPlugin && (
+                                <PaymentGatewayIcon slug={selectedPlugin.slug} size="sm" />
+                            )}
+                            <span>{t('Configure :name', { name: selectedPlugin?.name || '' })}</span>
+                        </DialogTitle>
                         <DialogDescription>
                             {t('Enter your plugin configuration settings below.')}
                         </DialogDescription>
