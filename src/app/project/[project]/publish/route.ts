@@ -49,7 +49,7 @@ export async function POST(
   }
 
   const isNewSubdomain = !project.subdomain;
-  if (!isAdmin && isNewSubdomain && plan?.max_subdomains_per_user !== null && plan?.max_subdomains_per_user !== undefined && plan.max_subdomains_per_user > 0) {
+  if (!isAdmin && isNewSubdomain && plan?.max_subdomains_per_user !== null && plan?.max_subdomains_per_user !== undefined && plan.max_subdomains_per_user >= 0) {
     const currentCount = await Project.countDocuments({
       user_id: project.user_id,
       subdomain: { $ne: null },

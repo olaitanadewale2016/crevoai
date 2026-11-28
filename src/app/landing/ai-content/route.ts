@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getSessionContext, isDemoAdminUser } from '@/lib/auth';
+import { canUseInternalAiProvider } from '@/lib/plan-policy';
 import {
   getInternalSuggestions,
   getInternalTypingPrompts,
@@ -18,15 +20,22 @@ function nonEmptyStrings(val: unknown): string[] | null {
 
 export async function GET(req: NextRequest) {
   const localeParam = req.nextUrl.searchParams.get('locale');
-  const localeInfo = await resolveLocale(localeParam);
+  const [localeInfo, sessionCtx] = await Promise.all([
+    resolveLocale(localeParam),
+    getSessionContext(req).catch(() => null),
+  ]);
   const locale = localeInfo.current || 'en';
+  const allowLiveAi = canUseInternalAiProvider(
+    sessionCtx?.user,
+    sessionCtx ? isDemoAdminUser(sessionCtx.user) : false
+  );
 
   const [landingConfig, aiSuggestions, aiTypingPrompts, aiHeadlines, aiSubtitles] = await Promise.all([
     getLandingPageConfig(locale).catch(() => ({ sections: [] })),
-    getInternalSuggestions(4, locale),
-    getInternalTypingPrompts(8, locale),
-    getInternalHeroHeadlines(4, locale),
-    getInternalHeroSubtitles(4, locale),
+    getInternalSuggestions(4, locale, { allowLiveAi }),
+    getInternalTypingPrompts(8, locale, { allowLiveAi }),
+    getInternalHeroHeadlines(4, locale, { allowLiveAi }),
+    getInternalHeroSubtitles(4, locale, { allowLiveAi }),
   ]);
 
   const heroContent = landingConfig.sections.find((s) => s.type === 'hero')?.content || {};

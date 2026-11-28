@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { getSessionContext, getUserCurrentPlan } from '@/lib/auth';
+import { getSessionContext, getUserCurrentPlan, canUpdateProject } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
 import { getSetting } from '@/lib/settings';
 import { Project } from '@/models/Project';
@@ -31,8 +31,9 @@ export async function POST(
     );
   }
 
+  const isAdmin = ctx.user.role === 'admin';
   const plan = await getUserCurrentPlan(ctx.user);
-  if (!plan?.enable_custom_domains) {
+  if (!isAdmin && !plan?.enable_custom_domains) {
     return NextResponse.json(
       { success: false, error: 'Your plan does not include custom domain publishing.' },
       { status: 403 }
@@ -42,17 +43,26 @@ export async function POST(
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
   }
+  if (!(await canUpdateProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
+  }
 
   const isNew = !project.custom_domain;
-  if (isNew && plan.max_custom_domains_per_user !== null && plan.max_custom_domains_per_user !== undefined && plan.max_custom_domains_per_user > 0) {
+  if (
+    !isAdmin &&
+    isNew &&
+    plan?.max_custom_domains_per_user !== null &&
+    plan?.max_custom_domains_per_user !== undefined &&
+    plan.max_custom_domains_per_user >= 0
+  ) {
     const currentCount = await Project.countDocuments({
-      user_id: ctx.user._id,
+      user_id: project.user_id,
       custom_domain: { $ne: null },
       deleted_at: null,
     });
@@ -105,11 +115,14 @@ export async function DELETE(
   await connectDB();
   const project = await Project.findOne({
     _id: projectId,
-    user_id: ctx.user._id,
+    deleted_at: null,
   });
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+  if (!(await canUpdateProject(ctx.user, project.toObject()))) {
+    return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
   if (!project.custom_domain) {

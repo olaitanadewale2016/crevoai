@@ -67,6 +67,7 @@ export default async function AdminPlansPage({
 
     return {
       id: String(p._id) as any,
+      slug: p.slug,
       name: p.name,
       description: p.description || null,
       price: p.price,
@@ -80,6 +81,8 @@ export default async function AdminPlansPage({
       enable_custom_domains: Boolean(p.enable_custom_domains),
       enable_file_storage: Boolean(p.enable_file_storage),
       enable_firebase: Boolean(p.enable_firebase),
+      enable_supabase:
+        typeof p.enable_supabase === 'boolean' ? p.enable_supabase : Boolean(p.enable_firebase),
       allow_user_ai_api_key: Boolean(p.allow_user_ai_api_key),
       max_projects: p.max_projects ?? null,
       max_subdomains_per_user: p.max_subdomains_per_user ?? null,
@@ -88,10 +91,13 @@ export default async function AdminPlansPage({
       allow_user_firebase_config: Boolean(p.allow_user_firebase_config),
       max_storage_mb: p.max_storage_mb ?? null,
       max_file_size_mb: p.max_file_size_mb ?? 10,
+      max_images_per_prompt: p.max_images_per_prompt ?? 3,
       allowed_file_types: p.allowed_file_types ?? null,
       active_subscribers_count: countMap.get(String(p._id)) || 0,
       ai_provider_id: aiId,
       builder_id: bId,
+      ai_provider_description: ai ? `${ai.name} (${ai.type})` : 'System Default',
+      builder_description: b ? b.name : 'System Default',
       ai_provider: ai ? { id: String(ai._id) as any, name: ai.name, type: ai.type } : null,
       builder: b ? { id: String(b._id) as any, name: b.name } : null,
     };

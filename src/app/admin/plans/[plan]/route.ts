@@ -1,22 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 import { connectDB, isValidObjectId } from '@/lib/db';
 import { getSessionContext, isDemoAdminUser } from '@/lib/auth';
 import { parseRequestBody } from '@/lib/http';
-import mongoose from 'mongoose';
+import { normalizePlanInput, slugifyPlanName } from '@/lib/plan-policy';
 import { Plan, Subscription } from '@/models/Billing';
 import { clearAdminStatsCache } from '@/services/admin-stats';
+import { invalidateSharedContextCache } from '@/services/shared-context';
 
 export const dynamic = 'force-dynamic';
-
-function slugify(text: string): string {
-  return text
-    .toString()
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, '-')
-    .replace(/[^\w\-]+/g, '')
-    .replace(/\-\-+/g, '-');
-}
 
 export async function PUT(
   req: NextRequest,
@@ -43,68 +35,96 @@ export async function PUT(
     return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
   }
 
-  const body = await parseRequestBody<Record<string, any>>(req);
+  const body = await parseRequestBody<Record<string, unknown>>(req);
+  const parsed = normalizePlanInput(body, 'update');
 
-  if (body.name) {
-    plan.name = body.name.trim();
-    plan.slug = slugify(body.name);
+  if (parsed.name !== undefined) {
+    if (!parsed.name) {
+      return NextResponse.json({ errors: { name: 'Plan name is required.' } }, { status: 422 });
+    }
+    plan.name = parsed.name;
+    const baseSlug = slugifyPlanName(parsed.name);
+    let candidateSlug = baseSlug;
+    let counter = 1;
+    while (await Plan.findOne({ slug: candidateSlug, _id: { $ne: plan._id } }).lean()) {
+      candidateSlug = `${baseSlug}-${counter++}`;
+    }
+    plan.slug = candidateSlug;
   }
-  if (body.description !== undefined) plan.description = body.description || null;
-  if (body.price !== undefined) plan.price = Number(body.price) || 0;
-  if (body.billing_period) plan.billing_period = body.billing_period;
-  if (Array.isArray(body.features)) plan.features = body.features;
-  if (body.is_active !== undefined) plan.is_active = Boolean(body.is_active);
-  if (body.is_popular !== undefined) plan.is_popular = Boolean(body.is_popular);
-  if (body.sort_order !== undefined) plan.sort_order = Number(body.sort_order) || 0;
 
-  if (body.ai_provider_id !== undefined) {
-    plan.ai_provider_id = body.ai_provider_id && isValidObjectId(body.ai_provider_id)
-      ? new mongoose.Types.ObjectId(body.ai_provider_id)
+  if (parsed.description !== undefined) plan.description = parsed.description;
+  if (parsed.price !== undefined) plan.price = parsed.price;
+  if (parsed.billing_period !== undefined) plan.billing_period = parsed.billing_period;
+  if (parsed.features !== undefined) plan.features = parsed.features;
+  if (parsed.is_active !== undefined) plan.is_active = parsed.is_active;
+  if (parsed.is_popular !== undefined) plan.is_popular = parsed.is_popular;
+  if (parsed.sort_order !== undefined) plan.sort_order = parsed.sort_order;
+
+  if (parsed.ai_provider_id !== undefined) {
+    plan.ai_provider_id = parsed.ai_provider_id
+      ? new mongoose.Types.ObjectId(parsed.ai_provider_id)
       : null;
   }
-  if (Array.isArray(body.fallback_ai_provider_ids)) {
-    plan.fallback_ai_provider_ids = body.fallback_ai_provider_ids
-      .filter((id: string) => isValidObjectId(id))
-      .map((id: string) => new mongoose.Types.ObjectId(id));
+  if (parsed.fallback_ai_provider_ids !== undefined) {
+    plan.fallback_ai_provider_ids = parsed.fallback_ai_provider_ids.map(
+      (id) => new mongoose.Types.ObjectId(id)
+    );
   }
-  if (body.builder_id !== undefined) {
-    plan.builder_id = body.builder_id && isValidObjectId(body.builder_id)
-      ? new mongoose.Types.ObjectId(body.builder_id)
-      : null;
+  if (parsed.builder_id !== undefined) {
+    plan.builder_id = parsed.builder_id ? new mongoose.Types.ObjectId(parsed.builder_id) : null;
   }
-  if (body.monthly_build_credits !== undefined) {
-    plan.monthly_build_credits = Number(body.monthly_build_credits);
+  if (parsed.monthly_build_credits !== undefined) {
+    plan.monthly_build_credits = parsed.monthly_build_credits;
   }
-  if (body.allow_user_ai_api_key !== undefined) {
-    plan.allow_user_ai_api_key = Boolean(body.allow_user_ai_api_key);
+  if (parsed.allow_user_ai_api_key !== undefined) {
+    plan.allow_user_ai_api_key = parsed.allow_user_ai_api_key;
   }
-  if (body.max_projects !== undefined) {
-    plan.max_projects = body.max_projects !== null && body.max_projects !== '' ? Number(body.max_projects) : null;
+  if (parsed.max_projects !== undefined) {
+    plan.max_projects = parsed.max_projects;
   }
-  if (body.enable_subdomains !== undefined) plan.enable_subdomains = Boolean(body.enable_subdomains);
-  if (body.max_subdomains_per_user !== undefined) {
-    plan.max_subdomains_per_user = body.max_subdomains_per_user ? Number(body.max_subdomains_per_user) : null;
+  if (parsed.enable_subdomains !== undefined) {
+    plan.enable_subdomains = parsed.enable_subdomains;
   }
-  if (body.allow_private_visibility !== undefined) plan.allow_private_visibility = Boolean(body.allow_private_visibility);
-  if (body.enable_custom_domains !== undefined) plan.enable_custom_domains = Boolean(body.enable_custom_domains);
-  if (body.max_custom_domains_per_user !== undefined) {
-    plan.max_custom_domains_per_user = body.max_custom_domains_per_user ? Number(body.max_custom_domains_per_user) : null;
+  if (parsed.max_subdomains_per_user !== undefined) {
+    plan.max_subdomains_per_user = parsed.max_subdomains_per_user;
   }
-  if (body.enable_firebase !== undefined) plan.enable_firebase = Boolean(body.enable_firebase);
-  if (body.allow_user_firebase_config !== undefined) plan.allow_user_firebase_config = Boolean(body.allow_user_firebase_config);
-  if (body.enable_file_storage !== undefined) plan.enable_file_storage = Boolean(body.enable_file_storage);
-  if (body.max_storage_mb !== undefined) {
-    plan.max_storage_mb = body.max_storage_mb ? Number(body.max_storage_mb) : null;
+  if (parsed.allow_private_visibility !== undefined) {
+    plan.allow_private_visibility = parsed.allow_private_visibility;
   }
-  if (body.max_file_size_mb !== undefined) {
-    plan.max_file_size_mb = Number(body.max_file_size_mb) || 10;
+  if (parsed.enable_custom_domains !== undefined) {
+    plan.enable_custom_domains = parsed.enable_custom_domains;
   }
-  if (body.allowed_file_types !== undefined) {
-    plan.allowed_file_types = Array.isArray(body.allowed_file_types) ? body.allowed_file_types : null;
+  if (parsed.max_custom_domains_per_user !== undefined) {
+    plan.max_custom_domains_per_user = parsed.max_custom_domains_per_user;
+  }
+  if (parsed.enable_firebase !== undefined) {
+    plan.enable_firebase = parsed.enable_firebase;
+  }
+  if (parsed.allow_user_firebase_config !== undefined) {
+    plan.allow_user_firebase_config = parsed.allow_user_firebase_config;
+  }
+  if (parsed.enable_supabase !== undefined) {
+    plan.enable_supabase = parsed.enable_supabase;
+  }
+  if (parsed.enable_file_storage !== undefined) {
+    plan.enable_file_storage = parsed.enable_file_storage;
+  }
+  if (parsed.max_storage_mb !== undefined) {
+    plan.max_storage_mb = parsed.max_storage_mb;
+  }
+  if (parsed.max_file_size_mb !== undefined) {
+    plan.max_file_size_mb = parsed.max_file_size_mb;
+  }
+  if (parsed.max_images_per_prompt !== undefined) {
+    plan.max_images_per_prompt = parsed.max_images_per_prompt;
+  }
+  if (parsed.allowed_file_types !== undefined) {
+    plan.allowed_file_types = parsed.allowed_file_types;
   }
 
   await plan.save();
   await clearAdminStatsCache();
+  invalidateSharedContextCache();
 
   if (req.headers.get('x-inertia')) {
     return NextResponse.redirect(new URL('/admin/plans', req.url), 303);
@@ -155,6 +175,7 @@ export async function DELETE(
 
   await Plan.deleteOne({ _id: plan._id });
   await clearAdminStatsCache();
+  invalidateSharedContextCache();
 
   if (req.headers.get('x-inertia')) {
     return NextResponse.redirect(new URL('/admin/plans', req.url), 303);

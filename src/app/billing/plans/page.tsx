@@ -30,11 +30,18 @@ function serializePlan(plan: IPlan): UiPlan {
     enable_subdomains: Boolean(plan.enable_subdomains),
     max_subdomains_per_user: plan.max_subdomains_per_user ?? null,
     allow_private_visibility: Boolean(plan.allow_private_visibility),
+    enable_custom_domains: Boolean(plan.enable_custom_domains),
+    max_custom_domains_per_user: plan.max_custom_domains_per_user ?? null,
     enable_firebase: Boolean(plan.enable_firebase),
     allow_user_firebase_config: Boolean(plan.allow_user_firebase_config),
+    enable_supabase:
+      typeof plan.enable_supabase === 'boolean'
+        ? plan.enable_supabase
+        : Boolean(plan.enable_firebase),
     enable_file_storage: Boolean(plan.enable_file_storage),
     max_storage_mb: plan.max_storage_mb ?? null,
     max_file_size_mb: Number(plan.max_file_size_mb ?? 10),
+    max_images_per_prompt: Number(plan.max_images_per_prompt ?? 3),
     allowed_file_types: plan.allowed_file_types ?? null,
     created_at: plan.created_at ? new Date(plan.created_at).toISOString() : new Date().toISOString(),
     updated_at: plan.updated_at ? new Date(plan.updated_at).toISOString() : new Date().toISOString(),

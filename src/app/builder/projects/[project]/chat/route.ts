@@ -24,6 +24,7 @@ import {
   ReasoningEffort,
 } from '@/services/builder';
 import { validatePlanAndCreditsForUser } from '@/services/credits';
+import { canUseInternalAiProvider } from '@/lib/plan-policy';
 
 export const runtime = 'nodejs';
 
@@ -113,13 +114,15 @@ export async function POST(
     return validationError({ message: 'The message field is required.' });
   }
 
+  const allowInternalAi = canUseInternalAiProvider(ctx.user, isDemoAdminUser(ctx.user));
   const visualAnalysis =
-    attachedImages.length > 0
+    attachedImages.length > 0 && allowInternalAi
       ? await analyzeAttachedImagesDesign({
           projectId: String(project._id),
           attachedFiles,
           attachedImages,
           userPrompt: rawMessage,
+          allowInternalAi,
         })
       : null;
 

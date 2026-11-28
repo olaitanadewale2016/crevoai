@@ -188,8 +188,15 @@ export async function analyzeAttachedImagesDesign(params: {
   attachedFiles: AttachedFileMeta[];
   attachedImages: AttachedImageVisionPayload[];
   userPrompt: string;
+  /**
+   * Internal AI vision pre-analysis (using the configured Internal AI Provider, e.g. Gemini)
+   * is strictly restricted to non-demo administrators. Non-admin users pass attached_images
+   * directly to their plan-billed builder model without calling admin's internal AI provider.
+   */
+  allowInternalAi?: boolean;
 }): Promise<string | null> {
-  const { projectId, attachedFiles, attachedImages, userPrompt } = params;
+  const { projectId, attachedFiles, attachedImages, userPrompt, allowInternalAi = false } = params;
+  if (!allowInternalAi) return null;
   const visionImgs = attachedImages.filter((img) => Boolean(img.data_base64)).slice(0, 4);
   if (!visionImgs.length) return null;
 

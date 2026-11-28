@@ -22,6 +22,7 @@ import {
   FirebaseServiceAccount,
 } from '@/lib/firebase-admin';
 import { Project } from '@/models';
+import { isSupabaseAllowedForUser } from '@/lib/plan-policy';
 
 export const dynamic = 'force-dynamic';
 
@@ -191,7 +192,7 @@ export default async function ProjectSettingsPage({
 
   const firebaseSettings = {
     enabled: isAdmin || Boolean(plan?.enable_firebase),
-    supabaseEnabled: isAdmin || Boolean(plan?.enable_supabase || plan?.enable_firebase),
+    supabaseEnabled: isSupabaseAllowedForUser(user, plan),
     canUseOwnConfig: isAdmin || Boolean(plan?.allow_user_firebase_config),
     usesSystemFirebase,
     customConfig: customFbConfig,

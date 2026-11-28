@@ -850,9 +850,12 @@ export default function IntegrationSettingsTab({ settings, aiProviders }: Props)
                         <div className="flex items-center gap-2">
                             <Sparkles className="h-5 w-5 text-primary" />
                             <h3 className="text-lg font-medium">{t('Internal AI Provider')}</h3>
+                            <Badge variant="secondary" className="text-xs">
+                                {t('Admin Only')}
+                            </Badge>
                         </div>
                         <p className="text-sm text-muted-foreground">
-                            {t('AI provider for internal features like suggestions and greetings')}
+                            {t('AI provider for internal features and admin-built apps. Access is strictly restricted to administrators so regular users cannot consume internal AI quota.')}
                         </p>
 
                         <div className="grid gap-4">

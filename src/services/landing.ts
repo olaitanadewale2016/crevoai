@@ -96,7 +96,8 @@ function hasNonEmptyStrings(val: unknown): val is string[] {
  */
 export async function enrichHeroSectionWithFallbacks(
   sections: AssembledLandingSection[],
-  locale = 'en'
+  locale = 'en',
+  options?: { allowLiveAi?: boolean }
 ): Promise<{
   sections: AssembledLandingSection[];
   headline: string;
@@ -110,11 +111,12 @@ export async function enrichHeroSectionWithFallbacks(
   let fallbackTypingPrompts: string[] = STATIC_TYPING_PROMPTS;
 
   try {
+    const aiOpts = { allowLiveAi: Boolean(options?.allowLiveAi) };
     const [headlines, subtitles, suggestions, typingPrompts] = await Promise.all([
-      getInternalHeroHeadlines(4, locale),
-      getInternalHeroSubtitles(4, locale),
-      getInternalSuggestions(4, locale),
-      getInternalTypingPrompts(8, locale),
+      getInternalHeroHeadlines(4, locale, aiOpts),
+      getInternalHeroSubtitles(4, locale, aiOpts),
+      getInternalSuggestions(4, locale, aiOpts),
+      getInternalTypingPrompts(8, locale, aiOpts),
     ]);
     if (headlines.length > 0) allHeadlines = headlines;
     if (subtitles.length > 0) allSubtitles = subtitles;

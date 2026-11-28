@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { getSessionContext, getUserCurrentPlan } from '@/lib/auth';
+import { getSessionContext, getUserCurrentPlan, isDemoAdminUser } from '@/lib/auth';
+import { canUseInternalAiProvider, isSupabaseAllowedForUser } from '@/lib/plan-policy';
 import { getProjectFirebaseConfig } from '@/lib/firebase-admin';
 import { Project } from '@/models/Project';
 import { getChatFollowUpSuggestions } from '@/services/internal-ai';
@@ -43,9 +44,7 @@ export async function GET(
       getProjectFirebaseConfig(project).catch(() => null),
     ]);
     const canFirebase = Boolean(ctx.user.role === 'admin' || plan?.enable_firebase);
-    const canSupabase = Boolean(
-      ctx.user.role === 'admin' || plan?.enable_firebase || plan?.enable_supabase
-    );
+    const canSupabase = isSupabaseAllowedForUser(ctx.user, plan);
     const storageChoices: string[] = [
       'Use localStorage (interactive demo — start building now)',
     ];
@@ -65,10 +64,11 @@ export async function GET(
     return NextResponse.json({ suggestions: storageChoices.slice(0, 3) });
   }
 
-  const suggestions = await getChatFollowUpSuggestions(
-    project.conversation_history || [],
-    3
-  );
+  // Only non-demo administrators can trigger live calls to the Internal AI provider (e.g. Gemini)
+  const allowInternalAi = canUseInternalAiProvider(ctx.user, isDemoAdminUser(ctx.user));
+  const suggestions = allowInternalAi
+    ? await getChatFollowUpSuggestions(project.conversation_history || [], 3)
+    : null;
 
   let finalSuggestions = suggestions && Array.isArray(suggestions) && suggestions.length > 0 ? [...suggestions] : [];
 

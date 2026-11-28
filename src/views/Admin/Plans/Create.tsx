@@ -9,14 +9,14 @@ import type { PageProps } from '@/types';
 import { useTranslation } from '@/contexts/LanguageContext';
 
 interface AiProvider {
-    id: number;
+    id: string | number;
     name: string;
     type: string;
     is_default: boolean;
 }
 
 interface Builder {
-    id: number;
+    id: string | number;
     name: string;
 }
 

@@ -19,11 +19,30 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Plus, Pencil, Trash2, Check, X, Users, Star, CreditCard, Bot, Server, GripVertical } from 'lucide-react';
+import {
+    Plus,
+    Pencil,
+    Trash2,
+    Check,
+    X,
+    Users,
+    Star,
+    CreditCard,
+    Bot,
+    Server,
+    GripVertical,
+    Sparkles,
+    Loader2,
+} from 'lucide-react';
 import type { PageProps } from '@/types';
 import { toast } from 'sonner';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from '@/contexts/LanguageContext';
+import {
+    calculatePlanEconomics,
+    formatCreditTokens,
+    formatStorageMb,
+} from '@/lib/plan-policy';
 import {
     DndContext,
     closestCenter,
@@ -48,7 +67,7 @@ interface PlanFeature {
 }
 
 interface Plan {
-    id: number;
+    id: string | number;
     name: string;
     slug: string;
     description: string | null;
@@ -71,6 +90,15 @@ interface Plan {
     // Custom domain settings
     enable_custom_domains: boolean;
     max_custom_domains_per_user: number | null;
+    // Database settings
+    enable_firebase?: boolean;
+    allow_user_firebase_config?: boolean;
+    enable_supabase?: boolean;
+    // File storage & media settings
+    enable_file_storage?: boolean;
+    max_storage_mb?: number | null;
+    max_file_size_mb?: number;
+    max_images_per_prompt?: number;
 }
 
 interface PlansPageProps extends PageProps {
@@ -131,10 +159,16 @@ function SortablePlanCard({ plan, onDelete, onToggleStatus, renderFeatures, t, l
         lifetime: '',
     };
 
+    const economics = calculatePlanEconomics({
+        price: plan.price,
+        monthlyBuildCredits: plan.monthly_build_credits ?? 0,
+        billingPeriod: plan.billing_period,
+    });
+
     return (
         <div ref={setNodeRef} style={style}>
             <Card
-                className={`flex flex-col ${!plan.is_active ? 'opacity-60' : ''} ${plan.is_popular ? 'ring-2 ring-primary' : ''} ${isDragging ? 'shadow-lg' : ''}`}
+                className={`flex flex-col h-full ${!plan.is_active ? 'opacity-60' : ''} ${plan.is_popular ? 'ring-2 ring-primary' : ''} ${isDragging ? 'shadow-lg' : ''}`}
             >
                 <CardHeader>
                     <div className="flex items-start justify-between">
@@ -152,11 +186,27 @@ function SortablePlanCard({ plan, onDelete, onToggleStatus, renderFeatures, t, l
                                     <Star className="h-4 w-4 fill-primary text-primary" />
                                 )}
                             </div>
-                            <div className="flex gap-2 mt-2">
+                            <div className="flex flex-wrap gap-2 mt-2">
                                 <Badge variant="outline" className="capitalize">
                                     {billingPeriodLabels[plan.billing_period]}
                                 </Badge>
                                 {!plan.is_active && <Badge variant="secondary">{t('Inactive')}</Badge>}
+                                <Badge
+                                    variant={
+                                        economics.riskLevel === 'healthy'
+                                            ? 'secondary'
+                                            : economics.riskLevel === 'tight'
+                                                ? 'outline'
+                                                : 'destructive'
+                                    }
+                                    className="text-xs"
+                                >
+                                    {economics.isUnlimitedCredits
+                                        ? t('Uncapped AI Cost')
+                                        : economics.worstCaseMarginPct !== null
+                                            ? `${economics.worstCaseMarginPct.toFixed(0)}% ${t('min margin')}`
+                                            : t('Loss')}
+                                </Badge>
                             </div>
                         </div>
                     </div>
@@ -169,6 +219,14 @@ function SortablePlanCard({ plan, onDelete, onToggleStatus, renderFeatures, t, l
                             {billingPeriodShort[plan.billing_period]}
                         </span>
                     </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                        {economics.isUnlimitedCredits
+                            ? t('Unlimited tokens (uncapped cost at $10/30M)')
+                            : t('Est. ~:sites sites · Max AI cost $:cost', {
+                                  sites: economics.approxSimpleSites ?? 0,
+                                  cost: (economics.maxTokenCostUsd ?? 0).toFixed(2),
+                              })}
+                    </p>
                 </CardHeader>
                 <CardContent className="flex-1">
                     <ul className="space-y-2">{renderFeatures(plan)}</ul>
@@ -226,6 +284,12 @@ export default function Index({ auth, plans }: PlansPageProps) {
     const [planItems, setPlanItems] = useState<Plan[]>(plans);
     const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
     const [planToDelete, setPlanToDelete] = useState<Plan | null>(null);
+    const [isPresetsDialogOpen, setIsPresetsDialogOpen] = useState(false);
+    const [applyingPresets, setApplyingPresets] = useState(false);
+
+    useEffect(() => {
+        setPlanItems(plans);
+    }, [plans]);
 
     const sensors = useSensors(
         useSensor(PointerSensor),
@@ -244,13 +308,11 @@ export default function Index({ auth, plans }: PlansPageProps) {
 
                 const newItems = arrayMove(items, oldIndex, newIndex);
 
-                // Update sort orders and send to server
                 const updatedPlans = newItems.map((plan, index) => ({
                     id: plan.id,
                     sort_order: index,
                 }));
 
-                // Use fetch instead of Inertia router for JSON API endpoint
                 fetch(route('admin.plans.reorder'), {
                     method: 'POST',
                     headers: {
@@ -273,7 +335,7 @@ export default function Index({ auth, plans }: PlansPageProps) {
                     })
                     .catch(() => {
                         toast.error(t('Failed to reorder plans'));
-                        setPlanItems(items); // Revert on error
+                        setPlanItems(items);
                     });
 
                 return newItems;
@@ -306,6 +368,29 @@ export default function Index({ auth, plans }: PlansPageProps) {
         });
     };
 
+    const handleApplyProfitableDefaults = async () => {
+        setApplyingPresets(true);
+        try {
+            const response = await fetch(route('admin.plans.apply-defaults'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data?.errors?.error || data?.error || t('Failed to apply plan presets'));
+            }
+            toast.success(t('Profitable plan presets applied'));
+            setIsPresetsDialogOpen(false);
+            router.reload();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : t('Failed to apply plan presets'));
+        } finally {
+            setApplyingPresets(false);
+        }
+    };
+
     const handleToggleStatus = (plan: Plan) => {
         router.post(
             route('admin.plans.toggle-status', plan.id),
@@ -326,15 +411,7 @@ export default function Index({ auth, plans }: PlansPageProps) {
         );
     };
 
-    // Helper to format credits
-    const formatCredits = (credits: number): string => {
-        if (credits === -1) return t('Unlimited');
-        if (credits >= 1_000_000) return `${(credits / 1_000_000).toFixed(0)}M`;
-        if (credits >= 1_000) return `${(credits / 1_000).toFixed(0)}K`;
-        return credits.toString();
-    };
-
-    // Helper to render features (handles both old string[] and new object[] format)
+    // Helper to render features (handles structured feature gates + custom JSON highlights)
     const renderFeatures = (plan: Plan) => {
         const items: React.ReactNode[] = [];
 
@@ -352,7 +429,9 @@ export default function Index({ auth, plans }: PlansPageProps) {
         items.push(
             <li key="credits" className="flex items-center gap-2 text-sm">
                 <Check className="h-4 w-4 text-success flex-shrink-0" />
-                {t(':credits AI credits/month', { credits: formatCredits(plan.monthly_build_credits ?? 0) })}
+                {t(':credits AI credits/month', {
+                    credits: formatCreditTokens(plan.monthly_build_credits ?? 0, t('Unlimited')),
+                })}
             </li>
         );
 
@@ -364,13 +443,23 @@ export default function Index({ auth, plans }: PlansPageProps) {
                     {t('Use your own API key')}
                 </li>
             );
+        } else {
+            items.push(
+                <li key="apikey" className="flex items-center gap-2 text-sm">
+                    <X className="h-4 w-4 text-destructive flex-shrink-0" />
+                    <span className="text-muted-foreground">{t('Use your own API key')}</span>
+                </li>
+            );
         }
 
         // Custom subdomains
         if (plan.enable_subdomains) {
-            const subdomainText = plan.max_subdomains_per_user === null
-                ? t('Unlimited custom subdomains')
-                : t(':count custom subdomains', { count: plan.max_subdomains_per_user });
+            const subdomainText =
+                plan.max_subdomains_per_user === null
+                    ? t('Unlimited custom subdomains')
+                    : plan.max_subdomains_per_user === 1
+                        ? t('1 custom subdomain')
+                        : t(':count custom subdomains', { count: plan.max_subdomains_per_user });
             items.push(
                 <li key="subdomains" className="flex items-center gap-2 text-sm">
                     <Check className="h-4 w-4 text-success flex-shrink-0" />
@@ -382,6 +471,29 @@ export default function Index({ auth, plans }: PlansPageProps) {
                 <li key="subdomains" className="flex items-center gap-2 text-sm">
                     <X className="h-4 w-4 text-destructive flex-shrink-0" />
                     <span className="text-muted-foreground">{t('Custom subdomains')}</span>
+                </li>
+            );
+        }
+
+        // Custom domains
+        if (plan.enable_custom_domains) {
+            const domainText =
+                plan.max_custom_domains_per_user === null
+                    ? t('Unlimited custom domains')
+                    : plan.max_custom_domains_per_user === 1
+                        ? t('1 custom domain')
+                        : t(':count custom domains', { count: plan.max_custom_domains_per_user });
+            items.push(
+                <li key="custom-domains" className="flex items-center gap-2 text-sm">
+                    <Check className="h-4 w-4 text-success flex-shrink-0" />
+                    {domainText}
+                </li>
+            );
+        } else {
+            items.push(
+                <li key="custom-domains" className="flex items-center gap-2 text-sm">
+                    <X className="h-4 w-4 text-destructive flex-shrink-0" />
+                    <span className="text-muted-foreground">{t('Custom domains')}</span>
                 </li>
             );
         }
@@ -403,22 +515,58 @@ export default function Index({ auth, plans }: PlansPageProps) {
             );
         }
 
-        // Custom domains
-        if (plan.enable_custom_domains) {
-            const domainText = plan.max_custom_domains_per_user === null
-                ? t('Unlimited custom domains')
-                : t(':count custom domains', { count: plan.max_custom_domains_per_user });
+        // Firebase Database
+        if (plan.enable_firebase) {
             items.push(
-                <li key="custom-domains" className="flex items-center gap-2 text-sm">
+                <li key="firebase" className="flex items-center gap-2 text-sm">
                     <Check className="h-4 w-4 text-success flex-shrink-0" />
-                    {domainText}
+                    {plan.allow_user_firebase_config
+                        ? t('Firebase DB & Auth (custom project)')
+                        : t('Firebase DB & Auth (managed)')}
                 </li>
             );
         } else {
             items.push(
-                <li key="custom-domains" className="flex items-center gap-2 text-sm">
+                <li key="firebase" className="flex items-center gap-2 text-sm">
                     <X className="h-4 w-4 text-destructive flex-shrink-0" />
-                    <span className="text-muted-foreground">{t('Custom domains')}</span>
+                    <span className="text-muted-foreground">{t('Firebase DB & Auth')}</span>
+                </li>
+            );
+        }
+
+        // Supabase Database
+        if (plan.enable_supabase) {
+            items.push(
+                <li key="supabase" className="flex items-center gap-2 text-sm">
+                    <Check className="h-4 w-4 text-success flex-shrink-0" />
+                    {t('Supabase PostgreSQL & Auth')}
+                </li>
+            );
+        } else {
+            items.push(
+                <li key="supabase" className="flex items-center gap-2 text-sm">
+                    <X className="h-4 w-4 text-destructive flex-shrink-0" />
+                    <span className="text-muted-foreground">{t('Supabase PostgreSQL & Auth')}</span>
+                </li>
+            );
+        }
+
+        // File Storage
+        if (plan.enable_file_storage) {
+            items.push(
+                <li key="storage" className="flex items-center gap-2 text-sm">
+                    <Check className="h-4 w-4 text-success flex-shrink-0" />
+                    {t(':size storage (:max MB max file)', {
+                        size: formatStorageMb(plan.max_storage_mb, t('Unlimited')),
+                        max: plan.max_file_size_mb ?? 10,
+                    })}
+                </li>
+            );
+        } else {
+            items.push(
+                <li key="storage" className="flex items-center gap-2 text-sm">
+                    <X className="h-4 w-4 text-destructive flex-shrink-0" />
+                    <span className="text-muted-foreground">{t('Project file storage')}</span>
                 </li>
             );
         }
@@ -426,7 +574,6 @@ export default function Index({ auth, plans }: PlansPageProps) {
         // Custom features from JSON
         if (Array.isArray(plan.features) && plan.features.length > 0) {
             plan.features.forEach((feature, index) => {
-                // Handle old string format
                 if (typeof feature === 'string') {
                     items.push(
                         <li key={`custom-${index}`} className="flex items-center gap-2 text-sm">
@@ -437,7 +584,6 @@ export default function Index({ auth, plans }: PlansPageProps) {
                     return;
                 }
 
-                // Handle new object format - skip empty names
                 if (!feature.name?.trim()) return;
 
                 items.push(
@@ -458,22 +604,34 @@ export default function Index({ auth, plans }: PlansPageProps) {
         return items;
     };
 
+    const headerActions = (
+        <div className="flex items-center gap-2">
+            <Button
+                variant="outline"
+                onClick={() => setIsPresetsDialogOpen(true)}
+                disabled={applyingPresets}
+            >
+                <Sparkles className="h-4 w-4 me-2" />
+                {t('Apply Profitable Defaults')}
+            </Button>
+            <Button asChild>
+                <Link href="/admin/plans/create">
+                    <Plus className="h-4 w-4 me-2" />
+                    {t('Create Plan')}
+                </Link>
+            </Button>
+        </div>
+    );
+
     if (isLoading) {
         return (
             <AdminLayout user={auth.user!} title={t('Plans')}>
                 <AdminPageHeader
                     title={t('Plans')}
                     subtitle={t('Manage subscription plans')}
-                    action={
-                        <Button asChild>
-                            <Link href="/admin/plans/create">
-                                <Plus className="h-4 w-4 me-2" />
-                                {t('Create Plan')}
-                            </Link>
-                        </Button>
-                    }
+                    action={headerActions}
                 />
-                <CardGridSkeleton count={4} columns={4} cardVariant="plan" />
+                <CardGridSkeleton count={3} columns={3} cardVariant="plan" />
             </AdminLayout>
         );
     }
@@ -482,15 +640,8 @@ export default function Index({ auth, plans }: PlansPageProps) {
         <AdminLayout user={auth.user!} title={t('Plans')}>
             <AdminPageHeader
                 title={t('Plans')}
-                subtitle={t('Manage subscription plans')}
-                action={
-                    <Button asChild>
-                        <Link href="/admin/plans/create">
-                            <Plus className="h-4 w-4 me-2" />
-                            {t('Create Plan')}
-                        </Link>
-                    </Button>
-                }
+                subtitle={t('Manage subscription plans, credit limits, and feature gates')}
+                action={headerActions}
             />
 
             <DndContext
@@ -502,10 +653,10 @@ export default function Index({ auth, plans }: PlansPageProps) {
                     items={planItems.map((plan) => plan.id)}
                     strategy={verticalListSortingStrategy}
                 >
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {planItems.map((plan) => (
                             <SortablePlanCard
-                                key={plan.id}
+                                key={String(plan.id)}
                                 plan={plan}
                                 onDelete={handleDelete}
                                 onToggleStatus={handleToggleStatus}
@@ -523,16 +674,48 @@ export default function Index({ auth, plans }: PlansPageProps) {
                     <CreditCard className="mx-auto h-12 w-12 text-muted-foreground" />
                     <h3 className="mt-4 text-lg font-semibold">{t('No plans yet')}</h3>
                     <p className="text-muted-foreground">
-                        {t('Get started by creating your first subscription plan.')}
+                        {t('Get started by applying profitable defaults or creating your first subscription plan.')}
                     </p>
-                    <Button className="mt-4" asChild>
-                        <Link href="/admin/plans/create">
-                            <Plus className="h-4 w-4 me-2" />
-                            {t('Create Plan')}
-                        </Link>
-                    </Button>
+                    <div className="flex items-center justify-center gap-3 mt-4">
+                        <Button variant="outline" onClick={() => setIsPresetsDialogOpen(true)}>
+                            <Sparkles className="h-4 w-4 me-2" />
+                            {t('Apply Profitable Defaults')}
+                        </Button>
+                        <Button asChild>
+                            <Link href="/admin/plans/create">
+                                <Plus className="h-4 w-4 me-2" />
+                                {t('Create Plan')}
+                            </Link>
+                        </Button>
+                    </div>
                 </div>
             )}
+
+            {/* Apply Profitable Presets Confirmation Dialog */}
+            <AlertDialog open={isPresetsDialogOpen} onOpenChange={setIsPresetsDialogOpen}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>{t('Apply profitable plan presets?')}</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {t('This updates your plans in-place to realistic, profitable tiers calibrated for $10 per 30M tokens (~1M tokens per simple website): Starter ($9.99 / 5M credits), Pro ($24.99 / 18M credits), and Agency ($69.99 / 60M credits). Existing subscriptions stay linked and you can edit any limit afterward.')}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={applyingPresets}>{t('Cancel')}</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={(e) => {
+                                e.preventDefault();
+                                handleApplyProfitableDefaults();
+                            }}
+                            disabled={applyingPresets}
+                        >
+                            {applyingPresets && <Loader2 className="h-4 w-4 me-2 animate-spin" />}
+                            {t('Apply Presets')}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
             {/* Delete Confirmation Dialog */}
             <AlertDialog open={isDeleteDialogOpen} onOpenChange={(open) => {
                 setIsDeleteDialogOpen(open);

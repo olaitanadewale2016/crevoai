@@ -24,9 +24,17 @@ import {
   isFileStorageAllowedForUser,
   isFirebaseAllowedForUser,
 } from '@/lib/firebase-policy';
-import { getUserCurrentPlan } from '@/lib/auth';
+import {
+  getUserCurrentPlan,
+  hasUnlimitedBuildCreditsAccess,
+  isDemoAdminUser,
+} from '@/lib/auth';
+import {
+  canUseInternalAiProvider,
+  isSupabaseAllowedForUser,
+} from '@/lib/plan-policy';
+import { isInternalAiConfigured } from './internal-ai';
 import { resolvePlanAiProvider, resolvePlanBuilder } from './credits';
-import { hasUnlimitedBuildCreditsAccess } from '@/lib/auth';
 import { computeRemainingCreditsBudget } from '@/lib/credits-policy';
 import { Project, Template, IProject, IConversationEntry } from '@/models/Project';
 import { User, UserAiSettings, IUser } from '@/models/User';
@@ -385,18 +393,19 @@ export function buildOptimizedHistoryForBuilder(project: IProject): {
 
 export async function buildProjectCapabilitiesForBuilder(params: {
   project: IProject;
-  user: Pick<IUser, 'role'>;
+  user: Pick<IUser, 'role' | 'email' | 'numeric_id'>;
   plan: IPlan | null;
 }) {
   const { project, user, plan } = params;
-  const firebaseCfg = await getProjectFirebaseConfig(project);
+  const [firebaseCfg, internalAiConfigured] = await Promise.all([
+    getProjectFirebaseConfig(project),
+    isInternalAiConfigured(),
+  ]);
   const firebaseAvailable = isFirebaseAllowedForUser(user, plan);
   const firebaseEnabled = firebaseAvailable && Boolean(firebaseCfg);
   const firebasePrefix = getProjectFirebasePrefix(project._id);
 
-  const supabaseAvailable = Boolean(
-    user.role === 'admin' || plan?.enable_firebase || plan?.enable_supabase
-  );
+  const supabaseAvailable = isSupabaseAllowedForUser(user, plan);
   const supabaseCfg = project.supabase_config
     ? decryptJson<{ url?: string; anonKey?: string }>(project.supabase_config)
     : null;
@@ -407,6 +416,9 @@ export async function buildProjectCapabilitiesForBuilder(params: {
 
   const storageEnabled = isFileStorageAllowedForUser(user, plan);
   const maxFileSizeMb = getEffectiveMaxFileSizeMb(user, plan);
+
+  const internalAiAllowed = canUseInternalAiProvider(user, isDemoAdminUser(user as IUser));
+  const internalAiEnabled = internalAiAllowed && internalAiConfigured;
 
   return {
     firebaseCfg,
@@ -419,6 +431,8 @@ export async function buildProjectCapabilitiesForBuilder(params: {
     supabaseTablePrefix,
     storageEnabled,
     maxFileSizeMb,
+    internalAiAllowed,
+    internalAiEnabled,
     project_capabilities: {
       firebase: {
         enabled: firebaseEnabled,
@@ -435,6 +449,10 @@ export async function buildProjectCapabilitiesForBuilder(params: {
         enabled: storageEnabled,
         max_file_size_mb: maxFileSizeMb,
         allowed_file_types: plan?.allowed_file_types ?? null,
+      },
+      internal_ai: {
+        enabled: internalAiEnabled,
+        admin_only: true,
       },
     },
   };
@@ -482,6 +500,7 @@ export async function startBuilderSession(params: {
     supabaseTablePrefix,
     storageEnabled,
     maxFileSizeMb,
+    internalAiEnabled,
     project_capabilities,
   } = caps;
   const { history, isCompacted } = buildOptimizedHistoryForBuilder(project);
@@ -507,6 +526,11 @@ export async function startBuilderSession(params: {
   }
   if (supabaseEnabled) {
     enrichedGoal += `\n\n[Supabase Database Active]\nSupabase is pre-configured and injected at runtime via \`window.__APP_CONFIG__.supabase\` (\`{ url: "${supabaseCfg?.url}", anonKey: "...", tablePrefix: "${supabaseTablePrefix}" }\`). You can use \`@supabase/supabase-js\` or \`fetch("\${window.__APP_CONFIG__.supabase.url}/rest/v1/...", { headers: { apikey: window.__APP_CONFIG__.supabase.anonKey, Authorization: "Bearer " + window.__APP_CONFIG__.supabase.anonKey } })\` for database persistence and auth.`;
+  }
+  if (internalAiEnabled) {
+    enrichedGoal += `\n\n[Admin Internal AI Provider Active]\nThis project belongs to an administrator and has access to the platform's Internal AI Provider (currently configured in Admin -> Integrations) via \`useInternalAi()\` from \`@/hooks/useInternalAi\` (securely proxied through \`POST \${window.__APP_CONFIG__.apiUrl}/api/app/\${window.__APP_CONFIG__.projectId}/ai\` using \`X-Project-Token\`). Use \`useInternalAi()\` ONLY when the administrator requests AI-powered features inside the built app; NEVER hardcode any API key in frontend code.`;
+  } else {
+    enrichedGoal += `\n\n[Internal AI Provider Restricted — Admin Only]\nAccess to the platform's Internal AI Provider (e.g. Gemini) inside generated apps is strictly restricted to administrators only and is DISABLED for this project.\n- NEVER import \`useInternalAi\`, NEVER call \`/api/app/.../ai\`, and NEVER embed any platform AI API key.\n- If the user specifically asks their generated app to use the platform's internal AI or built-in Gemini provider, clearly explain in plain language that built-in platform AI access is restricted to administrators, and either add a settings screen where their app's end-user can paste their own Gemini/OpenAI API key OR implement clean client-side/rule-based logic.`;
   }
 
   const payload: Record<string, unknown> = {
@@ -1091,25 +1115,30 @@ export async function buildDynamicHtml(
   const desc = escapeHtmlAttr(project.published_description || project.description || '');
   const shareImgUrl = project.share_image ? getPublicAssetUrl(project.share_image) : null;
   const owner = project.user_id
-    ? await User.findById(project.user_id).select('_id role email').lean()
+    ? await User.findById(project.user_id).select('_id role email numeric_id').lean()
     : null;
-  const [ownerPlan, rawFirebaseCfg] = await Promise.all([
+  const [ownerPlan, rawFirebaseCfg, internalAiConfigured] = await Promise.all([
     owner ? getUserCurrentPlan(owner) : Promise.resolve(null),
     getProjectFirebaseConfig(project),
+    isInternalAiConfigured(),
   ]);
   const firebaseAllowed = isFirebaseAllowedForUser(owner, ownerPlan);
   const firebaseCfg = firebaseAllowed ? rawFirebaseCfg : null;
+  const supabaseAllowed = isSupabaseAllowedForUser(owner, ownerPlan);
   const storageAllowed = isFileStorageAllowedForUser(owner, ownerPlan);
   const maxFileSizeMb = getEffectiveMaxFileSizeMb(owner, ownerPlan);
+  const internalAiAllowed =
+    canUseInternalAiProvider(owner, owner ? isDemoAdminUser(owner as any) : true) &&
+    internalAiConfigured;
 
-  // Auto-backfill missing api_token for legacy projects when file storage is enabled
+  // Auto-backfill missing api_token for legacy projects when file storage or admin internal AI is enabled
   let effectiveApiToken = project.api_token || '';
-  if (storageAllowed && !effectiveApiToken) {
+  if ((storageAllowed || internalAiAllowed) && !effectiveApiToken) {
     effectiveApiToken = generateHexToken(32);
     Project.updateOne(
       { _id: project._id, $or: [{ api_token: null }, { api_token: '' }] },
       { $set: { api_token: effectiveApiToken } }
-    ).catch(() => {});
+    ).catch(() => { });
   }
 
   const appConfig: Record<string, unknown> = {
@@ -1118,12 +1147,13 @@ export async function buildDynamicHtml(
     apiToken: effectiveApiToken,
     storageEnabled: storageAllowed,
     maxFileSizeMb,
+    internalAiEnabled: internalAiAllowed,
   };
   if (firebaseCfg) {
     appConfig.firebase = firebaseCfg;
     appConfig.firebasePrefix = getProjectFirebasePrefix(project._id);
   }
-  if (project.supabase_config) {
+  if (supabaseAllowed && project.supabase_config) {
     const supa = decryptJson<{ url?: string; anonKey?: string }>(project.supabase_config);
     if (supa?.url && supa?.anonKey) {
       appConfig.supabase = {

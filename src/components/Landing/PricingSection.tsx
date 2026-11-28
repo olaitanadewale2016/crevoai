@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Check, X, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/contexts/LanguageContext';
+import { formatCreditTokens, formatStorageMb } from '@/lib/plan-policy';
 
 interface PlanFeature {
     name: string;
@@ -14,11 +15,11 @@ interface PlanFeature {
 }
 
 interface Plan {
-    id: number;
+    id: string | number;
     name: string;
     slug: string;
     description: string | null;
-    price: string;
+    price: string | number;
     billing_period: 'monthly' | 'yearly' | 'lifetime';
     features: PlanFeature[];
     is_popular: boolean;
@@ -32,6 +33,14 @@ interface Plan {
     // Custom domain settings
     enable_custom_domains?: boolean;
     max_custom_domains_per_user?: number | null;
+    // Database settings
+    enable_firebase?: boolean;
+    allow_user_firebase_config?: boolean;
+    enable_supabase?: boolean;
+    // Storage settings
+    enable_file_storage?: boolean;
+    max_storage_mb?: number | null;
+    max_file_size_mb?: number;
 }
 
 interface PricingSectionProps {
@@ -41,13 +50,6 @@ interface PricingSectionProps {
 }
 
 type TranslationFn = (key: string, replacements?: Record<string, string | number>) => string;
-
-function formatCredits(credits: number, t: TranslationFn): string {
-    if (credits === -1) return t('Unlimited');
-    if (credits >= 1_000_000) return `${(credits / 1_000_000).toFixed(0)}M`;
-    if (credits >= 1_000) return `${(credits / 1_000).toFixed(0)}K`;
-    return credits.toString();
-}
 
 function formatCurrency(amount: string | number): string {
     const num = typeof amount === 'string' ? parseFloat(amount) : amount;
@@ -85,6 +87,16 @@ function PlanCard({ plan, t }: { plan: Plan; t: TranslationFn }) {
         return t(':count custom subdomains', { count: plan.max_subdomains_per_user ?? 0 });
     };
 
+    const getCustomDomainsLabel = () => {
+        if (plan.max_custom_domains_per_user === null) {
+            return t('Unlimited custom domains');
+        }
+        if (plan.max_custom_domains_per_user === 1) {
+            return t('1 custom domain');
+        }
+        return t(':count custom domains', { count: plan.max_custom_domains_per_user ?? 0 });
+    };
+
     return (
         <Card
             className={cn(
@@ -120,12 +132,19 @@ function PlanCard({ plan, t }: { plan: Plan; t: TranslationFn }) {
                     </li>
                     <li className="flex items-center gap-2 text-sm">
                         <Check className="h-4 w-4 text-success shrink-0" />
-                        {t(':credits AI credits/month', { credits: formatCredits(plan.monthly_build_credits, t) })}
+                        {t(':credits AI credits/month', {
+                            credits: formatCreditTokens(plan.monthly_build_credits, t('Unlimited')),
+                        })}
                     </li>
-                    {plan.allow_user_ai_api_key && (
+                    {plan.allow_user_ai_api_key ? (
                         <li className="flex items-center gap-2 text-sm">
                             <Check className="h-4 w-4 text-success shrink-0" />
                             {t('Use your own API key')}
+                        </li>
+                    ) : (
+                        <li className="flex items-center gap-2 text-sm">
+                            <X className="h-4 w-4 text-destructive shrink-0" />
+                            <span className="text-muted-foreground">{t('Use your own API key')}</span>
                         </li>
                     )}
                     {plan.enable_subdomains ? (
@@ -139,6 +158,17 @@ function PlanCard({ plan, t }: { plan: Plan; t: TranslationFn }) {
                             <span className="text-muted-foreground">{t('Custom subdomains')}</span>
                         </li>
                     )}
+                    {plan.enable_custom_domains ? (
+                        <li className="flex items-center gap-2 text-sm">
+                            <Check className="h-4 w-4 text-success shrink-0" />
+                            {getCustomDomainsLabel()}
+                        </li>
+                    ) : (
+                        <li className="flex items-center gap-2 text-sm">
+                            <X className="h-4 w-4 text-destructive shrink-0" />
+                            <span className="text-muted-foreground">{t('Custom domains')}</span>
+                        </li>
+                    )}
                     {plan.allow_private_visibility ? (
                         <li className="flex items-center gap-2 text-sm">
                             <Check className="h-4 w-4 text-success shrink-0" />
@@ -148,6 +178,44 @@ function PlanCard({ plan, t }: { plan: Plan; t: TranslationFn }) {
                         <li className="flex items-center gap-2 text-sm">
                             <X className="h-4 w-4 text-destructive shrink-0" />
                             <span className="text-muted-foreground">{t('Private project visibility')}</span>
+                        </li>
+                    )}
+                    {plan.enable_firebase ? (
+                        <li className="flex items-center gap-2 text-sm">
+                            <Check className="h-4 w-4 text-success shrink-0" />
+                            {plan.allow_user_firebase_config
+                                ? t('Firebase DB & Auth (custom project)')
+                                : t('Firebase DB & Auth')}
+                        </li>
+                    ) : (
+                        <li className="flex items-center gap-2 text-sm">
+                            <X className="h-4 w-4 text-destructive shrink-0" />
+                            <span className="text-muted-foreground">{t('Firebase DB & Auth')}</span>
+                        </li>
+                    )}
+                    {plan.enable_supabase ? (
+                        <li className="flex items-center gap-2 text-sm">
+                            <Check className="h-4 w-4 text-success shrink-0" />
+                            {t('Supabase PostgreSQL & Auth')}
+                        </li>
+                    ) : (
+                        <li className="flex items-center gap-2 text-sm">
+                            <X className="h-4 w-4 text-destructive shrink-0" />
+                            <span className="text-muted-foreground">{t('Supabase PostgreSQL & Auth')}</span>
+                        </li>
+                    )}
+                    {plan.enable_file_storage ? (
+                        <li className="flex items-center gap-2 text-sm">
+                            <Check className="h-4 w-4 text-success shrink-0" />
+                            {t(':size file storage (:max MB/file)', {
+                                size: formatStorageMb(plan.max_storage_mb, t('Unlimited')),
+                                max: plan.max_file_size_mb ?? 10,
+                            })}
+                        </li>
+                    ) : (
+                        <li className="flex items-center gap-2 text-sm">
+                            <X className="h-4 w-4 text-destructive shrink-0" />
+                            <span className="text-muted-foreground">{t('Project file storage')}</span>
                         </li>
                     )}
                     {plan.features
@@ -180,7 +248,6 @@ export function PricingSection({ plans, content, settings: _settings }: PricingS
 
     if (plans.length === 0) return null;
 
-    // Get content with defaults - DB content takes priority
     const title = (content?.title as string) || t('Simple, transparent pricing');
     const subtitle = (content?.subtitle as string) || t('Choose the plan that fits your needs. All plans include access to our AI-powered website builder.');
 
@@ -205,7 +272,7 @@ export function PricingSection({ plans, content, settings: _settings }: PricingS
                     )}
                 >
                     {plans.map((plan) => (
-                        <PlanCard key={plan.id} plan={plan} t={t} />
+                        <PlanCard key={String(plan.id)} plan={plan} t={t} />
                     ))}
                 </div>
             </div>

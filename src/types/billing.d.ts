@@ -116,13 +116,18 @@ export interface Plan {
     enable_subdomains: boolean;
     max_subdomains_per_user: number | null;
     allow_private_visibility: boolean;
-    // Firebase settings
+    // Custom domain settings
+    enable_custom_domains?: boolean;
+    max_custom_domains_per_user?: number | null;
+    // Firebase & Supabase settings
     enable_firebase: boolean;
     allow_user_firebase_config: boolean;
-    // File storage settings
+    enable_supabase?: boolean;
+    // File storage & prompt settings
     enable_file_storage: boolean;
     max_storage_mb: number | null;
     max_file_size_mb: number;
+    max_images_per_prompt?: number;
     allowed_file_types: string[] | null;
     created_at: string;
     updated_at: string;

@@ -26,6 +26,7 @@ import { formatHumanFileSize } from '@/lib/http';
 import { projectPreviewExists } from '@/services/builder';
 import { getSharedAppProps, getUserCreditsSnapshot } from '@/services/shared-context';
 import { getNextCreditsResetDateFormatted } from '@/services/credits';
+import { isSupabaseAllowedForUser } from '@/lib/plan-policy';
 import { Project, ProjectFile, UserAiSettings } from '@/models';
 import { Subscription } from '@/models/Billing';
 import type { BroadcastConfig } from '@/hooks/useBuilderPusher';
@@ -236,7 +237,7 @@ export default async function ProjectChatPage({
 
   const firebaseSettings = {
     enabled: isAdmin || Boolean(plan?.enable_firebase),
-    supabaseEnabled: isAdmin || Boolean(plan?.enable_supabase || plan?.enable_firebase),
+    supabaseEnabled: isSupabaseAllowedForUser(user, plan),
     canUseOwnConfig: isAdmin || Boolean(plan?.allow_user_firebase_config),
     usesSystemFirebase,
     customConfig: customFbConfig,

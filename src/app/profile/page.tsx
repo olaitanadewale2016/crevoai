@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 import Edit from '@/Pages/Profile/Edit';
 import { connectDB } from '@/lib/db';
-import { getSessionContext, getUserCurrentPlan, isSuperAdminUser } from '@/lib/auth';
+import { getSessionContext, getUserCurrentPlan, isDemoAdminUser, isSuperAdminUser } from '@/lib/auth';
+import { isOwnAiApiKeyAllowedForUser } from '@/lib/plan-policy';
 import { decryptString, maskApiKey } from '@/lib/crypto';
 import { getSetting } from '@/lib/settings';
 import { isUserUsingOwnAiKey } from '@/services/credits';
@@ -98,7 +99,7 @@ export default async function ProfilePage({
     }
   }
 
-  const canUseOwnKey = Boolean(plan?.allow_user_ai_api_key);
+  const canUseOwnKey = isOwnAiApiKeyAllowedForUser(user, plan, isDemoAdminUser(user));
   const isUsingOwnKey = await isUserUsingOwnAiKey(user, plan);
 
   // Group AI_MODEL_PRICING by provider as expected by AiSettingsTab

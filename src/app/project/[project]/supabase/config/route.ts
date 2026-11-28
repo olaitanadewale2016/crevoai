@@ -4,6 +4,7 @@ import { getSessionContext, getUserCurrentPlan, canUpdateProject } from '@/lib/a
 import { parseRequestBody } from '@/lib/http';
 import { Project } from '@/models/Project';
 import { encryptJson, decryptJson } from '@/lib/crypto';
+import { isSupabaseAllowedForUser } from '@/lib/plan-policy';
 import { getSupabaseTablePrefix } from '@/services/builder';
 
 export const dynamic = 'force-dynamic';
@@ -24,9 +25,7 @@ export async function GET(
   }
 
   const plan = await getUserCurrentPlan(ctx.user);
-  const supabaseEnabled = Boolean(
-    ctx.user.role === 'admin' || plan?.enable_firebase || plan?.enable_supabase
-  );
+  const supabaseEnabled = isSupabaseAllowedForUser(ctx.user, plan);
 
   await connectDB();
   const project = await Project.findOne({ _id: projectId, deleted_at: null }).lean();
@@ -59,9 +58,7 @@ export async function PUT(
   }
 
   const plan = await getUserCurrentPlan(ctx.user);
-  const supabaseEnabled = Boolean(
-    ctx.user.role === 'admin' || plan?.enable_firebase || plan?.enable_supabase
-  );
+  const supabaseEnabled = isSupabaseAllowedForUser(ctx.user, plan);
   if (!supabaseEnabled) {
     return NextResponse.json(
       { error: 'Supabase database integration is not enabled for your current plan.' },

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { getSessionContext, getUserCurrentPlan } from '@/lib/auth';
+import { getSessionContext, getUserCurrentPlan, isDemoAdminUser } from '@/lib/auth';
+import { isOwnAiApiKeyAllowedForUser } from '@/lib/plan-policy';
 import { parseRequestBody } from '@/lib/http';
 import { UserAiSettings } from '@/models/User';
 import { decryptAes } from '@/lib/crypto';
@@ -15,7 +16,7 @@ export async function POST(req: NextRequest) {
 
   await connectDB();
   const plan = await getUserCurrentPlan(ctx.user);
-  if (!plan?.allow_user_ai_api_key) {
+  if (!isOwnAiApiKeyAllowedForUser(ctx.user, plan, isDemoAdminUser(ctx.user))) {
     return NextResponse.json(
       { success: false, message: 'Your plan does not allow using your own API key.' },
       { status: 403 }

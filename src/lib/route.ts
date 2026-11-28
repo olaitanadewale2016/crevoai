@@ -188,6 +188,7 @@ const ROUTE_TEMPLATES: Record<string, string> = {
   'admin.plans.destroy': '/admin/plans/:plan',
   'admin.plans.toggle-status': '/admin/plans/:plan/toggle-status',
   'admin.plans.reorder': '/admin/plans/reorder',
+  'admin.plans.apply-defaults': '/admin/plans/apply-defaults',
   'admin.plugins': '/admin/plugins',
   'admin.plugins.upload': '/admin/plugins/upload',
   'admin.plugins.install': '/admin/plugins/:slug/install',

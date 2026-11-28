@@ -11,6 +11,7 @@ import { parseRequestBody, validationError } from '@/lib/http';
 import { Project, Template, IConversationEntry } from '@/models/Project';
 import { Builder, IBuilder } from '@/models/BuilderAi';
 import { resolvePlanBuilder, validatePlanAndCreditsForUser } from '@/services/credits';
+import { canUseInternalAiProvider } from '@/lib/plan-policy';
 import {
   analyzeAttachedImagesDesign,
   buildAttachedFilesPromptSection,
@@ -197,13 +198,15 @@ export async function POST(
         fileIds: effectiveFileIds,
         appUrl,
       });
+      const allowInternalAi = canUseInternalAiProvider(ctx.user, isDemoAdminUser(ctx.user));
       const visualAnalysis =
-        resolved.attachedImages.length > 0
+        resolved.attachedImages.length > 0 && allowInternalAi
           ? await analyzeAttachedImagesDesign({
             projectId: String(project._id),
             attachedFiles: resolved.attachedFiles,
             attachedImages: resolved.attachedImages,
             userPrompt: rawPrompt,
+            allowInternalAi,
           })
           : null;
       return { ...resolved, visualAnalysis };

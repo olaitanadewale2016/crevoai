@@ -14,6 +14,7 @@ import { hashPassword, isDemoMode } from '@/lib/auth';
 import { encryptJson, generateUuidV7, generateAlnumCode } from '@/lib/crypto';
 import { r2PutObject, isR2Configured, guessContentType } from '@/lib/r2';
 import { GATEWAY_REGISTRY } from './payment-gateways';
+import { PROFITABLE_PLAN_PRESETS } from '@/lib/plan-policy';
 
 export async function seedBuilders() {
   await connectDB();
@@ -31,107 +32,9 @@ export async function seedBuilders() {
 
 export async function seedPlans() {
   await connectDB();
-  const plans = [
-    {
-      name: 'Free',
-      slug: 'free',
-      description: 'Perfect for trying out AI website building',
-      price: 0,
-      billing_period: 'monthly' as const,
-      features: [
-        { name: 'Up to 3 projects', included: true },
-        { name: '10,000 monthly build credits', included: true },
-        { name: 'Live visual editor', included: true },
-        { name: 'Custom subdomains', included: false },
-        { name: 'Custom domains', included: false },
-        { name: 'Bring your own AI key', included: false },
-      ],
-      is_active: true,
-      is_popular: false,
-      sort_order: 1,
-      monthly_build_credits: 10000,
-      allow_user_ai_api_key: false,
-      max_projects: 3,
-      enable_subdomains: false,
-      max_subdomains_per_user: null,
-      allow_private_visibility: false,
-      enable_custom_domains: false,
-      max_custom_domains_per_user: null,
-      enable_firebase: false,
-      allow_user_firebase_config: false,
-      enable_file_storage: false,
-      max_storage_mb: null,
-      max_file_size_mb: 5,
-      allowed_file_types: null,
-    },
-    {
-      name: 'Pro',
-      slug: 'pro',
-      description: 'For creators and freelancers building production sites',
-      price: 19.99,
-      billing_period: 'monthly' as const,
-      features: [
-        { name: 'Unlimited projects', included: true },
-        { name: '500,000 monthly build credits', included: true },
-        { name: 'Bring your own AI API key', included: true },
-        { name: 'Up to 5 custom subdomains', included: true },
-        { name: 'Up to 3 custom domains with SSL', included: true },
-        { name: '500 MB file storage & Firebase DB', included: true },
-      ],
-      is_active: true,
-      is_popular: true,
-      sort_order: 2,
-      monthly_build_credits: 500000,
-      allow_user_ai_api_key: true,
-      max_projects: null,
-      enable_subdomains: true,
-      max_subdomains_per_user: 5,
-      allow_private_visibility: true,
-      enable_custom_domains: true,
-      max_custom_domains_per_user: 3,
-      enable_firebase: true,
-      allow_user_firebase_config: false,
-      enable_file_storage: true,
-      max_storage_mb: 500,
-      max_file_size_mb: 10,
-      allowed_file_types: null,
-    },
-    {
-      name: 'Enterprise',
-      slug: 'enterprise',
-      description: 'Unlimited power for agencies and growing teams',
-      price: 99.99,
-      billing_period: 'monthly' as const,
-      features: [
-        { name: 'Unlimited projects', included: true },
-        { name: 'Unlimited build credits', included: true },
-        { name: 'Bring your own AI API key', included: true },
-        { name: 'Unlimited subdomains & custom domains', included: true },
-        { name: 'Custom Firebase project & Admin SDK', included: true },
-        { name: 'Unlimited storage (50 MB max file)', included: true },
-      ],
-      is_active: true,
-      is_popular: false,
-      sort_order: 3,
-      monthly_build_credits: -1,
-      allow_user_ai_api_key: true,
-      max_projects: null,
-      enable_subdomains: true,
-      max_subdomains_per_user: null,
-      allow_private_visibility: true,
-      enable_custom_domains: true,
-      max_custom_domains_per_user: null,
-      enable_firebase: true,
-      allow_user_firebase_config: true,
-      enable_file_storage: true,
-      max_storage_mb: null,
-      max_file_size_mb: 50,
-      allowed_file_types: null,
-    },
-  ];
-
-  for (const p of plans) {
-    await Plan.updateOne({ slug: p.slug }, { $setOnInsert: p }, { upsert: true });
+  for (const preset of PROFITABLE_PLAN_PRESETS) {
+    const { legacySlugs: _legacySlugs, ...planData } = preset;
+    await Plan.updateOne({ slug: planData.slug }, { $setOnInsert: planData }, { upsert: true });
   }
 }
 

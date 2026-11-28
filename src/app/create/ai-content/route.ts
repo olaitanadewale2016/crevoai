@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSessionContext } from '@/lib/auth';
+import { getSessionContext, isDemoAdminUser } from '@/lib/auth';
+import { canUseInternalAiProvider } from '@/lib/plan-policy';
 import {
   getInternalSuggestions,
   getInternalTypingPrompts,
@@ -20,11 +21,12 @@ export async function GET(req: NextRequest) {
   const locale = localeInfo.current || 'en';
 
   const firstName = ctx.user.name.split(' ')[0] || ctx.user.name;
+  const allowLiveAi = canUseInternalAiProvider(ctx.user, isDemoAdminUser(ctx.user));
 
   const [suggestions, typingPrompts, greeting] = await Promise.all([
-    getInternalSuggestions(4, locale),
-    getInternalTypingPrompts(8, locale),
-    getInternalGreeting(firstName, locale),
+    getInternalSuggestions(4, locale, { allowLiveAi }),
+    getInternalTypingPrompts(8, locale, { allowLiveAi }),
+    getInternalGreeting(firstName, locale, { allowLiveAi }),
   ]);
 
   return NextResponse.json({

@@ -22,6 +22,7 @@ import { Check, X, Star, ArrowLeft, Loader2, CreditCard, Gift, Copy, Building2, 
 import { PaymentGatewayIcon } from '@/components/PaymentGatewayIcon';
 import { PayPalSmartCheckout } from '@/components/PayPalSmartCheckout';
 import { canRenewPaidSubscriptionPlan } from '@/lib/credits-policy';
+import { formatCreditTokens, formatStorageMb } from '@/lib/plan-policy';
 import type { Plan, PaymentGateway, PayPalCheckoutSession } from '@/types/billing';
 import type { PageProps } from '@/types';
 import { useTranslation } from '@/contexts/LanguageContext';
@@ -75,14 +76,14 @@ export default function Plans({
     const currentPlan = plans.find((p) => p.id === currentPlanId) || null;
     const canRenewActivePlan = currentPlan
         ? canRenewPaidSubscriptionPlan({
-              isCurrentPlan: true,
-              planPrice: currentPlan.price,
-              billingPeriod: currentPlan.billing_period,
-              isUnlimited: Boolean(userCredits?.isUnlimited),
-              usingOwnKey: Boolean(userCredits?.usingOwnKey),
-              remainingCredits: userCredits?.remaining ?? 0,
-              forceRenew: initialRenew,
-          })
+            isCurrentPlan: true,
+            planPrice: currentPlan.price,
+            billingPeriod: currentPlan.billing_period,
+            isUnlimited: Boolean(userCredits?.isUnlimited),
+            usingOwnKey: Boolean(userCredits?.usingOwnKey),
+            remainingCredits: userCredits?.remaining ?? 0,
+            forceRenew: initialRenew,
+        })
         : false;
 
     // Check for bank transfer flash data
@@ -266,22 +267,22 @@ export default function Plans({
                 <span>
                     {plan.max_projects === null
                         ? t('Unlimited projects')
-                        : t(':count projects', { count: plan.max_projects })}
+                        : plan.max_projects === 1
+                            ? t(':count project', { count: 1 })
+                            : t(':count projects', { count: plan.max_projects })}
                 </span>
             </li>
         );
 
         // Build credits
-        const formatCredits = (credits: number): string => {
-            if (credits === -1) return t('Unlimited');
-            if (credits >= 1_000_000) return `${(credits / 1_000_000).toFixed(0)}M`;
-            if (credits >= 1_000) return `${(credits / 1_000).toFixed(0)}K`;
-            return credits.toString();
-        };
         features.push(
             <li key="credits" className="flex items-start gap-3">
                 <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
-                <span>{t(':count AI credits/month', { count: formatCredits(plan.monthly_build_credits ?? 0) })}</span>
+                <span>
+                    {t(':count AI credits/month', {
+                        count: formatCreditTokens(plan.monthly_build_credits ?? 0, t('Unlimited')),
+                    })}
+                </span>
             </li>
         );
 
@@ -293,13 +294,23 @@ export default function Plans({
                     <span>{t('Use your own API key')}</span>
                 </li>
             );
+        } else {
+            features.push(
+                <li key="apikey" className="flex items-start gap-3">
+                    <X className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                    <span className="text-muted-foreground">{t('Use your own API key')}</span>
+                </li>
+            );
         }
 
         // Custom subdomains
         if (plan.enable_subdomains) {
-            const subdomainText = plan.max_subdomains_per_user === null
-                ? t('Unlimited custom subdomains')
-                : t(':count custom subdomains', { count: plan.max_subdomains_per_user });
+            const subdomainText =
+                plan.max_subdomains_per_user === null
+                    ? t('Unlimited custom subdomains')
+                    : plan.max_subdomains_per_user === 1
+                        ? t('1 custom subdomain')
+                        : t(':count custom subdomains', { count: plan.max_subdomains_per_user });
             features.push(
                 <li key="subdomains" className="flex items-start gap-3">
                     <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
@@ -311,6 +322,29 @@ export default function Plans({
                 <li key="subdomains" className="flex items-start gap-3">
                     <X className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
                     <span className="text-muted-foreground">{t('Custom subdomains')}</span>
+                </li>
+            );
+        }
+
+        // Custom domains
+        if (plan.enable_custom_domains) {
+            const domainText =
+                plan.max_custom_domains_per_user === null
+                    ? t('Unlimited custom domains')
+                    : plan.max_custom_domains_per_user === 1
+                        ? t('1 custom domain')
+                        : t(':count custom domains', { count: plan.max_custom_domains_per_user ?? 0 });
+            features.push(
+                <li key="custom-domains" className="flex items-start gap-3">
+                    <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
+                    <span>{domainText}</span>
+                </li>
+            );
+        } else {
+            features.push(
+                <li key="custom-domains" className="flex items-start gap-3">
+                    <X className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                    <span className="text-muted-foreground">{t('Custom domains')}</span>
                 </li>
             );
         }
@@ -328,6 +362,66 @@ export default function Plans({
                 <li key="private-visibility" className="flex items-start gap-3">
                     <X className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
                     <span className="text-muted-foreground">{t('Private project visibility')}</span>
+                </li>
+            );
+        }
+
+        // Firebase Database & Auth
+        if (plan.enable_firebase) {
+            features.push(
+                <li key="firebase" className="flex items-start gap-3">
+                    <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
+                    <span>
+                        {plan.allow_user_firebase_config
+                            ? t('Firebase DB & Auth (custom project)')
+                            : t('Firebase DB & Auth')}
+                    </span>
+                </li>
+            );
+        } else {
+            features.push(
+                <li key="firebase" className="flex items-start gap-3">
+                    <X className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                    <span className="text-muted-foreground">{t('Firebase DB & Auth')}</span>
+                </li>
+            );
+        }
+
+        // Supabase Database
+        if (plan.enable_supabase) {
+            features.push(
+                <li key="supabase" className="flex items-start gap-3">
+                    <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
+                    <span>{t('Supabase PostgreSQL & Auth')}</span>
+                </li>
+            );
+        } else {
+            features.push(
+                <li key="supabase" className="flex items-start gap-3">
+                    <X className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                    <span className="text-muted-foreground">{t('Supabase PostgreSQL & Auth')}</span>
+                </li>
+            );
+        }
+
+        // File Storage
+        if (plan.enable_file_storage) {
+            features.push(
+                <li key="storage" className="flex items-start gap-3">
+                    <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
+                    <span>
+                        {t(':size file storage (:max MB/file)', {
+                            size: formatStorageMb(plan.max_storage_mb, t('Unlimited')),
+                            max: plan.max_file_size_mb ?? 10,
+                        })}
+                    </span>
+                </li>
+            );
+        } else {
+            features.push(
+                <li key="storage" className="flex items-start gap-3">
+                    <X className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                    <span className="text-muted-foreground">{t('Project file storage')}</span>
                 </li>
             );
         }
@@ -366,147 +460,146 @@ export default function Plans({
             {isLoading ? (
                 <PlansSkeleton />
             ) : (
-            <div className="space-y-6">
-                {/* Page Header */}
-                <div className="flex items-center justify-between">
-                    <div className="prose prose-sm dark:prose-invert">
-                        <h1 className="text-2xl font-bold text-foreground">
-                            {t('Choose a Plan')}
-                        </h1>
-                        <p className="text-muted-foreground">
-                            {t('Select the plan that best fits your needs')}
-                        </p>
+                <div className="space-y-6">
+                    {/* Page Header */}
+                    <div className="flex items-center justify-between">
+                        <div className="prose prose-sm dark:prose-invert">
+                            <h1 className="text-2xl font-bold text-foreground">
+                                {t('Choose a Plan')}
+                            </h1>
+                            <p className="text-muted-foreground">
+                                {t('Select the plan that best fits your needs')}
+                            </p>
+                        </div>
+                        <Button variant="outline" asChild>
+                            <Link href="/billing">
+                                <ArrowLeft className="h-4 w-4 me-2 rtl:rotate-180" />
+                                {t('Back')}
+                            </Link>
+                        </Button>
                     </div>
-                    <Button variant="outline" asChild>
-                        <Link href="/billing">
-                            <ArrowLeft className="h-4 w-4 me-2 rtl:rotate-180" />
-                            {t('Back')}
-                        </Link>
-                    </Button>
-                </div>
 
-                {/* Out of Credits Alert */}
-                {isOutOfCredits && (
-                    <Alert variant="destructive">
-                        <AlertTriangle className="h-4 w-4" />
-                        <AlertTitle>{t('You have run out of build credits')}</AlertTitle>
-                        <AlertDescription className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                            <span>
-                                {canRenewActivePlan && currentPlan
-                                    ? t('Your credits reset on :date. Renew your :plan plan now to refill :credits credits immediately, or choose a larger plan below.', {
-                                          date: creditsResetDate || t('the beginning of next month'),
-                                          plan: currentPlan.name,
-                                          credits: (currentPlan.monthly_build_credits ?? 0).toLocaleString(),
-                                      })
-                                    : t('Your credits reset on :date. Upgrade to a plan with higher monthly build credits below to continue building.', {
-                                          date: creditsResetDate || t('the beginning of next month'),
-                                      })}
-                            </span>
-                            {canRenewActivePlan && currentPlan && (
-                                <Button
-                                    size="sm"
-                                    className="shrink-0"
-                                    onClick={() => handlePlanSelect(currentPlan, { renew: true })}
-                                >
-                                    <RefreshCw className="h-3.5 w-3.5 me-1.5" />
-                                    {t('Renew :plan Now', { plan: currentPlan.name })}
-                                </Button>
-                            )}
-                        </AlertDescription>
-                    </Alert>
-                )}
+                    {/* Out of Credits Alert */}
+                    {isOutOfCredits && (
+                        <Alert variant="destructive">
+                            <AlertTriangle className="h-4 w-4" />
+                            <AlertTitle>{t('You have run out of build credits')}</AlertTitle>
+                            <AlertDescription className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                <span>
+                                    {canRenewActivePlan && currentPlan
+                                        ? t('Your credits reset on :date. Renew your :plan plan now to refill :credits credits immediately, or choose a larger plan below.', {
+                                            date: creditsResetDate || t('the beginning of next month'),
+                                            plan: currentPlan.name,
+                                            credits: (currentPlan.monthly_build_credits ?? 0).toLocaleString(),
+                                        })
+                                        : t('Your credits reset on :date. Upgrade to a plan with higher monthly build credits below to continue building.', {
+                                            date: creditsResetDate || t('the beginning of next month'),
+                                        })}
+                                </span>
+                                {canRenewActivePlan && currentPlan && (
+                                    <Button
+                                        size="sm"
+                                        className="shrink-0"
+                                        onClick={() => handlePlanSelect(currentPlan, { renew: true })}
+                                    >
+                                        <RefreshCw className="h-3.5 w-3.5 me-1.5" />
+                                        {t('Renew :plan Now', { plan: currentPlan.name })}
+                                    </Button>
+                                )}
+                            </AlertDescription>
+                        </Alert>
+                    )}
 
-                {/* Plans Grid */}
-                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                    {plans.map((plan) => {
-                        const isCurrentPlan = plan.id === currentPlanId;
-                        const canRenewPlan = canRenewPaidSubscriptionPlan({
-                            isCurrentPlan,
-                            planPrice: plan.price,
-                            billingPeriod: plan.billing_period,
-                            isUnlimited: Boolean(userCredits?.isUnlimited),
-                            usingOwnKey: Boolean(userCredits?.usingOwnKey),
-                            remainingCredits: userCredits?.remaining ?? 0,
-                            forceRenew: initialRenew,
-                        });
-                        return (
-                            <Card
-                                key={plan.id}
-                                className={`relative flex flex-col ${
-                                    isCurrentPlan
+                    {/* Plans Grid */}
+                    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+                        {plans.map((plan) => {
+                            const isCurrentPlan = plan.id === currentPlanId;
+                            const canRenewPlan = canRenewPaidSubscriptionPlan({
+                                isCurrentPlan,
+                                planPrice: plan.price,
+                                billingPeriod: plan.billing_period,
+                                isUnlimited: Boolean(userCredits?.isUnlimited),
+                                usingOwnKey: Boolean(userCredits?.usingOwnKey),
+                                remainingCredits: userCredits?.remaining ?? 0,
+                                forceRenew: initialRenew,
+                            });
+                            return (
+                                <Card
+                                    key={plan.id}
+                                    className={`relative flex flex-col ${isCurrentPlan
                                         ? 'border-primary bg-primary/5 ring-2 ring-primary'
                                         : plan.is_popular
-                                        ? 'border-primary shadow-lg'
-                                        : ''
-                                }`}
-                            >
-                                {plan.is_popular && !isCurrentPlan && (
-                                    <div className="absolute -top-3 start-1/2 -translate-x-1/2 rtl:translate-x-1/2">
-                                        <Badge className="gap-1 px-3 py-1">
-                                            <Star className="h-3 w-3" />
-                                            {t('Most Popular')}
-                                        </Badge>
-                                    </div>
-                                )}
-                                {isCurrentPlan && (
-                                    <div className="absolute -top-3 start-1/2 -translate-x-1/2 rtl:translate-x-1/2">
-                                        <Badge variant="secondary" className="px-3 py-1">
-                                            {t('Current Plan')}
-                                        </Badge>
-                                    </div>
-                                )}
-                                <CardHeader className="pt-8 pb-4">
-                                    <CardTitle className="text-xl">{plan.name}</CardTitle>
-                                    <CardDescription className="min-h-[40px]">
-                                        {plan.description}
-                                    </CardDescription>
-                                </CardHeader>
-                                <CardContent className="flex-1">
-                                    <div className="mb-6">
-                                        <span className="text-4xl font-bold">
-                                            {formatCurrency(plan.price)}
-                                        </span>
-                                        <span className="text-muted-foreground text-lg">
-                                            {billingPeriodLabels[plan.billing_period]}
-                                        </span>
-                                    </div>
-                                    <ul className="space-y-3 text-sm">
-                                        {renderFeatures(plan)}
-                                    </ul>
-                                </CardContent>
-                                <CardFooter className="pt-4">
-                                    <Button
-                                        className="w-full"
-                                        size="lg"
-                                        variant={canRenewPlan ? 'default' : isCurrentPlan ? 'secondary' : plan.is_popular ? 'default' : 'outline'}
-                                        disabled={(isCurrentPlan && !canRenewPlan) || isProcessing}
-                                        onClick={() => handlePlanSelect(plan, canRenewPlan ? { renew: true } : undefined)}
-                                    >
-                                        {isProcessing && selectedPlan?.id === plan.id ? (
-                                            <>
-                                                <Loader2 className="h-4 w-4 me-2 animate-spin" />
-                                                {t('Processing...')}
-                                            </>
-                                        ) : canRenewPlan ? (
-                                            <>
-                                                <RefreshCw className="h-4 w-4 me-2" />
-                                                {t('Renew Plan (Refill Credits)')}
-                                            </>
-                                        ) : isCurrentPlan ? (
-                                            t('Current Plan')
-                                        ) : plan.price === 0 ? (
-                                            t('Get Started Free')
-                                        ) : (
-                                            t('Select Plan')
-                                        )}
-                                    </Button>
-                                </CardFooter>
-                            </Card>
-                        );
-                    })}
-                </div>
+                                            ? 'border-primary shadow-lg'
+                                            : ''
+                                        }`}
+                                >
+                                    {plan.is_popular && !isCurrentPlan && (
+                                        <div className="absolute -top-3 start-1/2 -translate-x-1/2 rtl:translate-x-1/2">
+                                            <Badge className="gap-1 px-3 py-1">
+                                                <Star className="h-3 w-3" />
+                                                {t('Most Popular')}
+                                            </Badge>
+                                        </div>
+                                    )}
+                                    {isCurrentPlan && (
+                                        <div className="absolute -top-3 start-1/2 -translate-x-1/2 rtl:translate-x-1/2">
+                                            <Badge variant="secondary" className="px-3 py-1">
+                                                {t('Current Plan')}
+                                            </Badge>
+                                        </div>
+                                    )}
+                                    <CardHeader className="pt-8 pb-4">
+                                        <CardTitle className="text-xl">{plan.name}</CardTitle>
+                                        <CardDescription className="min-h-[40px]">
+                                            {plan.description}
+                                        </CardDescription>
+                                    </CardHeader>
+                                    <CardContent className="flex-1">
+                                        <div className="mb-6">
+                                            <span className="text-4xl font-bold">
+                                                {formatCurrency(plan.price)}
+                                            </span>
+                                            <span className="text-muted-foreground text-lg">
+                                                {billingPeriodLabels[plan.billing_period]}
+                                            </span>
+                                        </div>
+                                        <ul className="space-y-3 text-sm">
+                                            {renderFeatures(plan)}
+                                        </ul>
+                                    </CardContent>
+                                    <CardFooter className="pt-4">
+                                        <Button
+                                            className="w-full"
+                                            size="lg"
+                                            variant={canRenewPlan ? 'default' : isCurrentPlan ? 'secondary' : plan.is_popular ? 'default' : 'outline'}
+                                            disabled={(isCurrentPlan && !canRenewPlan) || isProcessing}
+                                            onClick={() => handlePlanSelect(plan, canRenewPlan ? { renew: true } : undefined)}
+                                        >
+                                            {isProcessing && selectedPlan?.id === plan.id ? (
+                                                <>
+                                                    <Loader2 className="h-4 w-4 me-2 animate-spin" />
+                                                    {t('Processing...')}
+                                                </>
+                                            ) : canRenewPlan ? (
+                                                <>
+                                                    <RefreshCw className="h-4 w-4 me-2" />
+                                                    {t('Renew Plan (Refill Credits)')}
+                                                </>
+                                            ) : isCurrentPlan ? (
+                                                t('Current Plan')
+                                            ) : plan.price === 0 ? (
+                                                t('Get Started Free')
+                                            ) : (
+                                                t('Select Plan')
+                                            )}
+                                        </Button>
+                                    </CardFooter>
+                                </Card>
+                            );
+                        })}
+                    </div>
 
-            </div>
+                </div>
             )}
 
             {/* Payment Gateway Selection Modal */}
@@ -558,8 +651,8 @@ export default function Plans({
                                         <p className="text-sm text-muted-foreground truncate">
                                             {selectedPlan.id === currentPlanId && (selectedPlan.monthly_build_credits ?? 0) > 0
                                                 ? t('Refills :credits monthly build credits upon payment', {
-                                                      credits: (selectedPlan.monthly_build_credits ?? 0).toLocaleString(),
-                                                  })
+                                                    credits: (selectedPlan.monthly_build_credits ?? 0).toLocaleString(),
+                                                })
                                                 : selectedPlan.description}
                                         </p>
                                     </div>
@@ -638,39 +731,39 @@ export default function Plans({
                                             ? Math.round(selectedPlan.price * (gateway.exchange_rate ?? 1) * 100) / 100
                                             : selectedPlan.price;
                                         return (
-                                        <Button
-                                            key={gateway.slug}
-                                            variant="outline"
-                                            className={`w-full max-w-full justify-between h-auto py-3.5 gap-3 overflow-hidden ${isSelectedProcessing ? 'border-primary bg-primary/5 disabled:opacity-100' : ''}`.trim()}
-                                            disabled={isPaymentBusy}
-                                            onClick={() => handleGatewaySelect(gateway)}
-                                        >
-                                            <div className="flex items-center gap-3 text-start min-w-0 flex-1">
-                                                <PaymentGatewayIcon slug={gateway.slug} size="sm" />
-                                                <div className="min-w-0 flex-1">
-                                                    <div className="flex items-center gap-2 flex-wrap">
-                                                        <span className="font-semibold">{gateway.name}</span>
-                                                        {hasConversion && (
-                                                            <Badge variant="secondary" className="text-[11px] font-normal">
-                                                                {formatCurrency(convertedAmount, gateway.charge_currency)}
-                                                            </Badge>
+                                            <Button
+                                                key={gateway.slug}
+                                                variant="outline"
+                                                className={`w-full max-w-full justify-between h-auto py-3.5 gap-3 overflow-hidden ${isSelectedProcessing ? 'border-primary bg-primary/5 disabled:opacity-100' : ''}`.trim()}
+                                                disabled={isPaymentBusy}
+                                                onClick={() => handleGatewaySelect(gateway)}
+                                            >
+                                                <div className="flex items-center gap-3 text-start min-w-0 flex-1">
+                                                    <PaymentGatewayIcon slug={gateway.slug} size="sm" />
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            <span className="font-semibold">{gateway.name}</span>
+                                                            {hasConversion && (
+                                                                <Badge variant="secondary" className="text-[11px] font-normal">
+                                                                    {formatCurrency(convertedAmount, gateway.charge_currency)}
+                                                                </Badge>
+                                                            )}
+                                                        </div>
+                                                        {gateway.description && (
+                                                            <div className="text-xs text-muted-foreground line-clamp-1">
+                                                                {gateway.description}
+                                                            </div>
                                                         )}
                                                     </div>
-                                                    {gateway.description && (
-                                                        <div className="text-xs text-muted-foreground line-clamp-1">
-                                                            {gateway.description}
-                                                        </div>
+                                                </div>
+                                                <div className="flex-shrink-0">
+                                                    {isSelectedProcessing ? (
+                                                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                                                    ) : (
+                                                        <ArrowLeft className="h-4 w-4 rotate-180 rtl:rotate-0" />
                                                     )}
                                                 </div>
-                                            </div>
-                                            <div className="flex-shrink-0">
-                                                {isSelectedProcessing ? (
-                                                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                                ) : (
-                                                    <ArrowLeft className="h-4 w-4 rotate-180 rtl:rotate-0" />
-                                                )}
-                                            </div>
-                                        </Button>
+                                            </Button>
                                         );
                                     })}
                                 </div>

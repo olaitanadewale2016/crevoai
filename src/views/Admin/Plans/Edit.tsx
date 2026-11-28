@@ -15,7 +15,7 @@ interface PlanFeature {
 }
 
 interface Plan {
-    id: number;
+    id: string | number;
     name: string;
     description: string | null;
     price: number;
@@ -23,9 +23,9 @@ interface Plan {
     features: PlanFeature[];
     is_active: boolean;
     is_popular: boolean;
-    ai_provider_id: number | null;
-    fallback_ai_provider_ids: number[] | null;
-    builder_id: number | null;
+    ai_provider_id: string | number | null;
+    fallback_ai_provider_ids: (string | number)[] | null;
+    builder_id: string | number | null;
     monthly_build_credits: number | null;
     allow_user_ai_api_key: boolean;
     max_projects: number | null;
@@ -36,25 +36,27 @@ interface Plan {
     // Custom domain settings
     enable_custom_domains: boolean;
     max_custom_domains_per_user: number | null;
-    // Firebase settings
+    // Database settings
     enable_firebase: boolean;
     allow_user_firebase_config: boolean;
-    // File storage settings
+    enable_supabase?: boolean;
+    // File storage & prompt settings
     enable_file_storage: boolean;
     max_storage_mb: number | null;
     max_file_size_mb: number;
+    max_images_per_prompt?: number;
     allowed_file_types: string[] | null;
 }
 
 interface AiProvider {
-    id: number;
+    id: string | number;
     name: string;
     type: string;
     is_default: boolean;
 }
 
 interface Builder {
-    id: number;
+    id: string | number;
     name: string;
 }
 

@@ -106,6 +106,16 @@ export default async function HomePage() {
       enable_subdomains: Boolean(p.enable_subdomains),
       max_subdomains_per_user: p.max_subdomains_per_user ?? null,
       allow_private_visibility: Boolean(p.allow_private_visibility),
+      enable_custom_domains: Boolean(p.enable_custom_domains),
+      max_custom_domains_per_user: p.max_custom_domains_per_user ?? null,
+      enable_firebase: Boolean(p.enable_firebase),
+      allow_user_firebase_config: Boolean(p.allow_user_firebase_config),
+      enable_supabase:
+        typeof p.enable_supabase === 'boolean' ? p.enable_supabase : Boolean(p.enable_firebase),
+      enable_file_storage: Boolean(p.enable_file_storage),
+      max_storage_mb: p.max_storage_mb ?? null,
+      max_file_size_mb: Number(p.max_file_size_mb ?? 10),
+      max_images_per_prompt: Number(p.max_images_per_prompt ?? 3),
     }));
     statistics = stats;
   } catch {

@@ -58,6 +58,10 @@ export default async function AdminPlanEditPage({
     enable_custom_domains: Boolean(planDoc.enable_custom_domains),
     enable_file_storage: Boolean(planDoc.enable_file_storage),
     enable_firebase: Boolean(planDoc.enable_firebase),
+    enable_supabase:
+      typeof planDoc.enable_supabase === 'boolean'
+        ? planDoc.enable_supabase
+        : Boolean(planDoc.enable_firebase),
     allow_user_ai_api_key: Boolean(planDoc.allow_user_ai_api_key),
     max_projects: planDoc.max_projects ?? null,
     max_subdomains_per_user: planDoc.max_subdomains_per_user ?? null,
@@ -66,6 +70,7 @@ export default async function AdminPlanEditPage({
     allow_user_firebase_config: Boolean(planDoc.allow_user_firebase_config),
     max_storage_mb: planDoc.max_storage_mb ?? null,
     max_file_size_mb: planDoc.max_file_size_mb ?? 10,
+    max_images_per_prompt: planDoc.max_images_per_prompt ?? 3,
     allowed_file_types: planDoc.allowed_file_types ?? null,
     fallback_ai_provider_ids: (planDoc.fallback_ai_provider_ids || []).map((id) => String(id) as any),
     ai_provider_id: aiId,
