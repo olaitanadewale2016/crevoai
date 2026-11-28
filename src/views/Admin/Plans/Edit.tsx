@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { Link, usePage } from '@/lib/inertia-compat';
 import AdminLayout from '@/Layouts/AdminLayout';

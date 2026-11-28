@@ -33,6 +33,7 @@ import {
   canUseInternalAiProvider,
   isSupabaseAllowedForUser,
 } from '@/lib/plan-policy';
+import { buildFollowUpPreservationDirective } from '@/lib/edit-intent';
 import { isInternalAiConfigured } from './internal-ai';
 import { resolvePlanAiProvider, resolvePlanBuilder } from './credits';
 import { computeRemainingCreditsBudget } from '@/lib/credits-policy';
@@ -515,7 +516,9 @@ export async function startBuilderSession(params: {
   const isFirstPrompt = !hasCompletedSiteBuild(project, priorHistory, project.compacted_history);
   let enrichedGoal = goal;
   if (!isFirstPrompt) {
-    enrichedGoal += `\n\n[Follow-Up Edit Mode — Preserve Existing Website & Design System]\nAn existing website is ALREADY built in this workspace.\n1. Do NOT call fetchTemplates or useTemplate.\n2. Do NOT redesign, wipe, or rebuild the entire app unless the user explicitly asks to start over or create a completely new site from scratch.\n3. Use readFiles only on the specific page/component you need to modify — NEVER call readFile on src/components/ui/*, src/index.css, src/main.tsx, or package.json. Make surgical editFile changes that preserve the existing brand, layout, palette, and typography.`;
+    enrichedGoal += buildFollowUpPreservationDirective(goal);
+  } else {
+    enrichedGoal += `\n\n[Interactive UI Requirement — Zero Dead Buttons, CTAs & Menu Links]\nEvery button, CTA, navbar/mobile menu link, footer link, and form in the built app MUST be 100% functional (wired to a registered React Router \`<Link to="...">\`, a matching \`id="..."\` section scroll, a working modal/dialog/drawer/state action with toast feedback, or a real \`onSubmit\` handler — NEVER bare unwired \`<Button>\`, \`href="#"\`, or leading-slash \`<a href="/...">\`).`;
   }
   if (firebaseEnabled) {
     const hasStorageBucket = Boolean(firebaseCfg?.storageBucket);

@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { Link } from '@/lib/inertia-compat';
 import { Button } from '@/components/ui/button';

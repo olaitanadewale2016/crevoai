@@ -21,10 +21,12 @@ import {
   buildProjectCapabilitiesForBuilder,
   detectRepeatedPrompt,
   getAiConfigForUser,
+  hasCompletedSiteBuild,
   ReasoningEffort,
 } from '@/services/builder';
 import { validatePlanAndCreditsForUser } from '@/services/credits';
 import { canUseInternalAiProvider } from '@/lib/plan-policy';
+import { buildFollowUpPreservationDirective } from '@/lib/edit-intent';
 
 export const runtime = 'nodejs';
 
@@ -154,10 +156,15 @@ export async function POST(
       }
     );
 
+    const hasBuiltApp = hasCompletedSiteBuild(project, priorHistory, priorCompacted);
+    if (hasBuiltApp) {
+      messageToSend += buildFollowUpPreservationDirective(rawMessage);
+    }
+
     if (attachedFiles.length > 0) {
       messageToSend += buildAttachedFilesPromptSection({
         attachedFiles,
-        isFirstPrompt: false,
+        isFirstPrompt: !hasBuiltApp,
         visualAnalysis,
       });
     }

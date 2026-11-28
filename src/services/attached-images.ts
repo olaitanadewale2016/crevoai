@@ -74,7 +74,10 @@ export function getMaxImagesPerPrompt(user: IUser, plan?: IPlan | null): number 
 const CONTINUATION_PROMPT_RE =
   /^(?:please\s+)?(?:continue|resume|proceed|keep\s+going|go\s+on|carry\s+on|go\s+ahead|try\s+again|retry|finish(?:\s+it)?)\.?$/i;
 
-const VISUAL_BACKREF_RE =
+const EXPLICIT_PRIOR_VISUAL_BACKREF_RE =
+  /\b(?:attached|uploaded|previous|prior|earlier|from\s+before|same\s+design|like\s+that|match\s+(?:the\s+)?(?:attached|uploaded|previous|screenshot|mockup|reference)|the\s+(?:screenshot|mockup|image|photo|logo)\s+(?:i\s+)?(?:sent|uploaded|attached|shared))\b/i;
+
+const INITIAL_VISUAL_BACKREF_RE =
   /\b(?:attached|uploaded|above|previous|prior|reference|inspo|inspiration|clone|replicate|copy|screenshot|screenshots|mockup|mockups|image|images|photo|photos|logo|picture|pictures|match\s+it|same\s+design|like\s+that|from\s+before)\b/i;
 
 /**
@@ -113,7 +116,6 @@ export function selectEffectiveFileIdsForPrompt(params: {
 
   const trimmedPrompt = prompt.trim();
   const isContinuation = !trimmedPrompt || CONTINUATION_PROMPT_RE.test(trimmedPrompt);
-  const refersToVisuals = VISUAL_BACKREF_RE.test(trimmedPrompt);
 
   // Check if the most recent assistant message right after those files was stopped/failed
   const tailEntries = priorHistory.slice(latestFileEntryIdx + 1);
@@ -129,6 +131,13 @@ export function selectEffectiveFileIdsForPrompt(params: {
       e.role === 'assistant' &&
       !/^(?:Build\s+(?:cancelled|failed)|AI\s+provider\s+error)/i.test(e.content || '')
   );
+
+  // Once a build has already succeeded, ONLY re-attach prior files when the user explicitly
+  // refers back to previously uploaded/attached files (prevents accidentally re-cloning a Turn-1
+  // screenshot or overwriting a logo just because a later prompt mentions "image" or "photo").
+  const refersToVisuals = hasSuccessfulBuildAfter
+    ? EXPLICIT_PRIOR_VISUAL_BACKREF_RE.test(trimmedPrompt)
+    : INITIAL_VISUAL_BACKREF_RE.test(trimmedPrompt);
 
   const shouldReattach =
     (isContinuation && (prevWasStoppedOrFailed || !hasSuccessfulBuildAfter)) || refersToVisuals;
@@ -537,7 +546,7 @@ export function buildAttachedFilesPromptSection(params: {
 
   const scopeRule = isFirstPrompt
     ? `4. APP SCOPE (NEW BUILD): Apply inspiration or clone structure across the whole site unless the user targets only specific section(s)/page(s). OVERRIDE DEFAULT SCAFFOLDING: when cloning or matching a UI screenshot (e.g., app workspace, sidebar+chat shell, dashboard, or specific landing layout), match that screenshot's exact light/dark polarity, exact hex->HSL colors in \`src/custom.css\`, layout shell, typography, and components instead of forcing unrelated warm palettes, marketing navbars/footers, or stock photography unless visible in the reference.`
-    : `4. STRICT APP SCOPE PRESERVATION (EXISTING APP EDIT): Modify ONLY the specific page, section, component, logo, or slot the user asked about. Do NOT redesign or alter unrelated pages, global theme tokens/colors in \`src/custom.css\`, fonts, header/footer, or untouched sections unless the user explicitly asks to redesign the entire app/site. If taking inspo or cloning a section from an image here, apply it ONLY to that requested section/page so it blends cleanly with the existing app.`;
+    : `4. STRICT APP SCOPE PRESERVATION (EXISTING APP EDIT): Modify ONLY the specific page, section, component, logo, or slot the user asked about. NEVER replace or remove the app's existing logo unless the user explicitly asks to use the attached file as the logo. Do NOT redesign or alter unrelated pages, global theme tokens/colors in \`src/custom.css\`, fonts, header/footer, or untouched sections unless the user explicitly asks to redesign the entire app/site. If taking inspo or cloning a section from an image here, apply it ONLY to that requested section/page so it blends cleanly with the existing app.`;
 
   return `\n\n${header}
 ${fileLines.join('\n')}${blueprintBlock}
