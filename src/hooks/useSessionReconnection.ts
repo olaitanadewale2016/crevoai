@@ -48,16 +48,16 @@ export function useSessionReconnection(
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
     const hasAttemptedReconnectRef = useRef(false);
 
-    // Check if there's an active session for the project
+    // Check if there's an active session for the project (read-only so secondary tabs never mutate server build state)
     const checkSessionStatus = useCallback(async (): Promise<SessionStatus | null> => {
         try {
-            const response = await axios.get(`/builder/projects/${projectId}/status`);
+            const response = await axios.get(`/builder/projects/${projectId}/status?readonly=1`);
             const data = response.data;
 
-            if (data.has_session && data.can_reconnect) {
+            if ((data.has_session || data.status === 'building') && data.can_reconnect) {
                 setSessionIsActive(true);
                 return {
-                    sessionId: data.build_session_id,
+                    sessionId: data.build_session_id || projectId,
                     status: data.status,
                     canReconnect: data.can_reconnect,
                     previewUrl: data.preview_url,
@@ -109,9 +109,9 @@ export function useSessionReconnection(
         }
     }, [projectId, checkSessionStatus, onReconnected, onReconnectFailed, onSessionNotFound]);
 
-    // Auto-reconnect on mount if session is active (only once)
+    // Auto-reconnect on mount if session is active (only once), even if build_session_id is still being assigned
     useEffect(() => {
-        if (initialCanReconnect && initialSessionId && !hasAttemptedReconnectRef.current) {
+        if (initialCanReconnect && !hasAttemptedReconnectRef.current) {
             void reconnect();
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps

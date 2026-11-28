@@ -34,6 +34,10 @@ import {
   isSupabaseAllowedForUser,
 } from '@/lib/plan-policy';
 import { buildFollowUpPreservationDirective } from '@/lib/edit-intent';
+import {
+  isWithinStartupGracePeriod,
+  STALE_BUILD_TIMEOUT_MS,
+} from '@/lib/multi-tab-sync';
 import { isInternalAiConfigured } from './internal-ai';
 import { resolvePlanAiProvider, resolvePlanBuilder } from './credits';
 import { computeRemainingCreditsBudget } from '@/lib/credits-policy';
@@ -281,14 +285,21 @@ export async function resolveBlockingBuild(userId: string): Promise<IProject | n
   }).lean();
   if (!building) return null;
 
+  const startedAt = building.build_started_at ? new Date(building.build_started_at).getTime() : 0;
+  const inStartupGrace = isWithinStartupGracePeriod(building.build_started_at);
+
   if (building.builder_id && building.build_session_id) {
     const builder = await Builder.findById(building.builder_id).lean();
     if (builder) {
       try {
         const res = await builderFetch(builder, `/api/status/${building.build_session_id}`, {
-          timeoutMs: 2500,
+          timeoutMs: 5000,
         });
         if (res.status === 404) {
+          // Never kill a freshly started build whose Go Builder session is still initializing
+          if (inStartupGrace) {
+            return building;
+          }
           await Project.updateOne(
             { _id: building._id },
             { $set: { build_status: 'failed', build_completed_at: new Date() } }
@@ -307,7 +318,11 @@ export async function resolveBlockingBuild(userId: string): Promise<IProject | n
           return building;
         }
       } catch {
-        // Builder unreachable or timeout: treat as non-blocking if session check failed
+        // Builder busy (e.g. compiling Vite) or transient network blip: preserve active build
+        // unless it has clearly gone stale past STALE_BUILD_TIMEOUT_MS.
+        if (inStartupGrace || (startedAt > 0 && Date.now() - startedAt < STALE_BUILD_TIMEOUT_MS)) {
+          return building;
+        }
         await Project.updateOne(
           { _id: building._id },
           { $set: { build_status: 'failed', build_completed_at: new Date() } }
@@ -317,8 +332,7 @@ export async function resolveBlockingBuild(userId: string): Promise<IProject | n
     }
   }
 
-  const startedAt = building.build_started_at ? new Date(building.build_started_at).getTime() : 0;
-  if (!startedAt || Date.now() - startedAt > 2 * 60 * 1000) {
+  if (!startedAt || Date.now() - startedAt > STALE_BUILD_TIMEOUT_MS) {
     await Project.updateOne(
       { _id: building._id },
       { $set: { build_status: 'failed', build_completed_at: new Date() } }
@@ -1310,10 +1324,12 @@ export async function serveBuiltSiteFromR2(params: {
           buildId = candBuildId;
           prefix = candPrefix;
           targetKey = `${prefix}/${relPath}`;
-          Project.updateOne(
-            { _id: project._id, active_build_id: null },
-            { $set: { active_build_id: candBuildId } }
-          ).catch(() => { });
+          if (project.build_status !== 'building') {
+            Project.updateOne(
+              { _id: project._id, active_build_id: null },
+              { $set: { active_build_id: candBuildId } }
+            ).catch(() => { });
+          }
           break;
         }
       }

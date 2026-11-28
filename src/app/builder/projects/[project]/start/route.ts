@@ -120,6 +120,19 @@ export async function POST(
   ]);
 
   if (blockingProject) {
+    if (String(blockingProject._id) === String(project._id)) {
+      // Never mutate or clear prompts on the same project when another tab already started it
+      return NextResponse.json(
+        {
+          error: 'A build is already running for this project.',
+          same_project: true,
+          active_project_id: String(project._id),
+          session_id: blockingProject.build_session_id || String(project._id),
+          can_reconnect: true,
+        },
+        { status: 409 }
+      );
+    }
     await clearInitialPromptOnEarlyExit();
     const shortName =
       blockingProject.name.length > 50
@@ -128,6 +141,7 @@ export async function POST(
     return NextResponse.json(
       {
         error: `You have an active session on "${shortName}". Wait for it to complete, or stop it.`,
+        active_project_id: String(blockingProject._id),
       },
       { status: 409 }
     );
@@ -390,18 +404,29 @@ export async function POST(
   };
   const addedTokens = Math.ceil(userEntry.content.length / 4);
 
-  // Atomically claim the per-user build slot, consume initial_prompt, and push user prompt in 1 write
-  let raceConflict = false;
+  // Atomically claim the per-user build slot (including checking this SAME project for multi-tab races),
+  // consume initial_prompt, and push user prompt in 1 write.
+  let raceConflict:
+    | { conflict: false }
+    | { conflict: true; sameProject: boolean; sessionId: string; projectName?: string } = {
+    conflict: false,
+  };
   try {
     raceConflict = await withLock(`user:build-slot:${String(ctx.user._id)}`, 15, async () => {
-      const stillBuilding = await Project.exists({
+      const stillBuilding = await Project.findOne({
         user_id: ctx.user._id,
-        _id: { $ne: project._id },
         build_status: 'building',
         deleted_at: null,
-      });
+      })
+        .select('_id name build_session_id')
+        .lean();
       if (stillBuilding) {
-        return true;
+        return {
+          conflict: true as const,
+          sameProject: String(stillBuilding._id) === String(project._id),
+          sessionId: stillBuilding.build_session_id || String(stillBuilding._id),
+          projectName: stillBuilding.name || undefined,
+        };
       }
 
       await Project.updateOne(
@@ -419,20 +444,35 @@ export async function POST(
           $inc: { estimated_tokens: addedTokens, history_version: 1 },
         }
       );
-      return false;
+      return { conflict: false as const };
     });
   } catch {
-    await clearInitialPromptOnEarlyExit();
     return NextResponse.json(
       { error: 'You have an active session. Wait for it to complete, or stop it.' },
       { status: 409 }
     );
   }
 
-  if (raceConflict) {
+  if (raceConflict.conflict) {
+    if (raceConflict.sameProject) {
+      return NextResponse.json(
+        {
+          error: 'A build is already running for this project.',
+          same_project: true,
+          active_project_id: String(project._id),
+          session_id: raceConflict.sessionId,
+          can_reconnect: true,
+        },
+        { status: 409 }
+      );
+    }
     await clearInitialPromptOnEarlyExit();
     return NextResponse.json(
-      { error: 'You have an active session. Wait for it to complete, or stop it.' },
+      {
+        error: raceConflict.projectName
+          ? `You have an active session on "${raceConflict.projectName.slice(0, 50)}". Wait for it to complete, or stop it.`
+          : 'You have an active session. Wait for it to complete, or stop it.',
+      },
       { status: 409 }
     );
   }
@@ -481,15 +521,36 @@ export async function POST(
     });
 
     if (result.status === 409) {
+      // Go Builder confirmed an active build session is ALREADY running for this workspace.
+      // CRITICAL: NEVER mark build_status='failed' — doing so would corrupt the active tab's build!
+      // Remove only the duplicate optimistic user entry we just pushed, keeping build_status='building'.
       await Project.updateOne(
         { _id: project._id },
-        { $set: { build_status: 'failed', build_completed_at: new Date() } }
-      );
+        {
+          $pull: {
+            conversation_history: {
+              role: 'user',
+              timestamp: userEntry.timestamp,
+            },
+          },
+          $set: {
+            build_status: 'building',
+            build_session_id: project.build_session_id || String(project._id),
+          },
+        }
+      ).catch(() => {});
       return NextResponse.json(
         {
           error:
             (result.data as { error?: string })?.error ||
             'An active build session already exists for this workspace.',
+          same_project: true,
+          active_project_id: String(project._id),
+          session_id:
+            (result.data as { session_id?: string })?.session_id ||
+            project.build_session_id ||
+            String(project._id),
+          can_reconnect: true,
         },
         { status: 409 }
       );

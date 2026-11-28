@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { AttachedFile } from '@/types/chat';
+import { shouldPreserveLocalHistoryOverServer } from '@/lib/multi-tab-sync';
 
 export interface ChatMessage {
     id: string;
@@ -23,26 +24,53 @@ interface UseChatHistoryOptions {
     projectId: string;
     maxMessages?: number;
     initialHistory?: Array<{ role: string; content: string; timestamp: string; category?: string; thinking_duration?: number; files?: Array<{ id: number; filename: string; mime_type: string }> }>;
+    isBuildActive?: boolean;
+    suppressStorageWrites?: boolean;
 }
 
 const STORAGE_KEY_PREFIX = 'chat-history-';
 const DEFAULT_MAX_MESSAGES = 50;
 const DEBOUNCE_MS = 500;
 
-export function useChatHistory({ projectId, maxMessages = DEFAULT_MAX_MESSAGES, initialHistory }: UseChatHistoryOptions) {
+export function useChatHistory({
+    projectId,
+    maxMessages = DEFAULT_MAX_MESSAGES,
+    initialHistory,
+    isBuildActive = false,
+    suppressStorageWrites = false,
+}: UseChatHistoryOptions) {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastProjectIdRef = useRef<string | null>(null);
+    const suppressStorageWritesRef = useRef(suppressStorageWrites);
+    useEffect(() => {
+        suppressStorageWritesRef.current = suppressStorageWrites;
+    }, [suppressStorageWrites]);
 
-    // Initialize messages: server data first, then localStorage fallback
+    // Initialize messages: server data first, preserving richer local in-flight messages during an active build
     useEffect(() => {
         // Skip if same projectId (prevents re-initialization on other dependency changes)
         if (lastProjectIdRef.current === projectId) return;
         lastProjectIdRef.current = projectId;
 
         const storageKey = `${STORAGE_KEY_PREFIX}${projectId}`;
+        let storedMessages: ChatMessage[] = [];
+        try {
+            const stored = localStorage.getItem(storageKey);
+            if (stored) {
+                const parsed = JSON.parse(stored) as ChatMessage[];
+                if (Array.isArray(parsed)) {
+                    storedMessages = parsed.map(msg => ({
+                        ...msg,
+                        timestamp: new Date(msg.timestamp),
+                    }));
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load chat history:', error);
+        }
 
-        // Priority 1: Use server-provided history
+        // Priority 1: Use server-provided history (unless another tab has richer live streaming messages in localStorage)
         if (initialHistory && initialHistory.length > 0) {
             const serverMessages: ChatMessage[] = initialHistory.map((msg, index) => {
                 // Map role to type: user -> user, action -> activity, else -> assistant
@@ -71,36 +99,44 @@ export function useChatHistory({ projectId, maxMessages = DEFAULT_MAX_MESSAGES, 
                     })),
                 };
             });
+
+            if (
+                shouldPreserveLocalHistoryOverServer({
+                    serverCount: serverMessages.length,
+                    localCount: storedMessages.length,
+                    isBuildActive,
+                })
+            ) {
+                // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrating richer live messages during active build
+                setMessages(storedMessages);
+                return;
+            }
+
             // eslint-disable-next-line react-hooks/set-state-in-effect -- initializing messages from server history
             setMessages(serverMessages);
-            // Save to localStorage for offline access
-            try {
-                localStorage.setItem(storageKey, JSON.stringify(serverMessages));
-            } catch (error) {
-                console.error('Failed to sync to localStorage:', error);
+            // Only sync to localStorage when not passively observing another tab's build
+            if (!suppressStorageWritesRef.current) {
+                try {
+                    localStorage.setItem(storageKey, JSON.stringify(serverMessages));
+                } catch (error) {
+                    console.error('Failed to sync to localStorage:', error);
+                }
             }
             return;
         }
 
         // Priority 2: Fall back to localStorage
-        try {
-            const stored = localStorage.getItem(storageKey);
-            if (stored) {
-                const parsed = JSON.parse(stored) as ChatMessage[];
-                // Convert timestamp strings back to Date objects
-                const messagesWithDates = parsed.map(msg => ({
-                    ...msg,
-                    timestamp: new Date(msg.timestamp),
-                }));
-                setMessages(messagesWithDates);
-            }
-        } catch (error) {
-            console.error('Failed to load chat history:', error);
+        if (storedMessages.length > 0) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- initializing messages from localStorage fallback
+            setMessages(storedMessages);
         }
-    }, [projectId, initialHistory]);
+    }, [projectId, initialHistory, isBuildActive]);
 
     // Save messages to localStorage with debouncing
     const saveToStorage = useCallback((messagesToSave: ChatMessage[]) => {
+        if (suppressStorageWritesRef.current) {
+            return;
+        }
         const storageKey = `${STORAGE_KEY_PREFIX}${projectId}`;
 
         // Clear existing timeout
@@ -110,6 +146,7 @@ export function useChatHistory({ projectId, maxMessages = DEFAULT_MAX_MESSAGES, 
 
         // Debounce the save
         saveTimeoutRef.current = setTimeout(() => {
+            if (suppressStorageWritesRef.current) return;
             try {
                 localStorage.setItem(storageKey, JSON.stringify(messagesToSave));
             } catch (error) {

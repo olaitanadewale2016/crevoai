@@ -6,6 +6,7 @@ import { Project } from '@/models/Project';
 import { Builder } from '@/models/BuilderAi';
 import { THEME_PRESETS } from '@/lib/theme-presets';
 import { applyThemePresetToWorkspace, triggerBuildAndDeployToR2 } from '@/services/builder';
+import { canMutateProjectWorkspace } from '@/lib/multi-tab-sync';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +28,13 @@ export async function PUT(
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+  }
+
+  if (!canMutateProjectWorkspace(project.build_status)) {
+    return NextResponse.json(
+      { error: 'Cannot change theme while a build is in progress.' },
+      { status: 409 }
+    );
   }
 
   const body = await parseRequestBody<{ theme_preset?: string }>(req);

@@ -4,6 +4,7 @@ import { getSessionContext, canUpdateProject } from '@/lib/auth';
 import { Project } from '@/models/Project';
 import { Builder } from '@/models/BuilderAi';
 import { triggerBuildAndDeployToR2 } from '@/services/builder';
+import { canMutateProjectWorkspace } from '@/lib/multi-tab-sync';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -30,6 +31,16 @@ export async function POST(
 
   if (!(await canUpdateProject(ctx.user, project))) {
     return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
+  }
+
+  if (!canMutateProjectWorkspace(project.build_status)) {
+    return NextResponse.json(
+      {
+        error: 'A build is currently in progress. Wait for it to finish before rebuilding the preview.',
+        building: true,
+      },
+      { status: 409 }
+    );
   }
 
   const builderId = project.builder_id;

@@ -13,6 +13,7 @@ import { FileTree } from '@/components/Code/FileTree';
 import { CodeEditor } from '@/components/Code/CodeEditor';
 import { MessageListSkeleton } from '@/components/Skeleton';
 import { useBuilderChat, BroadcastConfig, CompleteEvent, CreditEvent } from '@/hooks/useBuilderChat';
+import { tryClaimProjectAutostart } from '@/lib/multi-tab-sync';
 import { sanitizeBuilderError } from '@/lib/builderErrors';
 import { useChatSounds, SoundSettings } from '@/hooks/useChatSounds';
 import { useNotifications } from '@/hooks/useNotifications';
@@ -401,13 +402,27 @@ export default function Chat({
         void refreshCredits();
     }, [credits, updateCredits, refreshCredits]);
 
-    const handleComplete = useCallback((event: CompleteEvent) => {
+    const activeSessionIdRef = useRef<string | null>(project.build_session_id ?? null);
+
+    const handleComplete = useCallback((event: CompleteEvent, meta?: { isObserver: boolean }) => {
+        const isObserver = Boolean(meta?.isObserver);
         const isClarifyingOrChatOnly =
             event.files_changed === false && event.build_status === 'skipped';
         const isCreditExhaustedComplete = isBuildCreditExhaustedMessage(
             event.message,
             credits.isUnlimited || credits.usingOwnKey
         );
+
+        // Passive observer tabs sync preview, files, and credits without firing duplicate
+        // server mutations (/complete), duplicate thumbnails, or duplicate confetti/sounds.
+        if (isObserver) {
+            if (!isClarifyingOrChatOnly || event.files_changed) {
+                setPreviewRefreshTrigger(Date.now());
+                setFileRefreshTrigger(tf => tf + 1);
+            }
+            void refreshCredits();
+            return;
+        }
 
         if (isCreditExhaustedComplete) {
             handleCreditExhausted(true);
@@ -439,6 +454,7 @@ export default function Chat({
         // Ensure credit deduction & status sync even if webhook is delayed
         axios
             .post(`/builder/projects/${project.id}/complete`, {
+                session_id: activeSessionIdRef.current ?? undefined,
                 tokens_used: event.tokens_used,
                 prompt_tokens: event.prompt_tokens,
                 completion_tokens: event.completion_tokens,
@@ -458,7 +474,7 @@ export default function Chat({
             .catch(() => {
                 refreshCredits();
             });
-    }, [playSound, t, fetchSuggestions, project.id, updateCredits, refreshCredits, handleCreditExhausted]);
+    }, [playSound, t, fetchSuggestions, project.id, updateCredits, refreshCredits, handleCreditExhausted, credits.isUnlimited, credits.usingOwnKey]);
 
     const handleError = useCallback((error: string) => {
         playSound('error');
@@ -502,10 +518,13 @@ export default function Chat({
         playSound('action');
     }, [playSound]);
 
-    const handleBuildComplete = useCallback((_previewUrl: string) => {
+    const handleBuildComplete = useCallback((_previewUrl: string, meta?: { isObserver: boolean }) => {
         setPreviewRefreshTrigger(Date.now());
-        setCaptureThumbnailTrigger(Date.now());
         setFileRefreshTrigger(tf => tf + 1);
+        if (meta?.isObserver) {
+            return;
+        }
+        setCaptureThumbnailTrigger(Date.now());
         playSound('build');
         fetchSuggestions();
     }, [playSound, fetchSuggestions]);
@@ -519,10 +538,13 @@ export default function Chat({
         messages,
         progress,
         isLoading,
+        sessionId,
         sendMessage,
         cancelBuild,
         triggerBuild,
         isBuildingPreview,
+        tabId,
+        isObservingOtherTab,
     } = useBuilderChat(project.id, {
         pusherConfig,
         initialHistory: project.conversation_history,
@@ -544,6 +566,10 @@ export default function Chat({
         onCreditsSync: handleCreditsSync,
         errorSanitizer,
     });
+
+    useEffect(() => {
+        activeSessionIdRef.current = sessionId;
+    }, [sessionId]);
 
     // Undo/Redo & Version History state
     const [isUndoing, setIsUndoing] = useState(false);
@@ -743,12 +769,13 @@ export default function Chat({
     }, [progress.status, thinkingStartTime]);
 
     // Send initial message from project prompt ONLY for brand-new projects arriving with ?autostart=1.
-    // Opening an existing/recent project must never auto-resend the first prompt.
+    // Opening an existing/recent project or duplicating a tab must never auto-resend the first prompt.
     useEffect(() => {
         const hasInitialFiles = Boolean(project.initial_file_ids && project.initial_file_ids.length > 0);
         if (
             (!project.initial_prompt && !hasInitialFiles) ||
             initialSent.current ||
+            isObservingOtherTab ||
             project.has_history ||
             project.preview_url ||
             project.has_active_session ||
@@ -762,13 +789,17 @@ export default function Chat({
             return;
         }
 
-        // Remove ?autostart=1 immediately so reloads or browser back/forward never re-trigger it
+        // Remove ?autostart=1 immediately so reloads, tab duplication, or back/forward never re-trigger it
         url.searchParams.delete('autostart');
         window.history.replaceState({}, '', url.toString());
 
         const storageKey = `project-autostart-sent:${project.id}`;
         try {
             if (sessionStorage.getItem(storageKey) === '1') {
+                return;
+            }
+            // Cross-tab claim ensures duplicating a newly opened tab never launches a duplicate build
+            if (!tryClaimProjectAutostart(project.id, tabId)) {
                 return;
             }
             sessionStorage.setItem(storageKey, '1');
@@ -796,6 +827,8 @@ export default function Chat({
         project.preview_url,
         project.has_active_session,
         project.build_status,
+        isObservingOtherTab,
+        tabId,
         sendMessage,
         playSound,
     ]);
@@ -973,6 +1006,12 @@ export default function Chat({
 
     // Get status text for header
     const getStatusText = () => {
+        if (isObservingOtherTab) {
+            if (currentAction) {
+                return `${currentAction.action}: ${currentAction.target || ''}`.slice(0, 30);
+            }
+            return t('Syncing active build...');
+        }
         if (progress.status === 'connecting') return t('Connecting...');
         if (progress.status === 'running') {
             if (currentAction) {
@@ -1248,6 +1287,14 @@ export default function Chat({
                                 </div>
                             </div>
                         )}
+                        {isObservingOtherTab && (
+                            <div className="mb-2.5 rounded-xl border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground flex items-center gap-2">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary shrink-0" />
+                                <span>
+                                    {t('A build is running in another tab. Syncing live state without interrupting it.')}
+                                </span>
+                            </div>
+                        )}
                         <div className="pb-1 flex items-center justify-between">
                             <BuildCreditsIndicator {...credits} isRefreshing={isRefreshingCredits} />
                             <div className="flex items-center gap-2">
@@ -1259,12 +1306,16 @@ export default function Chat({
                             value={prompt}
                             onChange={setPrompt}
                             onSubmit={handleSubmit}
-                            disabled={isLoading}
+                            disabled={isLoading || isObservingOtherTab}
                             selectedElement={selectedElement}
                             onClearElement={() => setSelectedElement(null)}
-                            placeholder={t('Describe what you want to build...')}
+                            placeholder={
+                                isObservingOtherTab
+                                    ? t('Build running in another tab — syncing live...')
+                                    : t('Describe what you want to build...')
+                            }
                             isLoading={isLoading}
-                            onCancel={cancelBuild}
+                            onCancel={isObservingOtherTab ? undefined : cancelBuild}
                             storageEnabled={true}
                             projectId={project.id}
                             maxFileSizeMb={storage?.maxFileSizeMb ?? 10}
@@ -1334,11 +1385,12 @@ export default function Chat({
                                         variant="outline"
                                         size="sm"
                                         onClick={async () => {
+                                            if (isLoading || isBuildingPreview) return;
                                             playSound('build');
                                             await triggerBuild();
                                             setPreviewRefreshTrigger(Date.now());
                                         }}
-                                        disabled={isBuildingPreview}
+                                        disabled={isBuildingPreview || isLoading}
                                         className="h-8 px-2.5 md:px-3"
                                         title={t('Rebuild')}
                                     >
@@ -1440,6 +1492,7 @@ export default function Chat({
                                         projectId={project.id}
                                         selectedFile={selectedFile}
                                         refreshTrigger={fileRefreshTrigger}
+                                        readOnly={isLoading}
                                         onSave={() => setFileRefreshTrigger(tf => tf + 1)}
                                         onToggleMobileFiles={() => setMobileFilesOpen(open => !open)}
                                     />
@@ -1456,6 +1509,7 @@ export default function Chat({
                                 isBuilding={isBuildingPreview || (isLoading && !progress.previewUrl)}
                                 hasThumbnail={project.has_thumbnail}
                                 captureThumbnailTrigger={captureThumbnailTrigger}
+                                suppressThumbnailCapture={isObservingOtherTab || isLoading}
                                 onUndo={handleUndo}
                                 onRedo={handleRedo}
                                 isUndoing={isUndoing}
@@ -1484,6 +1538,10 @@ export default function Chat({
                                         currentTheme={appliedTheme}
                                         onThemeSelect={applyThemeToPreview}
                                         onApply={async (presetId) => {
+                                            if (isLoading) {
+                                                toast.warning(t('Wait for the active build to finish before changing the theme.'));
+                                                return;
+                                            }
                                             setIsSavingTheme(true);
                                             playSound('build');
                                             try {
@@ -1509,7 +1567,7 @@ export default function Chat({
                                                 setIsSavingTheme(false);
                                             }
                                         }}
-                                        isSaving={isSavingTheme}
+                                        isSaving={isSavingTheme || isLoading}
                                     />
                                 }
                             />

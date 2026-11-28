@@ -32,6 +32,7 @@ interface InspectPreviewProps {
     projectId?: string;  // For thumbnail capture
     hasThumbnail?: boolean;
     captureThumbnailTrigger?: number;  // Change this value to trigger thumbnail capture
+    suppressThumbnailCapture?: boolean;  // Prevent secondary observer tabs from uploading duplicate thumbnails
     // Inspect mode callbacks (optional when mode !== 'inspect')
     onElementSelect?: (element: ElementMention) => void;
     onElementEdit?: (edit: PendingEdit) => void;
@@ -96,6 +97,7 @@ export function InspectPreview({
     projectId,
     hasThumbnail = true,
     captureThumbnailTrigger,
+    suppressThumbnailCapture = false,
     onElementSelect,
     onElementEdit,
     pendingEdits = [],
@@ -126,7 +128,7 @@ export function InspectPreview({
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const wasBuilding = useRef(false);
-    const pendingCaptureRef = useRef(!hasThumbnail);
+    const pendingCaptureRef = useRef(!hasThumbnail && !suppressThumbnailCapture);
     const previousMode = useRef<PreviewMode>(mode);
     const [isSaving, setIsSaving] = useState(false);
     const [iframeReady, setIframeReady] = useState(false);
@@ -266,24 +268,26 @@ export function InspectPreview({
             };
             frame();
 
-            // Mark pending thumbnail capture once iframe finishes rendering
-            pendingCaptureRef.current = true;
+            // Mark pending thumbnail capture once iframe finishes rendering (skipped for observer tabs)
+            if (!suppressThumbnailCapture) {
+                pendingCaptureRef.current = true;
+            }
         }
         wasBuilding.current = isBuilding;
-    }, [isBuilding]);
+    }, [isBuilding, suppressThumbnailCapture]);
 
     // Queue thumbnail capture when trigger prop changes (e.g., after build or theme apply)
     const lastCaptureTrigger = useRef(0);
     useEffect(() => {
-        if (captureThumbnailTrigger && captureThumbnailTrigger > 0 && captureThumbnailTrigger !== lastCaptureTrigger.current) {
+        if (!suppressThumbnailCapture && captureThumbnailTrigger && captureThumbnailTrigger > 0 && captureThumbnailTrigger !== lastCaptureTrigger.current) {
             lastCaptureTrigger.current = captureThumbnailTrigger;
             pendingCaptureRef.current = true;
         }
-    }, [captureThumbnailTrigger]);
+    }, [captureThumbnailTrigger, suppressThumbnailCapture]);
 
     // Execute queued capture only after the preview iframe is loaded and idle
     useEffect(() => {
-        if (!pendingCaptureRef.current || !iframeReady || isBuilding || !effectivePreviewUrl) {
+        if (suppressThumbnailCapture || !pendingCaptureRef.current || !iframeReady || isBuilding || !effectivePreviewUrl) {
             return;
         }
         pendingCaptureRef.current = false;
@@ -291,7 +295,7 @@ export function InspectPreview({
             void captureAndUpload();
         }, 1500);
         return () => clearTimeout(timer);
-    }, [iframeReady, isBuilding, effectivePreviewUrl, captureAndUpload, refreshTrigger, captureThumbnailTrigger]);
+    }, [suppressThumbnailCapture, iframeReady, isBuilding, effectivePreviewUrl, captureAndUpload, refreshTrigger, captureThumbnailTrigger]);
 
     // Handle edit from context menu
     const handleEdit = useCallback((element: InspectorElement) => {
@@ -543,9 +547,9 @@ export function InspectPreview({
                         <div
                             className={
                                 deviceMode === 'mobile'
-                                    ? 'relative w-full h-full md:w-[390px] md:max-w-full md:h-[min(844px,calc(100%-24px))] md:my-3 md:rounded-[24px] md:border-4 md:border-foreground/15 md:shadow-2xl md:overflow-hidden bg-background transition-all duration-200'
+                                    ? 'relative w-full h-full md:w-[390px] md:max-w-full bg-background transition-all duration-200'
                                     : deviceMode === 'tablet'
-                                        ? 'relative w-full h-full md:w-[768px] md:max-w-full md:h-[calc(100%-24px)] md:my-3 md:rounded-xl md:border md:shadow-xl md:overflow-hidden bg-background transition-all duration-200'
+                                        ? 'relative w-full h-full md:w-[768px] md:max-w-full bg-background transition-all duration-200'
                                         : 'relative w-full h-full'
                             }
                         >

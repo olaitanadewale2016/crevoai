@@ -4,6 +4,7 @@ import { requireVerified, canUpdateProject } from '@/lib/auth';
 import { Project } from '@/models/Project';
 import { Builder, IBuilder } from '@/models/BuilderAi';
 import { triggerBuildAndDeployToR2 } from '@/services/builder';
+import { canMutateProjectWorkspace } from '@/lib/multi-tab-sync';
 
 /**
  * Shared handler for workspace revision mutations (restore / undo / redo)
@@ -28,6 +29,13 @@ export async function executeWorkspaceRevisionMutation(
 
   if (!(await canUpdateProject(ctx.user, project))) {
     return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
+  }
+
+  if (!canMutateProjectWorkspace(project.build_status)) {
+    return NextResponse.json(
+      { error: 'Cannot restore a version while a build is in progress.' },
+      { status: 409 }
+    );
   }
 
   const builder = project.builder_id ? await Builder.findById(project.builder_id).lean() : null;

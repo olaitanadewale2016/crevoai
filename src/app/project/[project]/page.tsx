@@ -297,8 +297,11 @@ export default async function ProjectChatPage({
   }));
 
   const suggestedSubdomain = project.subdomain || (await generateSuggestedSubdomain(project.name));
-  const hasActiveSession = Boolean(project.build_session_id && project.builder_id);
-  const canReconnect = hasActiveSession && project.build_status === 'building';
+  const isBuildRunning = project.build_status === 'building';
+  const hasActiveSession = Boolean(
+    isBuildRunning || (project.build_session_id && project.builder_id)
+  );
+  const canReconnect = isBuildRunning;
   const conversationHistory = Array.isArray(project.conversation_history)
     ? project.conversation_history.map((entry: any) => ({
         role: entry.role,
@@ -343,7 +346,7 @@ export default async function ProjectChatPage({
         preview_url: previewExists ? `/preview/${String(project._id)}` : null,
         has_thumbnail: Boolean(project.thumbnail),
         has_active_session: hasActiveSession,
-        build_session_id: project.build_session_id ?? null,
+        build_session_id: project.build_session_id ?? (canReconnect ? String(project._id) : null),
         build_status: project.build_status ?? undefined,
         can_reconnect: canReconnect,
         build_started_at: project.build_started_at

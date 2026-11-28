@@ -7,6 +7,21 @@ import { useChatHistory, ChatMessage } from './useChatHistory';
 import { useSessionReconnection, SessionStatus } from './useSessionReconnection';
 import type { AttachedFile } from '@/types/chat';
 import type { BuildCreditsInfo } from './useBuildCredits';
+import {
+    canCancelFromTab,
+    createProjectTabCoordinator,
+    generateTabId,
+    isBuildOwnerLeaseActive,
+    OWNER_HEARTBEAT_INTERVAL_MS,
+    readBuildOwnerLease,
+    releaseBuildOwnerLease,
+    resolveTabBuildMode,
+    shouldSuppressClientMutations,
+    writeBuildOwnerLease,
+    type ProjectSyncMessage,
+    type ProjectTabCoordinator,
+    type TabBuildMode,
+} from '@/lib/multi-tab-sync';
 import axios from 'axios';
 
 export interface BuildProgress {
@@ -29,13 +44,13 @@ export interface UseBuilderChatOptions {
     // Initial reconnection state from server
     initialSessionId?: string | null;
     initialCanReconnect?: boolean;
-    onComplete?: (event: CompleteEvent) => void;
+    onComplete?: (event: CompleteEvent, meta?: { isObserver: boolean }) => void;
     onError?: (error: string) => void;
     onMessage?: () => void;
     onAction?: () => void;
     autoBuild?: boolean;
     onBuildStart?: () => void;
-    onBuildComplete?: (previewUrl: string) => void;
+    onBuildComplete?: (previewUrl: string, meta?: { isObserver: boolean }) => void;
     onBuildError?: (error: string) => void;
     onTokenUsage?: (event: TokenUsageEvent) => void;
     onCreditWarning?: (event: CreditEvent) => void;
@@ -61,6 +76,10 @@ export interface UseBuilderChatReturn {
     isReconnecting: boolean;
     reconnectAttempt: number;
     manualReconnect: () => Promise<void>;
+    // Multi-tab non-obstructive coordination state
+    tabId: string;
+    tabBuildMode: TabBuildMode;
+    isObservingOtherTab: boolean;
 }
 
 export interface ElementMentionContext {
@@ -95,10 +114,36 @@ const initialProgress: BuildProgress = {
 
 export function useBuilderChat(projectId: string, options: UseBuilderChatOptions): UseBuilderChatReturn {
     const { pusherConfig, initialHistory, initialPreviewUrl, onComplete, onError, onMessage, onAction, autoBuild = true, onBuildStart, onBuildComplete, onBuildError, onTokenUsage, onCreditWarning, onCreditExceeded, onCreditsSync, errorSanitizer } = options;
-    const isInitiallyRunning = Boolean(options.initialCanReconnect && options.initialSessionId);
-    const history = useChatHistory({ projectId, initialHistory });
+    const tabIdRef = useRef<string | null>(null);
+    if (!tabIdRef.current) {
+        tabIdRef.current = generateTabId();
+    }
+    const tabId = tabIdRef.current;
+
+    const isInitiallyRunning = Boolean(options.initialCanReconnect);
+    const [tabBuildMode, setTabBuildMode] = useState<TabBuildMode>(
+        isInitiallyRunning ? 'attached_reconnected' : 'idle'
+    );
+    const tabBuildModeRef = useRef<TabBuildMode>(tabBuildMode);
+    const observedBuildSessionRef = useRef<boolean>(false);
+    const updateTabBuildMode = useCallback((next: TabBuildMode) => {
+        tabBuildModeRef.current = next;
+        if (next === 'observer_remote') {
+            observedBuildSessionRef.current = true;
+        } else if (next === 'owner' || next === 'attached_reconnected') {
+            observedBuildSessionRef.current = false;
+        }
+        setTabBuildMode(next);
+    }, []);
+
+    const history = useChatHistory({
+        projectId,
+        initialHistory,
+        isBuildActive: isInitiallyRunning || tabBuildMode === 'observer_remote',
+        suppressStorageWrites: tabBuildMode === 'observer_remote',
+    });
     const [sessionId, setSessionId] = useState<string | null>(
-        isInitiallyRunning ? (options.initialSessionId ?? null) : null
+        isInitiallyRunning ? (options.initialSessionId ?? projectId) : null
     );
     const [isStarting, setIsStarting] = useState(false);
     const [startError, setStartError] = useState<string | null>(null);
@@ -113,6 +158,71 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     const pollStatusRef = useRef<(opts?: { force?: boolean; suppressAutoBuild?: boolean }) => Promise<void>>(
         () => Promise.resolve()
     );
+    const coordinatorRef = useRef<ProjectTabCoordinator | null>(null);
+    const ownerHeartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const ownerStartedAtRef = useRef<number>(0);
+    const progressRef = useRef<BuildProgress>(progress);
+    const sessionIdRef = useRef<string | null>(sessionId);
+    const messagesRef = useRef<ChatMessage[]>(history.messages);
+    const onBuildCompleteRef = useRef(onBuildComplete);
+    useEffect(() => { progressRef.current = progress; }, [progress]);
+    useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+    useEffect(() => { messagesRef.current = history.messages; }, [history.messages]);
+    useEffect(() => { onBuildCompleteRef.current = onBuildComplete; }, [onBuildComplete]);
+
+    const stopOwnerHeartbeat = useCallback(() => {
+        if (ownerHeartbeatRef.current) {
+            clearInterval(ownerHeartbeatRef.current);
+            ownerHeartbeatRef.current = null;
+        }
+    }, []);
+
+    const releaseOwnershipIfHeld = useCallback(() => {
+        stopOwnerHeartbeat();
+        return releaseBuildOwnerLease(projectId, tabId);
+    }, [projectId, tabId, stopOwnerHeartbeat]);
+
+    const startOwnerHeartbeat = useCallback((activeSessionId: string | null) => {
+        stopOwnerHeartbeat();
+        const startedAt = Date.now();
+        ownerStartedAtRef.current = startedAt;
+        const beat = () => {
+            const now = Date.now();
+            const resolvedSid = sessionIdRef.current || activeSessionId || projectId;
+            writeBuildOwnerLease(projectId, {
+                tabId,
+                sessionId: resolvedSid,
+                startedAt: ownerStartedAtRef.current || startedAt,
+                updatedAt: now,
+            });
+            coordinatorRef.current?.post({
+                type: 'owner_heartbeat',
+                tabId,
+                sessionId: resolvedSid,
+                startedAt: ownerStartedAtRef.current || startedAt,
+                updatedAt: now,
+            });
+        };
+        beat();
+        ownerHeartbeatRef.current = setInterval(beat, OWNER_HEARTBEAT_INTERVAL_MS);
+    }, [projectId, tabId, stopOwnerHeartbeat]);
+
+    const notifyBuildFinishedFromOwner = useCallback((
+        status: 'idle' | 'completed' | 'failed' | 'cancelled',
+        previewUrl: string | null,
+        filesChanged?: boolean
+    ) => {
+        const sid = sessionIdRef.current;
+        releaseOwnershipIfHeld();
+        coordinatorRef.current?.post({
+            type: 'build_finished',
+            tabId,
+            sessionId: sid,
+            status,
+            previewUrl,
+            filesChanged,
+        });
+    }, [releaseOwnershipIfHeld, tabId]);
     const pendingMessageRef = useRef<string | null>(null);
     const buildTriggeredRef = useRef(false);
     const fallbackBuildTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -171,26 +281,278 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     // Ref for errorSanitizer to avoid stale closures in callbacks
     const errorSanitizerRef = useRef(errorSanitizer);
     useEffect(() => { errorSanitizerRef.current = errorSanitizer; });
-    // Ref for history.addMessage to avoid stale closures in polling effects
+    // Ref for history.addMessage to avoid stale closures in polling and cross-tab sync effects
     const historyAddMessageRef = useRef(history.addMessage);
     useEffect(() => { historyAddMessageRef.current = history.addMessage; });
 
-    // Session reconnection hook
+    const prepareForExternalBuildStart = useCallback((remoteSessionId: string | null) => {
+        clearFallbackBuildTimer();
+        completedSessionRef.current = false;
+        buildTriggeredRef.current = true; // Observer tab never fires fallback /build
+        creditWarningNotifiedRef.current = false;
+        creditExceededNotifiedRef.current = false;
+        lastStatusRef.current = null;
+        lastThinkingContentRef.current = null;
+        updateTabBuildMode('observer_remote');
+        setSessionId(remoteSessionId || projectId);
+        setProgress(prev => ({
+            ...prev,
+            status: 'running',
+            error: null,
+        }));
+    }, [clearFallbackBuildTimer, projectId, updateTabBuildMode]);
+
+    // Multi-tab coordinator: allows newly opened tabs to observe ongoing builds cleanly
+    // without obstructing, resetting, cancelling, or duplicating mutations from the active tab.
+    useEffect(() => {
+        const hasRecentUserMessage = (content: string) => {
+            const trimmed = content.trim();
+            if (!trimmed) return true;
+            const recent = messagesRef.current.slice(-6);
+            return recent.some(m => m.type === 'user' && m.content.trim() === trimmed);
+        };
+
+        const handleSyncMessage = (msg: ProjectSyncMessage) => {
+            switch (msg.type) {
+                case 'ping_owner': {
+                    if (tabBuildModeRef.current !== 'owner') return;
+                    const now = Date.now();
+                    const sid = sessionIdRef.current || projectId;
+                    coordinatorRef.current?.post({
+                        type: 'owner_heartbeat',
+                        tabId,
+                        sessionId: sid,
+                        startedAt: ownerStartedAtRef.current || now,
+                        updatedAt: now,
+                    });
+                    // Send live in-progress turn snapshot so Tab 2 reflects exact current state immediately
+                    const currentMessages = messagesRef.current;
+                    let lastUserIdx = -1;
+                    for (let i = currentMessages.length - 1; i >= 0; i--) {
+                        if (currentMessages[i]?.type === 'user') {
+                            lastUserIdx = i;
+                            break;
+                        }
+                    }
+                    const turnSlice = lastUserIdx >= 0 ? currentMessages.slice(lastUserIdx) : currentMessages.slice(-10);
+                    const p = progressRef.current;
+                    if (p.status === 'connecting' || p.status === 'running') {
+                        coordinatorRef.current?.post({
+                            type: 'state_snapshot',
+                            tabId,
+                            sessionId: sid,
+                            status: p.status,
+                            previewUrl: p.previewUrl,
+                            thinkingContent: p.thinkingContent,
+                            actions: p.actions.slice(-25),
+                            recentTurnMessages: turnSlice.map(m => ({
+                                id: m.id,
+                                type: m.type,
+                                content: m.content,
+                                timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : String(m.timestamp),
+                                activityType: m.activityType,
+                                thinkingDuration: m.thinkingDuration,
+                            })),
+                        });
+                    }
+                    break;
+                }
+
+                case 'owner_heartbeat': {
+                    if (tabBuildModeRef.current === 'owner') return;
+                    const p = progressRef.current;
+                    if (p.status !== 'running' && p.status !== 'connecting') {
+                        prepareForExternalBuildStart(msg.sessionId);
+                    } else {
+                        updateTabBuildMode('observer_remote');
+                        if (!sessionIdRef.current) {
+                            setSessionId(msg.sessionId || projectId);
+                        }
+                    }
+                    break;
+                }
+
+                case 'build_started': {
+                    if (tabBuildModeRef.current === 'owner') return;
+                    prepareForExternalBuildStart(msg.sessionId);
+                    if (msg.userMessage?.content && !hasRecentUserMessage(msg.userMessage.content)) {
+                        historyAddMessageRef.current({
+                            id: msg.userMessage.id || `user-sync-${Date.now()}`,
+                            type: 'user',
+                            content: msg.userMessage.content,
+                            timestamp: new Date(msg.userMessage.timestamp || Date.now()),
+                        });
+                    }
+                    break;
+                }
+
+                case 'state_snapshot': {
+                    if (tabBuildModeRef.current === 'owner') return;
+                    if (progressRef.current.status !== 'running' && progressRef.current.status !== 'connecting') {
+                        prepareForExternalBuildStart(msg.sessionId);
+                    } else {
+                        updateTabBuildMode('observer_remote');
+                        if (!sessionIdRef.current) {
+                            setSessionId(msg.sessionId || projectId);
+                        }
+                    }
+
+                    for (const entry of msg.recentTurnMessages || []) {
+                        const trimmed = String(entry.content || '').trim();
+                        if (!trimmed) continue;
+                        if (entry.type === 'user') {
+                            if (!hasRecentUserMessage(trimmed)) {
+                                historyAddMessageRef.current({
+                                    id: entry.id || `user-snap-${Date.now()}`,
+                                    type: 'user',
+                                    content: entry.content,
+                                    timestamp: new Date(entry.timestamp || Date.now()),
+                                });
+                            }
+                        } else if (entry.type === 'activity') {
+                            const key = trimmed.toLowerCase();
+                            if (!seenActionTextsRef.current.has(key)) {
+                                seenActionTextsRef.current.add(key);
+                                historyAddMessageRef.current({
+                                    id: entry.id || `activity-snap-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                                    type: 'activity',
+                                    content: entry.content,
+                                    timestamp: new Date(entry.timestamp || Date.now()),
+                                    activityType: entry.activityType || 'building',
+                                });
+                            }
+                        } else if (entry.type === 'assistant') {
+                            if (!addedMessagesRef.current.has(entry.content) && !addedMessagesRef.current.has(trimmed)) {
+                                addedMessagesRef.current.add(entry.content);
+                                addedMessagesRef.current.add(trimmed);
+                                historyAddMessageRef.current({
+                                    id: entry.id || `assistant-snap-${Date.now()}`,
+                                    type: 'assistant',
+                                    content: entry.content,
+                                    timestamp: new Date(entry.timestamp || Date.now()),
+                                    thinkingDuration: entry.thinkingDuration,
+                                });
+                            }
+                        }
+                    }
+
+                    setProgress(prev => ({
+                        ...prev,
+                        status: 'running',
+                        ...(msg.previewUrl && !prev.previewUrl ? { previewUrl: msg.previewUrl } : {}),
+                        ...(msg.thinkingContent ? { thinkingContent: msg.thinkingContent } : {}),
+                        actions: msg.actions && msg.actions.length > prev.actions.length ? msg.actions : prev.actions,
+                    }));
+                    break;
+                }
+
+                case 'build_finished': {
+                    if (tabBuildModeRef.current === 'owner') return;
+                    clearFallbackBuildTimer();
+                    observedBuildSessionRef.current = true;
+                    tabBuildModeRef.current = 'idle';
+                    setTabBuildMode('idle');
+                    setSessionId(null);
+                    setProgress(prev => ({
+                        ...prev,
+                        status: msg.status,
+                        ...(msg.previewUrl ? { previewUrl: msg.previewUrl } : {}),
+                        thinkingContent: null,
+                        thinkingStartTime: null,
+                    }));
+                    if (msg.status === 'completed' && msg.previewUrl) {
+                        onBuildCompleteRef.current?.(msg.previewUrl, { isObserver: true });
+                    }
+                    // Passively hydrate any final persisted assistant messages and credits without auto-building
+                    void pollStatusRef.current({ force: true, suppressAutoBuild: true });
+                    break;
+                }
+
+                case 'owner_closed': {
+                    if (tabBuildModeRef.current === 'observer_remote') {
+                        // Owning tab closed while build is still active on server: promote cleanly to attached_reconnected
+                        updateTabBuildMode('attached_reconnected');
+                    }
+                    break;
+                }
+            }
+        };
+
+        const coordinator = createProjectTabCoordinator(projectId, tabId, handleSyncMessage);
+        coordinatorRef.current = coordinator;
+
+        // Immediately detect active lease from another open tab on mount (client-only, zero SSR hydration mismatch)
+        const existingLease = readBuildOwnerLease(projectId);
+        if (existingLease && isBuildOwnerLeaseActive(existingLease) && existingLease.tabId !== tabId) {
+            prepareForExternalBuildStart(existingLease.sessionId);
+        }
+        // Ping any live owning tab for an instant live state snapshot
+        coordinator.post({ type: 'ping_owner', tabId });
+
+        const handlePageHide = () => {
+            if (tabBuildModeRef.current === 'owner') {
+                const sid = sessionIdRef.current;
+                releaseOwnershipIfHeld();
+                coordinator.post({ type: 'owner_closed', tabId, sessionId: sid });
+            }
+        };
+        window.addEventListener('pagehide', handlePageHide);
+
+        return () => {
+            window.removeEventListener('pagehide', handlePageHide);
+            if (tabBuildModeRef.current === 'owner') {
+                const sid = sessionIdRef.current;
+                releaseOwnershipIfHeld();
+                coordinator.post({ type: 'owner_closed', tabId, sessionId: sid });
+            }
+            coordinator.close();
+            coordinatorRef.current = null;
+        };
+    }, [projectId, tabId, clearFallbackBuildTimer, prepareForExternalBuildStart, releaseOwnershipIfHeld, updateTabBuildMode]);
+
+    // Watchdog for remote observer mode: if the owning tab crashed or closed silently without pagehide,
+    // promote cleanly to attached_reconnected once its heartbeat lease expires.
+    useEffect(() => {
+        if (tabBuildMode !== 'observer_remote') return;
+        const timer = setInterval(() => {
+            const lease = readBuildOwnerLease(projectId);
+            if (!isBuildOwnerLeaseActive(lease)) {
+                updateTabBuildMode('attached_reconnected');
+            }
+        }, OWNER_HEARTBEAT_INTERVAL_MS);
+        return () => clearInterval(timer);
+    }, [tabBuildMode, projectId, updateTabBuildMode]);
+
+    // Session reconnection hook (read-only status check so secondary tabs never mutate server build state)
     const sessionReconnection = useSessionReconnection({
         projectId,
         initialSessionId: options.initialSessionId ?? null,
         initialCanReconnect: options.initialCanReconnect ?? false,
         onReconnected: (sessionStatus: SessionStatus) => {
-            setSessionId(sessionStatus.sessionId);
+            const lease = readBuildOwnerLease(projectId);
+            const resolvedMode = resolveTabBuildMode({
+                currentTabId: tabId,
+                serverBuildRunning: true,
+                localBuildRunning: tabBuildModeRef.current === 'owner',
+                lease,
+            });
+            updateTabBuildMode(resolvedMode);
+            setSessionId(sessionStatus.sessionId || projectId);
             setProgress(prev => ({
                 ...prev,
                 status: 'running',
                 ...(sessionStatus.previewUrl ? { previewUrl: sessionStatus.previewUrl } : {}),
             }));
-            void pollStatusRef.current({ force: true });
+            // Always suppress auto-build when reconnecting/observing so we never trigger a competing Vite build
+            void pollStatusRef.current({ force: true, suppressAutoBuild: true });
         },
         onReconnectFailed: (error) => {
+            if (tabBuildModeRef.current === 'observer_remote') {
+                // Keep observing via BroadcastChannel/Pusher if another live tab still owns the build
+                return;
+            }
             setSessionId(null);
+            updateTabBuildMode('idle');
             setProgress(prev =>
                 prev.status === 'running' || prev.status === 'connecting'
                     ? { ...prev, status: 'idle', thinkingContent: null, thinkingStartTime: null }
@@ -200,8 +562,16 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             onError?.(sanitized);
         },
         onSessionNotFound: () => {
+            // If another live tab holds an active owner lease (build just started), stay in observer_remote
+            const lease = readBuildOwnerLease(projectId);
+            if (lease && isBuildOwnerLeaseActive(lease) && lease.tabId !== tabId) {
+                updateTabBuildMode('observer_remote');
+                setSessionId(lease.sessionId || projectId);
+                return;
+            }
             // Active session already ended or healed on server: hydrate final DB state without auto-rebuilding
             setSessionId(null);
+            updateTabBuildMode('idle');
             void pollStatusRef.current({ force: true, suppressAutoBuild: true });
         },
     });
@@ -229,12 +599,27 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         const isTerminalStatus = ['cancelled', 'completed', 'failed', 'idle', 'credit_limit'].includes(data.status);
         const mappedStatus = (data.status === 'credit_limit' ? 'failed' : data.status) as BuildProgress['status'];
         const resolvedPreviewUrl = (data as any).preview_url || null;
+        const isObserver =
+            shouldSuppressClientMutations(tabBuildModeRef.current) ||
+            observedBuildSessionRef.current;
 
         if (resolvedPreviewUrl) {
             clearFallbackBuildTimer();
             buildTriggeredRef.current = true;
         } else if (data.status === 'failed' || data.status === 'cancelled' || data.status === 'idle' || data.status === 'credit_limit') {
             clearFallbackBuildTimer();
+        }
+
+        if (isTerminalStatus) {
+            if (tabBuildModeRef.current === 'owner') {
+                notifyBuildFinishedFromOwner(
+                    mappedStatus as 'idle' | 'completed' | 'failed' | 'cancelled',
+                    resolvedPreviewUrl
+                );
+            }
+            tabBuildModeRef.current = 'idle';
+            setTabBuildMode('idle');
+            setSessionId(null);
         }
 
         setProgress(prev => ({
@@ -259,14 +644,31 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         }
 
         if (data.status === 'completed' && resolvedPreviewUrl) {
-            onBuildComplete?.(resolvedPreviewUrl);
+            onBuildComplete?.(resolvedPreviewUrl, { isObserver });
         }
-    }, [history, onBuildComplete, onCreditExceeded, clearFallbackBuildTimer]);
+    }, [history, onBuildComplete, onCreditExceeded, clearFallbackBuildTimer, notifyBuildFinishedFromOwner]);
 
     const handleThinking = useCallback((data: ThinkingEvent) => {
         // Dedup: skip exact duplicate thinking content
         if (lastThinkingContentRef.current === data.content) return;
         lastThinkingContentRef.current = data.content;
+
+        // If an idle/completed secondary tab receives live thinking from another tab's new build,
+        // transition cleanly into observer mode so it never stays stuck or misses the subsequent complete event.
+        if (
+            tabBuildModeRef.current !== 'owner' &&
+            progressRef.current.status !== 'running' &&
+            progressRef.current.status !== 'connecting'
+        ) {
+            const lease = readBuildOwnerLease(projectId);
+            if (lease && isBuildOwnerLeaseActive(lease) && lease.tabId !== tabId) {
+                prepareForExternalBuildStart(lease.sessionId);
+            } else {
+                completedSessionRef.current = false;
+                updateTabBuildMode('attached_reconnected');
+                setSessionId(projectId);
+            }
+        }
 
         const now = Date.now();
         // Sync ref outside setProgress so handleMessage can read it without side effects
@@ -280,9 +682,24 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             thinkingStartTime: prev.thinkingStartTime ?? now,
             iterations: data.iteration,
         }));
-    }, []);
+    }, [projectId, tabId, prepareForExternalBuildStart, updateTabBuildMode]);
 
     const handleAction = useCallback((data: ActionEvent) => {
+        if (
+            tabBuildModeRef.current !== 'owner' &&
+            progressRef.current.status !== 'running' &&
+            progressRef.current.status !== 'connecting'
+        ) {
+            const lease = readBuildOwnerLease(projectId);
+            if (lease && isBuildOwnerLeaseActive(lease) && lease.tabId !== tabId) {
+                prepareForExternalBuildStart(lease.sessionId);
+            } else {
+                completedSessionRef.current = false;
+                updateTabBuildMode('attached_reconnected');
+                setSessionId(projectId);
+            }
+        }
+
         // Dedup: normalize action key across Pusher and Webhook
         const cleanCat = (data.category || '').trim().toLowerCase();
         const cleanAct = (data.action || '').trim().toLowerCase();
@@ -312,9 +729,11 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             thinkingContent: null,
         }));
 
-        // Notify parent about action (e.g., for sound effects)
-        onAction?.();
-    }, [history, onAction]);
+        // Notify parent about action only when not passively observing another tab (avoids double audio)
+        if (!shouldSuppressClientMutations(tabBuildModeRef.current)) {
+            onAction?.();
+        }
+    }, [history, onAction, projectId, tabId, prepareForExternalBuildStart, updateTabBuildMode]);
 
     const handleMessage = useCallback((data: PusherMessageEvent) => {
         // Dedup using ref — immune to stale closures and React batching
@@ -337,8 +756,10 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             thinkingDuration,
         });
 
-        // Notify parent about new message (e.g., for sound effects)
-        onMessage?.();
+        // Notify parent about new message only when not passively observing another tab
+        if (!shouldSuppressClientMutations(tabBuildModeRef.current)) {
+            onMessage?.();
+        }
 
         // Update progress state — pure, no side effects
         setProgress(prev => ({
@@ -356,6 +777,15 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         addedErrorsRef.current.add(data.error);
 
         const sanitized = errorSanitizerRef.current ? errorSanitizerRef.current(data.error) : data.error;
+        const isObserver =
+            shouldSuppressClientMutations(tabBuildModeRef.current) ||
+            observedBuildSessionRef.current;
+
+        if (tabBuildModeRef.current === 'owner') {
+            notifyBuildFinishedFromOwner('failed', progressRef.current.previewUrl);
+        }
+        tabBuildModeRef.current = 'idle';
+        setTabBuildMode('idle');
 
         setSessionId(null);
         setProgress(prev => ({
@@ -374,25 +804,42 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             timestamp: new Date(),
         });
 
-        onError?.(sanitized);
-    }, [history, onError]);
+        if (!isObserver) {
+            onError?.(sanitized);
+        }
+    }, [history, onError, notifyBuildFinishedFromOwner]);
 
     const handleComplete = useCallback((data: CompleteEvent) => {
         // Dedup: prevent processing complete more than once per session
         if (completedSessionRef.current) return;
         completedSessionRef.current = true;
 
+        const modeBeforeFinish = tabBuildModeRef.current;
+        const isObserver =
+            shouldSuppressClientMutations(modeBeforeFinish) ||
+            observedBuildSessionRef.current;
+
         const isClarifyingOrChatOnly =
             data.files_changed === false && data.build_status === 'skipped';
         const hasFiles = isClarifyingOrChatOnly ? false : (data.files_changed ?? true);
         const resolvedPreviewUrl = (data as any).preview_url || null;
 
-        if (resolvedPreviewUrl || isClarifyingOrChatOnly) {
+        if (resolvedPreviewUrl || isClarifyingOrChatOnly || isObserver) {
             clearFallbackBuildTimer();
-            if (resolvedPreviewUrl) {
+            if (resolvedPreviewUrl || isObserver) {
                 buildTriggeredRef.current = true;
             }
         }
+
+        if (modeBeforeFinish === 'owner') {
+            notifyBuildFinishedFromOwner(
+                isClarifyingOrChatOnly ? 'idle' : 'completed',
+                resolvedPreviewUrl || progressRef.current.previewUrl,
+                hasFiles
+            );
+        }
+        tabBuildModeRef.current = 'idle';
+        setTabBuildMode('idle');
 
         // Update progress state; clarifying/chat-only replies return to idle without triggering builds
         setSessionId(null);
@@ -402,7 +849,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             ...(resolvedPreviewUrl ? { previewUrl: resolvedPreviewUrl } : {}),
             iterations: data.iterations,
             tokensUsed: data.tokens_used,
-            hasFileChanges: hasFiles,
+            hasFileChanges: isObserver ? false : hasFiles,
             thinkingContent: null,
             thinkingStartTime: null,
         }));
@@ -421,20 +868,20 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         }
 
         if (resolvedPreviewUrl) {
-            onBuildComplete?.(resolvedPreviewUrl);
-        } else if (!hasFiles && !isClarifyingOrChatOnly && !buildTriggeredRef.current) {
+            onBuildComplete?.(resolvedPreviewUrl, { isObserver });
+        } else if (!isObserver && !hasFiles && !isClarifyingOrChatOnly && !buildTriggeredRef.current) {
             axios
                 .get(`/preview/${projectId}/exists`)
                 .then((res) => {
                     if (res.data?.exists && res.data?.url) {
                         setProgress(prev => ({ ...prev, previewUrl: prev.previewUrl || res.data.url }));
-                        onBuildComplete?.(res.data.url);
+                        onBuildComplete?.(res.data.url, { isObserver: false });
                     }
                 })
                 .catch(() => {});
         }
-        onComplete?.(data);
-    }, [history, projectId, onBuildComplete, onComplete, clearFallbackBuildTimer]);
+        onComplete?.(data, { isObserver });
+    }, [history, projectId, onBuildComplete, onComplete, clearFallbackBuildTimer, notifyBuildFinishedFromOwner]);
 
     const handleSummarizationComplete = useCallback((data: SummarizationCompleteEvent) => {
         // Show completion activity message with results
@@ -583,6 +1030,29 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                     break;
                 }
             }
+            // If another tab started a new turn, ensure its user prompt is hydrated too (deduped)
+            const isObserver =
+                shouldSuppressClientMutations(tabBuildModeRef.current) ||
+                observedBuildSessionRef.current;
+            const effectiveSuppressAutoBuild = Boolean(opts?.suppressAutoBuild || isObserver);
+
+            if (lastUserIdx >= 0 && isObserver) {
+                const latestUserContent = String(recentMessages[lastUserIdx]?.content || '').trim();
+                if (
+                    latestUserContent &&
+                    !messagesRef.current
+                        .slice(-6)
+                        .some(m => m.type === 'user' && m.content.trim() === latestUserContent)
+                ) {
+                    historyAddMessageRef.current({
+                        id: `user-poll-${Date.now()}`,
+                        type: 'user',
+                        content: recentMessages[lastUserIdx].content,
+                        timestamp: new Date(recentMessages[lastUserIdx].timestamp || Date.now()),
+                    });
+                }
+            }
+
             const currentTurnEntries = lastUserIdx >= 0 ? recentMessages.slice(lastUserIdx + 1) : [];
 
             const newlyPolledActions: ActionEvent[] = [];
@@ -634,21 +1104,30 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                 status === 'idle';
 
             if (isTerminalOrIdle) {
-                setSessionId(null);
                 const previewUrl = response.data.preview_url || undefined;
+                if (tabBuildModeRef.current === 'owner') {
+                    notifyBuildFinishedFromOwner(
+                        status as 'idle' | 'completed' | 'failed' | 'cancelled',
+                        previewUrl || progressRef.current.previewUrl || null
+                    );
+                }
+                tabBuildModeRef.current = 'idle';
+                setTabBuildMode('idle');
+                setSessionId(null);
+
                 if (previewUrl) {
                     clearFallbackBuildTimer();
                     buildTriggeredRef.current = true;
-                } else if (status === 'failed' || status === 'cancelled' || status === 'idle') {
+                } else if (status === 'failed' || status === 'cancelled' || status === 'idle' || effectiveSuppressAutoBuild) {
                     clearFallbackBuildTimer();
                 }
                 setProgress(prev => ({
                     ...prev,
                     status: status as BuildProgress['status'],
                     hasFileChanges:
-                        status === 'completed' && !previewUrl && hasBuildAction && !opts?.suppressAutoBuild
+                        status === 'completed' && !previewUrl && hasBuildAction && !effectiveSuppressAutoBuild
                             ? true
-                            : status === 'idle' || status === 'failed' || status === 'cancelled'
+                            : status === 'idle' || status === 'failed' || status === 'cancelled' || effectiveSuppressAutoBuild
                               ? false
                               : prev.hasFileChanges,
                     ...(previewUrl && { previewUrl }),
@@ -684,12 +1163,12 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
                 }
                 if (status === 'completed') {
                     if (previewUrl) {
-                        onBuildComplete?.(previewUrl);
+                        onBuildComplete?.(previewUrl, { isObserver });
                     } else if (
                         hasBuildAction &&
                         autoBuild &&
                         !buildTriggeredRef.current &&
-                        !opts?.suppressAutoBuild
+                        !effectiveSuppressAutoBuild
                     ) {
                         buildTriggeredRef.current = true;
                         void triggerBuildRef.current();
@@ -699,7 +1178,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         } catch {
             // Silent - will retry on next interval
         }
-    }, [projectId, autoBuild, onBuildComplete, onCreditExceeded, onCreditsSync, clearFallbackBuildTimer]);
+    }, [projectId, autoBuild, onBuildComplete, onCreditExceeded, onCreditsSync, clearFallbackBuildTimer, notifyBuildFinishedFromOwner]);
 
     useEffect(() => {
         pollStatusRef.current = pollStatus;
@@ -746,6 +1225,15 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         const hasFiles = Boolean(sendOptions?.fileIds && sendOptions.fileIds.length > 0);
         if (!content.trim() && !hasFiles) return;
 
+        // Guard: if another live tab already owns an active build on this project,
+        // attach smoothly in non-obstructive observer mode instead of colliding with it.
+        const existingLease = readBuildOwnerLease(projectId);
+        if (existingLease && isBuildOwnerLeaseActive(existingLease) && existingLease.tabId !== tabId) {
+            prepareForExternalBuildStart(existingLease.sessionId);
+            void pollStatusRef.current({ force: true, suppressAutoBuild: true });
+            return;
+        }
+
         // Format prompt with element context if provided
         let finalPrompt = content.trim();
         if (sendOptions?.elementContext) {
@@ -766,9 +1254,22 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         // Store the pending message for reference
         pendingMessageRef.current = finalPrompt;
 
-        // Reset progress and start
+        // Reset progress and claim ownership for this tab
         resetProgress();
         buildTriggeredRef.current = false; // Reset for new session
+        observedBuildSessionRef.current = false;
+        updateTabBuildMode('owner');
+        startOwnerHeartbeat(projectId);
+        coordinatorRef.current?.post({
+            type: 'build_started',
+            tabId,
+            sessionId: projectId,
+            userMessage: {
+                id: userMessage.id,
+                content: userMessage.content,
+                timestamp: userMessage.timestamp.toISOString(),
+            },
+        });
         setIsStarting(true);
         setStartError(null);
         setProgress(prev => ({ ...prev, status: 'connecting' }));
@@ -785,6 +1286,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             const { session_id } = response.data;
             setSessionId(session_id);
             setProgress(prev => ({ ...prev, status: 'running' }));
+            startOwnerHeartbeat(session_id);
         } catch (error) {
             const rawErrorMessage = axios.isAxiosError(error)
                 ? error.response?.data?.error || error.message
@@ -792,26 +1294,63 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
 
             // 409 = active session conflict — server returns a translated, user-friendly message
             const statusCode = axios.isAxiosError(error) ? error.response?.status : undefined;
+            const conflictData = axios.isAxiosError(error) ? error.response?.data : undefined;
+
+            // Remove the optimistic user message since this request did not start a new build
+            history.removeMessage(userMessage.id);
+
+            // If 409 came from THIS SAME project already building (e.g. two tabs raced),
+            // cleanly attach in read-only observer/reconnected mode without obstructing Tab 1!
+            if (statusCode === 409 && conflictData?.same_project) {
+                releaseOwnershipIfHeld();
+                const currentLease = readBuildOwnerLease(projectId);
+                const nextMode = resolveTabBuildMode({
+                    currentTabId: tabId,
+                    serverBuildRunning: true,
+                    localBuildRunning: false,
+                    lease: currentLease,
+                });
+                updateTabBuildMode(nextMode);
+                setSessionId(conflictData.session_id || projectId);
+                setProgress(prev => ({ ...prev, status: 'running', error: null }));
+                void pollStatusRef.current({ force: true, suppressAutoBuild: true });
+                return;
+            }
+
             const errorMessage = statusCode === 409
                 ? rawErrorMessage
                 : (errorSanitizerRef.current ? errorSanitizerRef.current(rawErrorMessage) : rawErrorMessage);
 
-            // Remove the user message since the build failed to start
-            history.removeMessage(userMessage.id);
-
+            notifyBuildFinishedFromOwner('failed', progressRef.current.previewUrl);
+            updateTabBuildMode('idle');
             setStartError(errorMessage);
             setProgress(prev => ({ ...prev, status: 'failed', error: errorMessage }));
             onError?.(errorMessage);
         } finally {
             setIsStarting(false);
         }
-    }, [projectId, history, resetProgress, onError]);
+    }, [
+        projectId,
+        tabId,
+        history,
+        resetProgress,
+        onError,
+        prepareForExternalBuildStart,
+        updateTabBuildMode,
+        startOwnerHeartbeat,
+        releaseOwnershipIfHeld,
+        notifyBuildFinishedFromOwner,
+    ]);
 
     const cancelBuild = useCallback(async () => {
         if (!sessionId) return;
+        // Remote observer tabs cannot cancel another live tab's active build
+        if (!canCancelFromTab(tabBuildModeRef.current)) return;
 
         try {
             await axios.post(`/builder/projects/${projectId}/cancel`);
+            notifyBuildFinishedFromOwner('cancelled', progressRef.current.previewUrl);
+            updateTabBuildMode('idle');
             setSessionId(null);
             setProgress(prev => ({
                 ...prev,
@@ -824,7 +1363,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         }
 
         pendingMessageRef.current = null;
-    }, [projectId, sessionId]);
+    }, [projectId, sessionId, notifyBuildFinishedFromOwner, updateTabBuildMode]);
 
     const clearHistory = useCallback(() => {
         history.clearHistory();
@@ -833,10 +1372,17 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         setStartError(null);
     }, [history, resetProgress]);
 
-    // Trigger a preview build (works with or without active session)
+    // Trigger a preview build (works with or without active session, blocked while AI build is running)
     const triggerBuild = useCallback(async (opts?: { silent?: boolean }) => {
         clearFallbackBuildTimer();
         if (isBuildingPreviewRef.current) return;
+        if (
+            shouldSuppressClientMutations(tabBuildModeRef.current) ||
+            progressRef.current.status === 'running' ||
+            progressRef.current.status === 'connecting'
+        ) {
+            return;
+        }
         const silent = Boolean(opts?.silent);
         isBuildingPreviewRef.current = true;
         if (!silent) {
@@ -849,7 +1395,7 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             const previewUrl = response.data.preview_url || `/preview/${projectId}`;
 
             setProgress(prev => ({ ...prev, previewUrl }));
-            onBuildComplete?.(previewUrl);
+            onBuildComplete?.(previewUrl, { isObserver: false });
         } catch (error) {
             const rawErrorMessage = axios.isAxiosError(error)
                 ? error.response?.data?.error || error.message
@@ -876,12 +1422,16 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
     // Auto-trigger build as a 5s fallback when agent completes with file changes,
     // giving the webhook's single R2 deploy time to deliver status:completed + preview_url
     // without build_lock contention (cancelled immediately if handleStatus or pollStatus receives preview_url).
+    // Strictly skipped on observer tabs so secondary tabs never race the active tab/webhook!
     useEffect(() => {
+        if (shouldSuppressClientMutations(tabBuildMode) || observedBuildSessionRef.current) {
+            return undefined;
+        }
         if (autoBuild && progress.status === 'completed' && progress.hasFileChanges && !buildTriggeredRef.current) {
             clearFallbackBuildTimer();
             fallbackBuildTimerRef.current = setTimeout(() => {
                 fallbackBuildTimerRef.current = null;
-                if (!buildTriggeredRef.current) {
+                if (!buildTriggeredRef.current && !observedBuildSessionRef.current) {
                     buildTriggeredRef.current = true;
                     void triggerBuildRef.current();
                 }
@@ -892,10 +1442,11 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
             };
         }
         return undefined;
-    }, [autoBuild, progress.status, progress.hasFileChanges, clearFallbackBuildTimer]);
+    }, [autoBuild, progress.status, progress.hasFileChanges, clearFallbackBuildTimer, tabBuildMode]);
 
     // Compute loading state
-    const isLoading = isStarting || progress.status === 'running' || progress.status === 'connecting';
+    const isObservingOtherTab = tabBuildMode === 'observer_remote';
+    const isLoading = isStarting || isObservingOtherTab || progress.status === 'running' || progress.status === 'connecting';
 
     return {
         messages: history.messages,
@@ -913,6 +1464,10 @@ export function useBuilderChat(projectId: string, options: UseBuilderChatOptions
         isReconnecting: sessionReconnection.isReconnecting,
         reconnectAttempt: sessionReconnection.reconnectAttempt,
         manualReconnect: sessionReconnection.reconnect,
+        // Multi-tab non-obstructive coordination state
+        tabId,
+        tabBuildMode,
+        isObservingOtherTab,
     };
 }
 

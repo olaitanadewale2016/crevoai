@@ -6,6 +6,8 @@ import { Project } from '@/models/Project';
 import { User } from '@/models/User';
 import { billProjectSessionTokensDelta } from '@/services/credits';
 import { getUserCreditsSnapshot } from '@/services/shared-context';
+import { cacheGet } from '@/lib/cache';
+import { shouldSkipCompleteStatusOverwrite } from '@/lib/multi-tab-sync';
 
 export const runtime = 'nodejs';
 
@@ -29,6 +31,23 @@ export async function POST(
   }
 
   const { body } = await parseRequestBody(req).catch(() => ({ body: {} as Record<string, any> }));
+  const incomingSessionId =
+    typeof body.session_id === 'string' && body.session_id.trim()
+      ? body.session_id.trim()
+      : null;
+
+  if (
+    shouldSkipCompleteStatusOverwrite({
+      currentBuildStatus: project.build_status,
+      currentSessionId: project.build_session_id,
+      incomingSessionId,
+    })
+  ) {
+    const freshUser = await User.findById(project.user_id).lean();
+    const credits = freshUser ? await getUserCreditsSnapshot(freshUser) : null;
+    return NextResponse.json({ success: true, skipped: true, credits });
+  }
+
   const isClarifyingOrChatOnly =
     body.files_changed === false && body.build_status === 'skipped';
   const rawTokensUsed = Number(body.tokens_used || 0);
@@ -36,17 +55,28 @@ export async function POST(
     String(body.message || '')
   );
 
-  project.build_status = isClarifyingOrChatOnly
-    ? project.active_build_id || project.build_path
-      ? 'completed'
-      : 'idle'
-    : isCreditExhausted && body.files_changed === false
-      ? 'failed'
-      : 'completed';
-  if (!isClarifyingOrChatOnly) {
-    project.build_completed_at = new Date();
+  // If the webhook is currently compiling/deploying the R2 preview under build_lock,
+  // do not flip build_status early (let the webhook transition build_status atomically once R2 is live).
+  const webhookDeployInProgress = Boolean(
+    project.build_status === 'building' &&
+      !isClarifyingOrChatOnly &&
+      body.files_changed !== false &&
+      (await cacheGet(`build_lock:${project._id}`).catch(() => null))
+  );
+
+  if (!webhookDeployInProgress) {
+    project.build_status = isClarifyingOrChatOnly
+      ? project.active_build_id || project.build_path
+        ? 'completed'
+        : 'idle'
+      : isCreditExhausted && body.files_changed === false
+        ? 'failed'
+        : 'completed';
+    if (!isClarifyingOrChatOnly) {
+      project.build_completed_at = new Date();
+    }
+    await project.save();
   }
-  await project.save();
 
   if (project.user_id && rawTokensUsed > 0) {
     const sessionKey = project.build_session_id || String(project._id);

@@ -5,6 +5,7 @@ import { Project } from '@/models/Project';
 import { Builder } from '@/models/BuilderAi';
 import { builderFetch, projectPreviewExists } from '@/services/builder';
 import { getUserCreditsSnapshot } from '@/services/shared-context';
+import { isWithinStartupGracePeriod } from '@/lib/multi-tab-sync';
 
 export const runtime = 'nodejs';
 
@@ -27,15 +28,22 @@ export async function GET(
     return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
-  // Quick mode: fast DB-only status check for frontend polling & live streaming fallback
+  // Quick mode: fast DB-only read-only status check for frontend polling & multi-tab live sync
   const quickParam = req.nextUrl.searchParams.get('quick');
+  const readonlyParam = req.nextUrl.searchParams.get('readonly');
+  const isReadonly = readonlyParam === '1' || readonlyParam === 'true';
+
   if (quickParam === '1' || quickParam === 'true') {
     const [previewExists, credits] = await Promise.all([
       projectPreviewExists(project),
       getUserCreditsSnapshot(ctx.user).catch(() => null),
     ]);
+    const isBuilding = project.build_status === 'building';
     const data: Record<string, unknown> = {
       status: project.build_status,
+      has_session: isBuilding,
+      can_reconnect: isBuilding,
+      build_session_id: project.build_session_id ?? (isBuilding ? String(project._id) : null),
       preview_url: previewExists ? `/preview/${project._id}` : null,
       has_preview: previewExists,
       tokens_used: project.estimated_tokens || 0,
@@ -61,8 +69,26 @@ export async function GET(
     return NextResponse.json(data);
   }
 
+  const inStartupGrace = isWithinStartupGracePeriod(project.build_started_at);
   const builder = project.builder_id ? await Builder.findById(project.builder_id).lean() : null;
   if (!builder || !project.build_session_id) {
+    const previewUrl = (await projectPreviewExists(project)) ? `/preview/${project._id}` : null;
+    // During the first seconds after another tab starts a build, build_status is already 'building'
+    // while Go Builder /api/run is still returning session_id & builder_id. Keep it reconnectable!
+    if (project.build_status === 'building' && inStartupGrace) {
+      return NextResponse.json({
+        status: 'building',
+        has_session: true,
+        session_status: null,
+        build_session_id: project.build_session_id ?? String(project._id),
+        build_started_at: project.build_started_at
+          ? new Date(project.build_started_at).toISOString()
+          : null,
+        can_reconnect: true,
+        starting: true,
+        preview_url: previewUrl,
+      });
+    }
     return NextResponse.json({
       status: project.build_status,
       has_session: false,
@@ -72,7 +98,7 @@ export async function GET(
         ? new Date(project.build_started_at).toISOString()
         : null,
       can_reconnect: false,
-      preview_url: (await projectPreviewExists(project)) ? `/preview/${project._id}` : null,
+      preview_url: previewUrl,
     });
   }
 
@@ -84,8 +110,39 @@ export async function GET(
     const previewExists = await projectPreviewExists(project);
     const previewUrl = previewExists ? `/preview/${project._id}` : null;
 
-    // 404: session no longer exists on Go builder (completed/failed/expired)
+    // 404: session no longer exists on Go builder (completed/failed/expired) OR still starting up
     if (res.status === 404) {
+      // Never kill/mutate a freshly-started build while Go Builder is still initializing/reusing the session
+      if (project.build_status === 'building' && inStartupGrace) {
+        return NextResponse.json({
+          status: 'building',
+          has_session: true,
+          session_status: null,
+          build_session_id: project.build_session_id ?? String(project._id),
+          build_started_at: project.build_started_at
+            ? new Date(project.build_started_at).toISOString()
+            : null,
+          can_reconnect: true,
+          starting: true,
+          preview_url: previewUrl,
+        });
+      }
+
+      // Read-only probe (e.g. a newly opened secondary tab checking current state): NEVER mutate DB!
+      if (isReadonly) {
+        return NextResponse.json({
+          status: project.build_status,
+          has_session: false,
+          session_status: null,
+          build_session_id: project.build_session_id,
+          build_started_at: project.build_started_at
+            ? new Date(project.build_started_at).toISOString()
+            : null,
+          can_reconnect: false,
+          preview_url: previewUrl,
+        });
+      }
+
       let currentStatus = project.build_status;
       if (project.build_status === 'building') {
         const lastEntry = (project.conversation_history || []).at(-1);

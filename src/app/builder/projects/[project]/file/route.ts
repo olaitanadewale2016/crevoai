@@ -5,6 +5,7 @@ import { parseRequestBody, validationError } from '@/lib/http';
 import { Project } from '@/models/Project';
 import { Builder } from '@/models/BuilderAi';
 import { builderFetch, getFallbackWorkspaceFile } from '@/services/builder';
+import { canMutateProjectWorkspace } from '@/lib/multi-tab-sync';
 
 export const runtime = 'nodejs';
 
@@ -76,6 +77,13 @@ export async function PUT(
 
   if (!(await canUpdateProject(ctx.user, project))) {
     return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
+  }
+
+  if (!canMutateProjectWorkspace(project.build_status)) {
+    return NextResponse.json(
+      { error: 'Cannot edit files while an AI build is in progress.' },
+      { status: 409 }
+    );
   }
 
   const { body } = await parseRequestBody(req);

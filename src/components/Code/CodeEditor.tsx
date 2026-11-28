@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import Editor, { BeforeMount } from '@monaco-editor/react';
@@ -32,6 +32,7 @@ interface CodeEditorProps {
     projectId: string;
     selectedFile: string | null;
     refreshTrigger?: number;
+    readOnly?: boolean;
     onSave?: () => void;
     onToggleMobileFiles?: () => void;
 }
@@ -40,6 +41,7 @@ export function CodeEditor({
     projectId,
     selectedFile,
     refreshTrigger = 0,
+    readOnly = false,
     onSave,
     onToggleMobileFiles,
 }: CodeEditorProps) {
@@ -104,9 +106,10 @@ export function CodeEditor({
     };
 
     const isReadOnly = useMemo(() => {
+        if (readOnly) return true;
         if (!selectedFile) return false;
         return PROTECTED_FILES.includes(selectedFile);
-    }, [selectedFile]);
+    }, [readOnly, selectedFile]);
 
     // Keyboard shortcut for save (Cmd/Ctrl+S)
     useEffect(() => {
