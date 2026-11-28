@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { connectDB } from '@/lib/db';
+import { resolveRequestOrigin } from '@/lib/request-origin';
 import { Project } from '@/models/Project';
 import { serveProjectBuildAsset } from '@/services/builder';
 
@@ -23,6 +24,7 @@ export async function GET(
       project,
       pathSegments: path || [],
       mode: 'preview',
+      requestOrigin: resolveRequestOrigin(req),
     });
   } catch (err: any) {
     console.error('[Preview Route Error]', err?.message || err);

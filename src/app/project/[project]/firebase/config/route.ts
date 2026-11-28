@@ -1,13 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { getSessionContext, getUserCurrentPlan, canViewProject, canUpdateProject } from '@/lib/auth';
-import { parseRequestBody } from '@/lib/http';
+import { parseRequestBody, toBool } from '@/lib/http';
 import { Project } from '@/models/Project';
 import {
   getProjectFirebaseConfig,
+  getProjectAdminServiceAccount,
   validateFirebaseWebConfig,
   FirebaseWebConfig,
 } from '@/lib/firebase-admin';
+import {
+  getProjectFirebasePrefix,
+  isCustomFirebaseAllowedForUser,
+  isFirebaseAllowedForUser,
+} from '@/lib/firebase-policy';
 import { encryptJson } from '@/lib/crypto';
 
 export const dynamic = 'force-dynamic';
@@ -22,9 +28,8 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthenticated.' }, { status: 401 });
   }
 
-  const isAdmin = ctx.user.role === 'admin';
   const plan = await getUserCurrentPlan(ctx.user);
-  if (!isAdmin && !plan?.enable_firebase) {
+  if (!isFirebaseAllowedForUser(ctx.user, plan)) {
     return NextResponse.json({ error: 'Firebase is not enabled for your plan.' }, { status: 403 });
   }
 
@@ -41,13 +46,17 @@ export async function GET(
     return NextResponse.json({ error: 'Forbidden.' }, { status: 403 });
   }
 
-  const config = await getProjectFirebaseConfig(project);
+  const [config, saInfo] = await Promise.all([
+    getProjectFirebaseConfig(project),
+    getProjectAdminServiceAccount(project),
+  ]);
+
   return NextResponse.json({
     config,
-    uses_system_firebase: Boolean(project.uses_system_firebase),
-    can_use_own_config: isAdmin || Boolean(plan?.allow_user_firebase_config),
-    collection_prefix: `projects/${project._id}`,
-    admin_sdk_configured: Boolean(project.firebase_admin_service_account),
+    uses_system_firebase: project.uses_system_firebase !== false,
+    can_use_own_config: isCustomFirebaseAllowedForUser(ctx.user, plan),
+    collection_prefix: getProjectFirebasePrefix(project._id),
+    admin_sdk_configured: Boolean(saInfo),
   });
 }
 
@@ -61,9 +70,8 @@ export async function PUT(
     return NextResponse.json({ error: 'Unauthenticated.' }, { status: 401 });
   }
 
-  const isAdmin = ctx.user.role === 'admin';
   const plan = await getUserCurrentPlan(ctx.user);
-  if (!isAdmin && !plan?.enable_firebase) {
+  if (!isFirebaseAllowedForUser(ctx.user, plan)) {
     return NextResponse.json({ error: 'Firebase is not enabled for your plan.' }, { status: 403 });
   }
 
@@ -81,11 +89,11 @@ export async function PUT(
   }
 
   const body = await parseRequestBody<{
-    use_system_firebase?: boolean;
+    use_system_firebase?: boolean | string;
     config?: Partial<FirebaseWebConfig>;
   }>(req);
 
-  const useSystem = Boolean(body.use_system_firebase);
+  const useSystem = toBool(body.use_system_firebase, true);
 
   if (useSystem) {
     project.uses_system_firebase = true;
@@ -98,25 +106,34 @@ export async function PUT(
     });
   }
 
-  if (!isAdmin && !plan?.allow_user_firebase_config) {
+  if (!isCustomFirebaseAllowedForUser(ctx.user, plan)) {
     return NextResponse.json(
       { error: 'Your plan does not allow custom Firebase configurations.' },
       { status: 403 }
     );
   }
 
-  const cfg = body.config;
-  if (!cfg) {
+  const rawCfg = body.config;
+  if (!rawCfg) {
     return NextResponse.json({ error: 'Firebase configuration is required.' }, { status: 422 });
   }
 
-  const validationError = validateFirebaseWebConfig(cfg);
+  const cleanCfg: FirebaseWebConfig = {
+    apiKey: String(rawCfg.apiKey || '').trim(),
+    authDomain: String(rawCfg.authDomain || '').trim(),
+    projectId: String(rawCfg.projectId || '').trim(),
+    storageBucket: String(rawCfg.storageBucket || '').trim(),
+    messagingSenderId: String(rawCfg.messagingSenderId || '').trim(),
+    appId: String(rawCfg.appId || '').trim(),
+  };
+
+  const validationError = validateFirebaseWebConfig(cleanCfg);
   if (validationError) {
     return NextResponse.json({ error: validationError }, { status: 422 });
   }
 
   project.uses_system_firebase = false;
-  project.firebase_config = encryptJson(cfg) as any;
+  project.firebase_config = encryptJson(cleanCfg) as any;
   await project.save();
 
   return NextResponse.json({

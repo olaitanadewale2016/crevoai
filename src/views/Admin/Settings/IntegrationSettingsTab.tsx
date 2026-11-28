@@ -17,7 +17,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
-import { Save, Check, Loader2, Sparkles, Radio, Wifi, Flame, ClipboardPaste, Shield, Eye, EyeOff } from 'lucide-react';
+import { Save, Check, Loader2, Sparkles, Radio, Wifi, Flame, ClipboardPaste, Shield, Eye, EyeOff, Copy } from 'lucide-react';
 import {
     Dialog,
     DialogContent,
@@ -27,10 +27,16 @@ import {
     DialogTitle,
     DialogTrigger,
 } from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import axios from 'axios';
 import type { IntegrationSettings, PusherCluster, BroadcastDriver, ReverbScheme, AiProvider } from './types';
 import { FirebaseAdminUpload } from '@/components/Admin/FirebaseAdminUpload';
+import {
+    generateSystemFirestoreRules,
+    generateSystemStorageRules,
+    parseFirebaseConfigSnippet,
+} from '@/lib/firebase-policy';
 import { useTranslation } from '@/contexts/LanguageContext';
 
 interface Props {
@@ -86,6 +92,9 @@ export default function IntegrationSettingsTab({ settings, aiProviders }: Props)
     const [firebasePasteValue, setFirebasePasteValue] = useState('');
     const [firebasePasteError, setFirebasePasteError] = useState<string | null>(null);
     const [firebasePasteOpen, setFirebasePasteOpen] = useState(false);
+    const [firebaseRulesOpen, setFirebaseRulesOpen] = useState(false);
+    const systemFirestoreRules = useMemo(() => generateSystemFirestoreRules(), []);
+    const systemStorageRules = useMemo(() => generateSystemStorageRules(), []);
 
     const { data, setData, put, processing, errors } = useForm({
         broadcast_driver: settings.broadcast_driver || 'pusher',
@@ -203,43 +212,8 @@ export default function IntegrationSettingsTab({ settings, aiProviders }: Props)
         }
     };
 
-    const parseFirebaseConfig = (input: string): Record<string, string> | null => {
-        try {
-            // Extract the firebaseConfig object from various formats:
-            // 1. Full Firebase snippet with imports, comments, initializeApp
-            // 2. const firebaseConfig = {...};
-            // 3. Plain JSON {...}
-
-            // First, try to find firebaseConfig = {...} pattern in the full snippet
-            const configMatch = input.match(/(?:const|let|var)\s+firebaseConfig\s*=\s*(\{[\s\S]*?\});/);
-            let jsonStr: string;
-
-            if (configMatch) {
-                jsonStr = configMatch[1];
-            } else {
-                // Try to find any object literal
-                const objectMatch = input.match(/\{[\s\S]*?apiKey[\s\S]*?\}/);
-                if (objectMatch) {
-                    jsonStr = objectMatch[0];
-                } else {
-                    jsonStr = input.trim();
-                }
-            }
-
-            // Convert JS object notation to valid JSON
-            // Replace unquoted keys with quoted keys
-            jsonStr = jsonStr.replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":');
-            // Replace single quotes with double quotes
-            jsonStr = jsonStr.replace(/'/g, '"');
-            // Remove trailing commas
-            jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
-
-            const config = JSON.parse(jsonStr);
-            return config;
-        } catch {
-            return null;
-        }
-    };
+    const parseFirebaseConfig = (input: string): Record<string, string> | null =>
+        parseFirebaseConfigSnippet(input);
 
     const handleFirebasePasteChange = (value: string) => {
         setFirebasePasteValue(value);
@@ -725,7 +699,7 @@ export default function IntegrationSettingsTab({ settings, aiProviders }: Props)
                                 />
                             </div>
 
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                                 <Button
                                     type="button"
                                     variant="outline"
@@ -774,6 +748,68 @@ export default function IntegrationSettingsTab({ settings, aiProviders }: Props)
                                                 {t('Apply Config')}
                                             </Button>
                                         </DialogFooter>
+                                    </DialogContent>
+                                </Dialog>
+                                <Dialog open={firebaseRulesOpen} onOpenChange={setFirebaseRulesOpen}>
+                                    <DialogTrigger asChild>
+                                        <Button type="button" variant="outline" size="sm">
+                                            <Shield className="h-4 w-4 me-2" />
+                                            {t('Security Rules')}
+                                        </Button>
+                                    </DialogTrigger>
+                                    <DialogContent className="max-w-2xl">
+                                        <DialogHeader>
+                                            <DialogTitle>{t('Recommended System Firebase Security Rules')}</DialogTitle>
+                                            <DialogDescription>
+                                                {t('Deploy these multi-tenant rules in Firebase Console (Cloud Firestore & Firebase Storage) so every user app can safely store private user records and files.')}
+                                            </DialogDescription>
+                                        </DialogHeader>
+                                        <Tabs defaultValue="firestore" className="w-full">
+                                            <TabsList>
+                                                <TabsTrigger value="firestore">{t('Firestore Rules')}</TabsTrigger>
+                                                <TabsTrigger value="storage">{t('Storage Rules')}</TabsTrigger>
+                                            </TabsList>
+                                            <TabsContent value="firestore" className="space-y-2 mt-3">
+                                                <div className="flex items-center justify-between">
+                                                    <Label>{t('Cloud Firestore Rules')}</Label>
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => {
+                                                            navigator.clipboard.writeText(systemFirestoreRules);
+                                                            toast.success(t('Firestore rules copied'));
+                                                        }}
+                                                    >
+                                                        <Copy className="h-4 w-4 me-1" />
+                                                        {t('Copy')}
+                                                    </Button>
+                                                </div>
+                                                <pre className="p-4 rounded-lg bg-muted font-mono text-xs overflow-x-auto max-h-[320px] overflow-y-auto">
+                                                    {systemFirestoreRules}
+                                                </pre>
+                                            </TabsContent>
+                                            <TabsContent value="storage" className="space-y-2 mt-3">
+                                                <div className="flex items-center justify-between">
+                                                    <Label>{t('Firebase Storage Rules')}</Label>
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => {
+                                                            navigator.clipboard.writeText(systemStorageRules);
+                                                            toast.success(t('Storage rules copied'));
+                                                        }}
+                                                    >
+                                                        <Copy className="h-4 w-4 me-1" />
+                                                        {t('Copy')}
+                                                    </Button>
+                                                </div>
+                                                <pre className="p-4 rounded-lg bg-muted font-mono text-xs overflow-x-auto max-h-[320px] overflow-y-auto">
+                                                    {systemStorageRules}
+                                                </pre>
+                                            </TabsContent>
+                                        </Tabs>
                                     </DialogContent>
                                 </Dialog>
                             </div>

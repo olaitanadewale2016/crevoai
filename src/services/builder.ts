@@ -4,7 +4,7 @@ import { after } from 'next/server';
 import { unzipSync, strFromU8 } from 'fflate';
 import { connectDB } from '@/lib/db';
 import { cacheAdd, cacheForget } from '@/lib/cache';
-import { decryptJson, decryptString, generateUuidV7 } from '@/lib/crypto';
+import { decryptJson, decryptString, generateHexToken, generateUuidV7 } from '@/lib/crypto';
 import { getSetting, getSettingGroup } from '@/lib/settings';
 import {
   r2PutObject,
@@ -18,6 +18,12 @@ import {
 } from '@/lib/r2';
 import { getPusherConfigForBuilder } from '@/lib/broadcast';
 import { getProjectFirebaseConfig } from '@/lib/firebase-admin';
+import {
+  getEffectiveMaxFileSizeMb,
+  getProjectFirebasePrefix,
+  isFileStorageAllowedForUser,
+  isFirebaseAllowedForUser,
+} from '@/lib/firebase-policy';
 import { getUserCurrentPlan } from '@/lib/auth';
 import { resolvePlanAiProvider, resolvePlanBuilder } from './credits';
 import { hasUnlimitedBuildCreditsAccess } from '@/lib/auth';
@@ -377,6 +383,63 @@ export function buildOptimizedHistoryForBuilder(project: IProject): {
   };
 }
 
+export async function buildProjectCapabilitiesForBuilder(params: {
+  project: IProject;
+  user: Pick<IUser, 'role'>;
+  plan: IPlan | null;
+}) {
+  const { project, user, plan } = params;
+  const firebaseCfg = await getProjectFirebaseConfig(project);
+  const firebaseAvailable = isFirebaseAllowedForUser(user, plan);
+  const firebaseEnabled = firebaseAvailable && Boolean(firebaseCfg);
+  const firebasePrefix = getProjectFirebasePrefix(project._id);
+
+  const supabaseAvailable = Boolean(
+    user.role === 'admin' || plan?.enable_firebase || plan?.enable_supabase
+  );
+  const supabaseCfg = project.supabase_config
+    ? decryptJson<{ url?: string; anonKey?: string }>(project.supabase_config)
+    : null;
+  const supabaseEnabled =
+    supabaseAvailable &&
+    Boolean(supabaseCfg?.url && supabaseCfg?.anonKey);
+  const supabaseTablePrefix = getSupabaseTablePrefix(project._id);
+
+  const storageEnabled = isFileStorageAllowedForUser(user, plan);
+  const maxFileSizeMb = getEffectiveMaxFileSizeMb(user, plan);
+
+  return {
+    firebaseCfg,
+    firebaseAvailable,
+    firebaseEnabled,
+    firebasePrefix,
+    supabaseCfg,
+    supabaseAvailable,
+    supabaseEnabled,
+    supabaseTablePrefix,
+    storageEnabled,
+    maxFileSizeMb,
+    project_capabilities: {
+      firebase: {
+        enabled: firebaseEnabled,
+        available: firebaseAvailable,
+        collection_prefix: firebasePrefix,
+      },
+      supabase: {
+        enabled: supabaseEnabled,
+        available: supabaseAvailable,
+        url: supabaseEnabled ? supabaseCfg?.url : null,
+        table_prefix: supabaseTablePrefix,
+      },
+      storage: {
+        enabled: storageEnabled,
+        max_file_size_mb: maxFileSizeMb,
+        allowed_file_types: plan?.allowed_file_types ?? null,
+      },
+    },
+  };
+}
+
 export async function startBuilderSession(params: {
   project: IProject;
   user: IUser;
@@ -398,29 +461,29 @@ export async function startBuilderSession(params: {
     'https://crevoai-web.vercel.app'
   ).replace(/\/+$/, '');
 
-  const [plan, pusher, prompts, firebaseCfg] = await Promise.all([
+  const [plan, pusher, prompts] = await Promise.all([
     params.plan !== undefined ? Promise.resolve(params.plan) : getUserCurrentPlan(user),
     getPusherConfigForBuilder(),
     getSettingGroup('prompts'),
-    getProjectFirebaseConfig(project),
   ]);
-  const aiConfig =
+  const [aiConfig, caps] = await Promise.all([
     params.aiConfig !== undefined && params.aiConfig !== null
-      ? params.aiConfig
-      : await getAiConfigForUser(user, params.effort, plan);
+      ? Promise.resolve(params.aiConfig)
+      : getAiConfigForUser(user, params.effort, plan),
+    buildProjectCapabilitiesForBuilder({ project, user, plan }),
+  ]);
   if (!aiConfig) throw new Error('No active AI provider configured.');
-  const firebaseAvailable = Boolean(user.role === 'admin' || plan?.enable_firebase);
-  const firebaseEnabled = firebaseAvailable && Boolean(firebaseCfg);
-  const supabaseAvailable = Boolean(
-    user.role === 'admin' || plan?.enable_firebase || plan?.enable_supabase
-  );
-  const supabaseCfg = project.supabase_config
-    ? decryptJson<{ url?: string; anonKey?: string }>(project.supabase_config)
-    : null;
-  const supabaseEnabled =
-    supabaseAvailable &&
-    Boolean(supabaseCfg?.url && supabaseCfg?.anonKey);
-  const supabaseTablePrefix = getSupabaseTablePrefix(project._id);
+  const {
+    firebaseCfg,
+    firebaseEnabled,
+    firebasePrefix,
+    supabaseCfg,
+    supabaseEnabled,
+    supabaseTablePrefix,
+    storageEnabled,
+    maxFileSizeMb,
+    project_capabilities,
+  } = caps;
   const { history, isCompacted } = buildOptimizedHistoryForBuilder(project);
 
   const themeObj = project.theme_preset
@@ -434,6 +497,13 @@ export async function startBuilderSession(params: {
   let enrichedGoal = goal;
   if (!isFirstPrompt) {
     enrichedGoal += `\n\n[Follow-Up Edit Mode — Preserve Existing Website & Design System]\nAn existing website is ALREADY built in this workspace.\n1. Do NOT call fetchTemplates or useTemplate.\n2. Do NOT redesign, wipe, or rebuild the entire app unless the user explicitly asks to start over or create a completely new site from scratch.\n3. Use readFiles only on the specific page/component you need to modify — NEVER call readFile on src/components/ui/*, src/index.css, src/main.tsx, or package.json. Make surgical editFile changes that preserve the existing brand, layout, palette, and typography.`;
+  }
+  if (firebaseEnabled) {
+    const hasStorageBucket = Boolean(firebaseCfg?.storageBucket);
+    enrichedGoal += `\n\n[Firebase Database, Auth & Storage Active]\nFirebase is pre-configured and injected at runtime via \`window.__APP_CONFIG__.firebase\` (collection prefix: \`${firebasePrefix}\`).\n- Authentication: use \`useAuth()\` from \`@/hooks/useAuth\` (email/password & Google sign-in).\n- Per-user private collections (e.g. menstrual cycle logs, symptoms, health entries, journals, personal tasks): use \`useUserFirestore<T>('collection')\` from \`@/hooks/useFirestore\` (auto-scopes under \`users/<uid>/<collection>\`, auto-resubscribes on login/logout, zero composite indexes needed — sort client-side with \`useMemo\`, NEVER combine \`where()\` + \`orderBy()\` on different fields).\n- Per-user profile/settings document (e.g. cycle length, period duration, preferences): use \`useFirestoreDoc<T>('users', user?.uid)\` and call \`await save({ ... })\` (merge upsert).\n- Shared collections: use \`useFirestore<T>('collection')\` or \`useData('collection', SEED)\`. Always verify \`add\`/\`set\`/\`save\`/\`update\`/\`remove\` return value before showing a success toast.${hasStorageBucket ? '\n- Firebase Cloud Storage is configured: use `useFirebaseStorage()` from `@/hooks/useFirebaseStorage` for user media/file uploads.' : ''}`;
+  }
+  if (storageEnabled) {
+    enrichedGoal += `\n\n[Project File Storage Active]\nSystem File Storage API is enabled (max ${maxFileSizeMb}MB per file) via \`useSystemStorage()\` from \`@/hooks/useSystemStorage\`. Save returned \`file.url\` into Firestore documents when attaching photos/files to user entries.`;
   }
   if (supabaseEnabled) {
     enrichedGoal += `\n\n[Supabase Database Active]\nSupabase is pre-configured and injected at runtime via \`window.__APP_CONFIG__.supabase\` (\`{ url: "${supabaseCfg?.url}", anonKey: "...", tablePrefix: "${supabaseTablePrefix}" }\`). You can use \`@supabase/supabase-js\` or \`fetch("\${window.__APP_CONFIG__.supabase.url}/rest/v1/...", { headers: { apikey: window.__APP_CONFIG__.supabase.anonKey, Authorization: "Bearer " + window.__APP_CONFIG__.supabase.anonKey } })\` for database persistence and auth.`;
@@ -459,24 +529,7 @@ export async function startBuilderSession(params: {
       auto_compaction: true,
       granular_events: true,
     },
-    project_capabilities: {
-      firebase: {
-        enabled: firebaseEnabled,
-        available: firebaseAvailable,
-        collection_prefix: `projects/${project._id}`,
-      },
-      supabase: {
-        enabled: supabaseEnabled,
-        available: supabaseAvailable,
-        url: supabaseEnabled ? supabaseCfg?.url : null,
-        table_prefix: supabaseTablePrefix,
-      },
-      storage: {
-        enabled: Boolean(plan?.enable_file_storage),
-        max_file_size_mb: plan?.max_file_size_mb ?? 10,
-        allowed_file_types: plan?.allowed_file_types ?? null,
-      },
-    },
+    project_capabilities,
   };
 
   if (pusher) payload.pusher = pusher;
@@ -1011,7 +1064,7 @@ export async function buildDynamicHtml(
 ): Promise<string> {
   const rawAppUrl = process.env.APP_URL || '';
   const appUrl = (
-    (mode === 'published' && requestOrigin ? requestOrigin : '') ||
+    (requestOrigin ? requestOrigin : '') ||
     (rawAppUrl && !rawAppUrl.includes('crevoai.vercel.app') ? rawAppUrl : '') ||
     'https://www.crevoai.website'
   ).replace(/\/+$/, '');
@@ -1044,18 +1097,32 @@ export async function buildDynamicHtml(
     owner ? getUserCurrentPlan(owner) : Promise.resolve(null),
     getProjectFirebaseConfig(project),
   ]);
-  const firebaseAllowed = Boolean(owner?.role === 'admin' || ownerPlan?.enable_firebase);
+  const firebaseAllowed = isFirebaseAllowedForUser(owner, ownerPlan);
   const firebaseCfg = firebaseAllowed ? rawFirebaseCfg : null;
+  const storageAllowed = isFileStorageAllowedForUser(owner, ownerPlan);
+  const maxFileSizeMb = getEffectiveMaxFileSizeMb(owner, ownerPlan);
+
+  // Auto-backfill missing api_token for legacy projects when file storage is enabled
+  let effectiveApiToken = project.api_token || '';
+  if (storageAllowed && !effectiveApiToken) {
+    effectiveApiToken = generateHexToken(32);
+    Project.updateOne(
+      { _id: project._id, $or: [{ api_token: null }, { api_token: '' }] },
+      { $set: { api_token: effectiveApiToken } }
+    ).catch(() => {});
+  }
 
   const appConfig: Record<string, unknown> = {
     apiUrl: appUrl,
     projectId: project._id,
-    apiToken: project.api_token || '',
+    apiToken: effectiveApiToken,
+    storageEnabled: storageAllowed,
+    maxFileSizeMb,
   };
-  if (firebaseAllowed) {
-    appConfig.firebasePrefix = `projects/${project._id}`;
+  if (firebaseCfg) {
+    appConfig.firebase = firebaseCfg;
+    appConfig.firebasePrefix = getProjectFirebasePrefix(project._id);
   }
-  if (firebaseCfg) appConfig.firebase = firebaseCfg;
   if (project.supabase_config) {
     const supa = decryptJson<{ url?: string; anonKey?: string }>(project.supabase_config);
     if (supa?.url && supa?.anonKey) {
@@ -1129,7 +1196,12 @@ export async function serveBuiltSiteFromR2(params: {
   }
 
   // Handle relative API or project file paths caused by <base href="/preview/{id}/"> or <base href="/app/{id}/">
-  if (relPath.startsWith('api/images/stock') || relPath.startsWith(`project/${project._id}/files/`)) {
+  if (
+    relPath.startsWith('api/images/stock') ||
+    relPath.startsWith('api/app/') ||
+    relPath.startsWith('api/files/') ||
+    relPath.startsWith(`project/${project._id}/files/`)
+  ) {
     return new Response(null, { status: 307, headers: { Location: `/${relPath}` } });
   }
 

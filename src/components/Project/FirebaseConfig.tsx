@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useRef } from 'react';
 import { router } from '@/lib/inertia-compat';
@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
     AlertDialog,
     AlertDialogAction,
@@ -23,6 +24,7 @@ import { toast } from 'sonner';
 import { CheckCircle, Copy, Database, Key, Loader2, RefreshCw, Server, Trash2, Upload, Wifi, Zap } from 'lucide-react';
 import axios from 'axios';
 import type { FirebaseConfig as FirebaseConfigType } from '@/types/storage';
+import { parseFirebaseConfigSnippet } from '@/lib/firebase-policy';
 import { useTranslation } from '@/contexts/LanguageContext';
 
 interface FirebaseConfigProps {
@@ -221,6 +223,7 @@ export function FirebaseConfig({
     const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
     const [configErrors, setConfigErrors] = useState<string[]>([]);
     const [securityRules, setSecurityRules] = useState<string | null>(null);
+    const [storageRules, setStorageRules] = useState<string | null>(null);
     const [isGeneratingRules, setIsGeneratingRules] = useState(false);
 
     if (!firebaseEnabled) {
@@ -244,22 +247,21 @@ export function FirebaseConfig({
         );
     }
 
-    const validateConfig = (json: string): { valid: boolean; errors: string[] } => {
-        try {
-            const config = JSON.parse(json);
-            const errors: string[] = [];
-
-            if (!config.apiKey) errors.push('apiKey is required');
-            if (!config.authDomain) errors.push('authDomain is required');
-            if (!config.projectId) errors.push('projectId is required');
-            if (!config.storageBucket) errors.push('storageBucket is required');
-            if (!config.messagingSenderId) errors.push('messagingSenderId is required');
-            if (!config.appId) errors.push('appId is required');
-
-            return { valid: errors.length === 0, errors };
-        } catch {
-            return { valid: false, errors: ['Invalid JSON format'] };
+    const validateConfig = (rawInput: string): { valid: boolean; errors: string[]; parsed: Record<string, string> | null } => {
+        const config = parseFirebaseConfigSnippet(rawInput);
+        if (!config) {
+            return { valid: false, errors: ['Invalid Firebase configuration format. Paste JSON or the firebaseConfig snippet from Firebase Console.'], parsed: null };
         }
+        const errors: string[] = [];
+
+        if (!config.apiKey) errors.push('apiKey is required');
+        if (!config.authDomain) errors.push('authDomain is required');
+        if (!config.projectId) errors.push('projectId is required');
+        if (!config.storageBucket) errors.push('storageBucket is required');
+        if (!config.messagingSenderId) errors.push('messagingSenderId is required');
+        if (!config.appId) errors.push('appId is required');
+
+        return { valid: errors.length === 0, errors, parsed: config };
     };
 
     const handleConfigChange = (value: string) => {
@@ -273,23 +275,26 @@ export function FirebaseConfig({
     };
 
     const handleSaveConfig = async () => {
+        let parsedConfig: Record<string, string> | null = null;
         if (!useSystem) {
             if (!configJson.trim()) {
                 setConfigErrors([t('Firebase configuration is required')]);
                 return;
             }
-            const { valid, errors } = validateConfig(configJson);
-            if (!valid) {
+            const { valid, errors, parsed } = validateConfig(configJson);
+            if (!valid || !parsed) {
                 setConfigErrors(errors);
                 return;
             }
+            parsedConfig = parsed;
+            setConfigJson(JSON.stringify(parsed, null, 2));
         }
 
         setIsSaving(true);
         try {
             await axios.put(`/project/${projectId}/firebase/config`, {
                 use_system_firebase: useSystem,
-                config: useSystem ? null : JSON.parse(configJson),
+                config: useSystem ? null : parsedConfig,
             });
             setSavedUsesSystem(useSystem);
             if (useSystem) {
@@ -337,13 +342,13 @@ export function FirebaseConfig({
     const handleTestConnection = async () => {
         let payload: Record<string, unknown> = {};
         if (!useSystem && configJson.trim()) {
-            const { valid, errors } = validateConfig(configJson);
-            if (!valid) {
+            const { valid, errors, parsed } = validateConfig(configJson);
+            if (!valid || !parsed) {
                 setConfigErrors(errors);
                 toast.error(errors[0] || t('Invalid configuration'));
                 return;
             }
-            payload = { config: JSON.parse(configJson) };
+            payload = { config: parsed };
         }
 
         setConnectionStatus('testing');
@@ -367,7 +372,8 @@ export function FirebaseConfig({
         setIsGeneratingRules(true);
         try {
             const response = await axios.get(`/project/${projectId}/firebase/rules`);
-            setSecurityRules(response.data.rules);
+            setSecurityRules(response.data.rules || null);
+            setStorageRules(response.data.storage_rules || null);
         } catch {
             toast.error(t('Failed to generate security rules'));
         } finally {
@@ -375,10 +381,10 @@ export function FirebaseConfig({
         }
     };
 
-    const copyRules = () => {
-        if (securityRules) {
-            navigator.clipboard.writeText(securityRules);
-            toast.success(t('Security rules copied to clipboard'));
+    const copyText = (text: string | null, label: string) => {
+        if (text) {
+            navigator.clipboard.writeText(text);
+            toast.success(label);
         }
     };
 
@@ -397,8 +403,13 @@ export function FirebaseConfig({
                                 {t('Configure Firebase Firestore for your generated app.')}
                             </CardDescription>
                         </div>
-                        <Badge variant={systemConfigured ? 'default' : 'secondary'} className="w-fit shrink-0">
-                            {systemConfigured ? t('System Configured') : t('Not Configured')}
+                        <Badge
+                            variant={(!savedUsesSystem && customConfig) || (savedUsesSystem && systemConfigured) ? 'default' : 'secondary'}
+                            className="w-fit shrink-0"
+                        >
+                            {!savedUsesSystem
+                                ? (customConfig ? t('Custom Configured') : t('Not Configured'))
+                                : (systemConfigured ? t('System Configured') : t('Not Configured'))}
                         </Badge>
                     </div>
                 </CardHeader>
@@ -530,12 +541,12 @@ export function FirebaseConfig({
                             {t('Security Rules')}
                         </CardTitle>
                         <CardDescription>
-                            {t('Generate Firestore security rules for your project.')}
+                            {t('Generate Firestore and Firebase Storage security rules for your project.')}
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <p className="text-sm text-muted-foreground">
-                            {t('These rules restrict access to your project\'s data and should be deployed to your Firebase project\'s Firestore rules.')}
+                            {t('Deploy these rules in Firebase Console (Firestore Database -> Rules and Storage -> Rules) so authenticated app users can safely store their own private records and uploads.')}
                         </p>
 
                         <Button
@@ -552,18 +563,48 @@ export function FirebaseConfig({
                         </Button>
 
                         {securityRules && (
-                            <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                    <Label>{t('Generated Rules')}</Label>
-                                    <Button variant="ghost" size="sm" onClick={copyRules}>
-                                        <Copy className="h-4 w-4 me-1" />
-                                        {t('Copy')}
-                                    </Button>
-                                </div>
-                                <pre className="p-4 rounded-lg bg-muted font-mono text-sm overflow-x-auto max-h-[300px] overflow-y-auto">
-                                    {securityRules}
-                                </pre>
-                            </div>
+                            <Tabs defaultValue="firestore" className="w-full">
+                                <TabsList>
+                                    <TabsTrigger value="firestore">{t('Firestore Rules')}</TabsTrigger>
+                                    {storageRules && (
+                                        <TabsTrigger value="storage">{t('Storage Rules')}</TabsTrigger>
+                                    )}
+                                </TabsList>
+                                <TabsContent value="firestore" className="space-y-2 mt-3">
+                                    <div className="flex items-center justify-between">
+                                        <Label>{t('Cloud Firestore Rules')}</Label>
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => copyText(securityRules, t('Firestore security rules copied to clipboard'))}
+                                        >
+                                            <Copy className="h-4 w-4 me-1" />
+                                            {t('Copy')}
+                                        </Button>
+                                    </div>
+                                    <pre className="p-4 rounded-lg bg-muted font-mono text-xs overflow-x-auto max-h-[300px] overflow-y-auto">
+                                        {securityRules}
+                                    </pre>
+                                </TabsContent>
+                                {storageRules && (
+                                    <TabsContent value="storage" className="space-y-2 mt-3">
+                                        <div className="flex items-center justify-between">
+                                            <Label>{t('Firebase Storage Rules')}</Label>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => copyText(storageRules, t('Storage security rules copied to clipboard'))}
+                                            >
+                                                <Copy className="h-4 w-4 me-1" />
+                                                {t('Copy')}
+                                            </Button>
+                                        </div>
+                                        <pre className="p-4 rounded-lg bg-muted font-mono text-xs overflow-x-auto max-h-[300px] overflow-y-auto">
+                                            {storageRules}
+                                        </pre>
+                                    </TabsContent>
+                                )}
+                            </Tabs>
                         )}
                     </CardContent>
                 </Card>

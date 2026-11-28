@@ -53,9 +53,10 @@ export default async function FileManagerPage() {
     };
   });
 
-  const fileStorageEnabled = Boolean(plan?.enable_file_storage);
+  const isAdmin = user.role === 'admin';
+  const fileStorageEnabled = isAdmin || Boolean(plan?.enable_file_storage);
   const unlimitedStorage =
-    fileStorageEnabled && (plan?.max_storage_mb === null || plan?.max_storage_mb === -1);
+    isAdmin || (fileStorageEnabled && (plan?.max_storage_mb === null || plan?.max_storage_mb === -1));
   const totalUsedBytes = projectDocs.reduce(
     (sum, p) => sum + Number(p.storage_used_bytes ?? 0),
     0
@@ -90,12 +91,19 @@ export default async function FileManagerPage() {
       percentage: 0,
     };
 
-  const planLimits = plan
+  const effectiveMaxFileSizeMb =
+    plan?.max_file_size_mb && plan.max_file_size_mb > 0
+      ? Number(plan.max_file_size_mb)
+      : isAdmin
+        ? 100
+        : 10;
+
+  const planLimits = fileStorageEnabled
     ? {
-      file_storage_enabled: fileStorageEnabled,
-      max_storage_mb: unlimitedStorage ? null : (plan.max_storage_mb ?? 0),
-      max_file_size_mb: Number(plan.max_file_size_mb ?? 10),
-      allowed_file_types: plan.allowed_file_types ?? null,
+      file_storage_enabled: true,
+      max_storage_mb: unlimitedStorage ? null : (plan?.max_storage_mb ?? 0),
+      max_file_size_mb: effectiveMaxFileSizeMb,
+      allowed_file_types: plan?.allowed_file_types ?? null,
       unlimited_storage: unlimitedStorage,
     }
     : {

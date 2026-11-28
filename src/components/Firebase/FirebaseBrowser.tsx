@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect, useCallback } from 'react';
 import { DocumentData } from 'firebase/firestore';
@@ -27,10 +27,22 @@ export function FirebaseBrowser({ config, collectionPrefix, projectName: _projec
     const [initError, setInitError] = useState<string | null>(null);
     const [currentCollection, setCurrentCollection] = useState<string | null>(null);
     const [selectedDoc, setSelectedDoc] = useState<{ id: string; data: DocumentData } | null>(null);
+    const [docRefreshKey, setDocRefreshKey] = useState(0);
+
+    // Reset open collection when switching projects
+    useEffect(() => {
+        setCurrentCollection(null);
+        setSelectedDoc(null);
+    }, [projectId]);
 
     // Initialize Firebase when config changes
     useEffect(() => {
         if (!config) {
+            if (adminSdkConfigured) {
+                setInitialized(true);
+                setInitError(null);
+                return;
+            }
             // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing external config state
             setInitialized(false);
             setInitError('Firebase configuration not available');
@@ -46,11 +58,10 @@ export function FirebaseBrowser({ config, collectionPrefix, projectName: _projec
             setInitError(err instanceof Error ? err.message : 'Failed to initialize Firebase');
         }
 
-        // Cleanup on unmount
         return () => {
             // Don't reset on unmount to allow reconnection
         };
-    }, [config]);
+    }, [config, adminSdkConfigured]);
 
     const handleBrowseCollection = useCallback((path: string) => {
         setCurrentCollection(path);
@@ -70,8 +81,12 @@ export function FirebaseBrowser({ config, collectionPrefix, projectName: _projec
         setSelectedDoc(null);
     }, []);
 
+    const handleDocumentSaved = useCallback(() => {
+        setDocRefreshKey((prev) => prev + 1);
+    }, []);
+
     // Not configured state
-    if (!config) {
+    if (!config && !adminSdkConfigured) {
         return (
             <div className="flex flex-col items-center justify-center py-16 border-2 border-dashed border-muted-foreground/25 rounded-xl bg-muted/10">
                 <AlertCircle className="h-12 w-12 text-muted-foreground/30 mb-4" />
@@ -86,7 +101,7 @@ export function FirebaseBrowser({ config, collectionPrefix, projectName: _projec
     }
 
     // Initialization error state
-    if (initError) {
+    if (initError && !adminSdkConfigured) {
         return (
             <div className="flex flex-col items-center justify-center py-16 border-2 border-dashed border-destructive/25 rounded-xl bg-destructive/5">
                 <AlertCircle className="h-12 w-12 text-destructive/50 mb-4" />
@@ -132,7 +147,7 @@ export function FirebaseBrowser({ config, collectionPrefix, projectName: _projec
             {currentCollection ? (
                 <div className="space-y-4">
                     {/* Breadcrumb */}
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                         <Button
                             variant="ghost"
                             size="sm"
@@ -142,22 +157,29 @@ export function FirebaseBrowser({ config, collectionPrefix, projectName: _projec
                             {t('Back')}
                         </Button>
                         <span className="text-muted-foreground">/</span>
-                        <code className="text-sm bg-muted px-2 py-1 rounded">{currentCollection}</code>
+                        <code className="text-sm bg-muted px-2 py-1 rounded break-all">{currentCollection}</code>
                     </div>
 
                     {/* Document List */}
                     <DocumentList
                         collectionPath={currentCollection}
+                        projectId={projectId}
+                        adminSdkConfigured={adminSdkConfigured}
+                        refreshTrigger={docRefreshKey}
                         onSelectDocument={handleSelectDocument}
+                        onSelectSubcollection={handleBrowseCollection}
                     />
 
                     {/* Document Editor */}
                     <DocumentEditor
                         collectionPath={currentCollection}
+                        projectId={projectId}
+                        adminSdkConfigured={adminSdkConfigured}
                         documentId={selectedDoc?.id ?? null}
                         initialData={selectedDoc?.data ?? null}
                         open={selectedDoc !== null}
                         onClose={handleCloseEditor}
+                        onSaved={handleDocumentSaved}
                     />
                 </div>
             ) : (

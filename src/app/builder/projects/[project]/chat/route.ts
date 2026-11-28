@@ -18,6 +18,7 @@ import {
 import {
   builderFetch,
   buildOptimizedHistoryForBuilder,
+  buildProjectCapabilitiesForBuilder,
   detectRepeatedPrompt,
   getAiConfigForUser,
   ReasoningEffort,
@@ -165,12 +166,20 @@ export async function POST(
       compacted_history: priorCompacted,
     });
 
+    // Refresh project capabilities on every chat turn so newly-configured Firebase/Storage/Supabase takes effect immediately
+    const { project_capabilities } = await buildProjectCapabilitiesForBuilder({
+      project,
+      user: ctx.user,
+      plan,
+    });
+
     const res = await builderFetch(builder, `/api/chat/${project.build_session_id}`, {
       method: 'POST',
       body: {
         message: messageToSend,
         history,
         is_compacted: isCompacted,
+        project_capabilities,
         ...(attachedImages.length > 0 ? { attached_images: attachedImages } : {}),
         ...(aiConfig
           ? {

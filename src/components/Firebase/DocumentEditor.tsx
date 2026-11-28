@@ -1,7 +1,8 @@
-﻿'use client';
+'use client';
 
 import { useState, useCallback, useEffect } from 'react';
 import { doc, setDoc, DocumentData } from 'firebase/firestore';
+import axios from 'axios';
 import { getDb } from '@/lib/firebase-client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -20,18 +21,24 @@ import { useTranslation } from '@/contexts/LanguageContext';
 
 interface DocumentEditorProps {
     collectionPath: string;
+    projectId?: string;
+    adminSdkConfigured?: boolean;
     documentId: string | null;
     initialData: DocumentData | null;
     open: boolean;
     onClose: () => void;
+    onSaved?: () => void;
 }
 
 export function DocumentEditor({
     collectionPath,
+    projectId,
+    adminSdkConfigured = false,
     documentId,
     initialData,
     open,
     onClose,
+    onSaved,
 }: DocumentEditorProps) {
     const { t } = useTranslation();
     const [jsonValue, setJsonValue] = useState('');
@@ -39,6 +46,7 @@ export function DocumentEditor({
     const [error, setError] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
 
+    const useAdminApi = Boolean(adminSdkConfigured && projectId);
     const db = getDb();
 
     // Format initial data as JSON
@@ -76,22 +84,39 @@ export function DocumentEditor({
     }, [validateJson]);
 
     const handleSave = useCallback(async () => {
-        if (!db || !documentId) return;
+        if (!documentId) return;
 
         const data = validateJson(jsonValue);
         if (!data) return;
 
         setSaving(true);
         try {
-            await setDoc(doc(db, collectionPath, documentId), data);
-            toast.success(t('Document saved'));
-            onClose();
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : t('Failed to save'));
+            if (useAdminApi && projectId) {
+                await axios.put('/firebase/documents', {
+                    project_id: projectId,
+                    collection_path: collectionPath,
+                    document_id: documentId,
+                    data,
+                });
+                toast.success(t('Document saved'));
+                onSaved?.();
+                onClose();
+            } else if (db) {
+                await setDoc(doc(db, collectionPath, documentId), data);
+                toast.success(t('Document saved'));
+                onSaved?.();
+                onClose();
+            }
+        } catch (err: unknown) {
+            const axiosErr = err as { response?: { data?: { error?: string } } };
+            toast.error(
+                axiosErr.response?.data?.error ||
+                (err instanceof Error ? err.message : t('Failed to save'))
+            );
         } finally {
             setSaving(false);
         }
-    }, [db, collectionPath, documentId, jsonValue, validateJson, onClose, t]);
+    }, [useAdminApi, projectId, db, collectionPath, documentId, jsonValue, validateJson, onSaved, onClose, t]);
 
     const handleCopy = useCallback(() => {
         navigator.clipboard.writeText(jsonValue);
@@ -114,13 +139,13 @@ export function DocumentEditor({
             <DialogContent className="max-w-2xl">
                 <DialogHeader>
                     <div className="flex items-center justify-between">
-                        <DialogTitle>Edit Document</DialogTitle>
+                        <DialogTitle>{t('Edit Document')}</DialogTitle>
                         <Badge variant="outline" className="font-mono text-xs">
                             {documentId}
                         </Badge>
                     </div>
                     <DialogDescription>
-                        Path: <code className="bg-muted px-1 py-0.5 rounded text-xs">{collectionPath}/{documentId}</code>
+                        {t('Path')}: <code className="bg-muted px-1 py-0.5 rounded text-xs break-all">{collectionPath}/{documentId}</code>
                     </DialogDescription>
                 </DialogHeader>
 
@@ -132,7 +157,7 @@ export function DocumentEditor({
                             size="sm"
                             onClick={handleFormat}
                         >
-                            Format JSON
+                            {t('Format JSON')}
                         </Button>
                         <Button
                             variant="outline"
@@ -141,13 +166,13 @@ export function DocumentEditor({
                         >
                             {copied ? (
                                 <>
-                                    <Check className="h-4 w-4 mr-2" />
-                                    Copied
+                                    <Check className="h-4 w-4 me-2" />
+                                    {t('Copied')}
                                 </>
                             ) : (
                                 <>
-                                    <Copy className="h-4 w-4 mr-2" />
-                                    Copy
+                                    <Copy className="h-4 w-4 me-2" />
+                                    {t('Copy')}
                                 </>
                             )}
                         </Button>
@@ -169,18 +194,18 @@ export function DocumentEditor({
 
                 <DialogFooter>
                     <Button variant="outline" onClick={onClose}>
-                        Cancel
+                        {t('Cancel')}
                     </Button>
                     <Button
                         onClick={handleSave}
                         disabled={saving || !!error}
                     >
                         {saving ? (
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            <Loader2 className="h-4 w-4 me-2 animate-spin" />
                         ) : (
-                            <Save className="h-4 w-4 mr-2" />
+                            <Save className="h-4 w-4 me-2" />
                         )}
-                        Save Changes
+                        {t('Save Changes')}
                     </Button>
                 </DialogFooter>
             </DialogContent>

@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { connectDB } from '@/lib/db';
+import { resolveRequestOrigin } from '@/lib/request-origin';
 import { Project } from '@/models/Project';
 import { serveProjectBuildAsset } from '@/services/builder';
 
@@ -22,5 +23,6 @@ export async function GET(
     project,
     pathSegments: path || [],
     mode: 'app',
+    requestOrigin: resolveRequestOrigin(req),
   });
 }

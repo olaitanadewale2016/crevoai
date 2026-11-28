@@ -194,9 +194,18 @@ export default async function AdminSettingsPage() {
       firebase_configured: Boolean(
         integrations.firebase_system_api_key && integrations.firebase_system_project_id
       ),
-      firebase_admin_configured: Boolean(integrations.firebase_admin_service_account),
-      firebase_admin_project_id: integrations.firebase_admin_project_id || null,
-      firebase_admin_client_email: integrations.firebase_admin_client_email || null,
+      firebase_admin_configured: Boolean(
+        integrations.firebase_admin_service_account?.project_id &&
+          integrations.firebase_admin_service_account?.client_email
+      ),
+      firebase_admin_project_id:
+        integrations.firebase_admin_service_account?.project_id ||
+        integrations.firebase_admin_project_id ||
+        null,
+      firebase_admin_client_email:
+        integrations.firebase_admin_service_account?.client_email ||
+        integrations.firebase_admin_client_email ||
+        null,
     },
     prompts: {
       builder_system_prompt: prompts.builder_system_prompt || '',
